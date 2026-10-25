@@ -45,26 +45,31 @@ jobs:
         run: |
           @'
           from pathlib import Path
-          p = Path("work/MERSAD_AI/notify.py")
-          src = p.read_text(encoding="utf-8")
-          old = (
-              "        elif msvcrt is not None:\\n"
-              "            fd.seek(0)\\n"
-              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)\\n"
-          )
-          new = (
-              "        elif msvcrt is not None:\\n"
-              "            # The Windows CRT byte-range lock must target an existing byte.\\n"
-              "            fd.seek(0, os.SEEK_END)\\n"
-              "            if fd.tell() == 0:\\n"
-              "                fd.write(b'\\\\0')\\n"
-              "                fd.flush()\\n"
-              "            fd.seek(0)\\n"
-              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)\\n"
-          )
-          if src.count(old) != 1:
-              raise SystemExit(f"Expected one Windows lock block, found {src.count(old)}")
-          p.write_text(src.replace(old, new, 1), encoding="utf-8", newline="")
+
+          path = Path("work/MERSAD_AI/notify.py")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          matches = [i for i, line in enumerate(lines) if line == "        elif msvcrt is not None:"]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one Windows lock branch, found {len(matches)}")
+          start = matches[0]
+          expected = [
+              "            fd.seek(0)",
+              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)",
+          ]
+          if lines[start + 1:start + 3] != expected:
+              raise SystemExit("Windows listener lock block did not match the expected source.")
+          fixed = [
+              "        elif msvcrt is not None:",
+              "            # Lock a real byte: msvcrt byte-range locks beyond EOF are not reliable.",
+              "            fd.seek(0, os.SEEK_END)",
+              "            if fd.tell() == 0:",
+              "                fd.write(bytes([0]))",
+              "                fd.flush()",
+              "            fd.seek(0)",
+              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)",
+          ]
+          lines[start:start + 3] = fixed
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
           print("Applied Windows listener-lock byte initialization.")
           '@ | python -
 
