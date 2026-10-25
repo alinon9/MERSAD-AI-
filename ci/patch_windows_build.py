@@ -64,21 +64,24 @@ def _acquire_listener_lock():
     if os.name == "nt":
         import ctypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
-        kernel32.CreateMutexW.restype = ctypes.c_void_p
-        kernel32.GetLastError.restype = ctypes.c_ulong
+        kernel32.CreateSemaphoreW.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_long, ctypes.c_wchar_p]
+        kernel32.CreateSemaphoreW.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+        kernel32.ReleaseSemaphore.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
+        kernel32.ReleaseSemaphore.restype = ctypes.c_int
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
         kernel32.CloseHandle.restype = ctypes.c_int
         name = "Local\\MERSAD_TG_LISTENER_" + tok_hash
-        ctypes.set_last_error(0)
-        handle = kernel32.CreateMutexW(None, 1, name)
+        handle = kernel32.CreateSemaphoreW(None, 1, 1, name)
         if not handle:
-            log.warning("Unable to create Telegram listener mutex (WinError %s)", ctypes.get_last_error())
+            log.warning("Unable to create Telegram listener semaphore (WinError %s)", ctypes.get_last_error())
             return None
-        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        wait_result = kernel32.WaitForSingleObject(handle, 0)
+        if wait_result != 0:  # WAIT_OBJECT_0: exclusive ownership acquired
             kernel32.CloseHandle(handle)
             return None
-        lock = ("windows_mutex", handle, kernel32)
+        lock = ("windows_semaphore", handle, kernel32)
         _LISTENER_LOCK_FD = lock
         return lock
 
@@ -116,13 +119,11 @@ def _release_listener_lock(fd):
     global _LISTENER_LOCK_FD
     if fd is None:
         return
-    if isinstance(fd, tuple) and len(fd) == 3 and fd[0] == "windows_mutex":
+    if isinstance(fd, tuple) and len(fd) == 3 and fd[0] == "windows_semaphore":
         _, handle, kernel32 = fd
         try:
             import ctypes
-            kernel32.ReleaseMutex.argtypes = [ctypes.c_void_p]
-            kernel32.ReleaseMutex.restype = ctypes.c_int
-            kernel32.ReleaseMutex(handle)
+            kernel32.ReleaseSemaphore(handle, 1, None)
         except Exception:
             pass
         try:
