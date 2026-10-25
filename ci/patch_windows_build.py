@@ -58,7 +58,7 @@ replace_function(
     "_acquire_listener_lock",
     r"""
 def _acquire_listener_lock():
-    """Acquire one process-wide Telegram polling owner lock."""
+    # Acquire one process-wide Telegram polling owner lock.
     global _LISTENER_LOCK_FD
     tok_hash = hashlib.sha256((os.getenv("TELEGRAM_TOKEN") or "").encode("utf-8")).hexdigest()[:16]
     if os.name == "nt":
@@ -70,6 +70,7 @@ def _acquire_listener_lock():
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
         kernel32.CloseHandle.restype = ctypes.c_int
         name = "Local\\MERSAD_TG_LISTENER_" + tok_hash
+        ctypes.set_last_error(0)
         handle = kernel32.CreateMutexW(None, 1, name)
         if not handle:
             log.warning("Unable to create Telegram listener mutex (WinError %s)", ctypes.get_last_error())
@@ -111,6 +112,7 @@ replace_function(
     "_release_listener_lock",
     r"""
 def _release_listener_lock(fd):
+    # Release the named mutex or POSIX/CRT file lock.
     global _LISTENER_LOCK_FD
     if fd is None:
         return
