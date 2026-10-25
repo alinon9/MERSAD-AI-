@@ -35,8 +35,8 @@ def replace_function(file, name, new_source):
     node = matches[0]
     lines = text.splitlines()
     start, end = node.lineno - 1, node.end_lineno
-    replacement = new_source.strip("\\n").splitlines()
-    p.write_text("\\n".join(lines[:start] + replacement + lines[end:]) + "\\n", encoding="utf-8", newline="")
+    replacement = new_source.strip("\n").splitlines()
+    p.write_text("\n".join(lines[:start] + replacement + lines[end:]) + "\n", encoding="utf-8", newline="")
 
 
 def replace_between(file, start_marker, end_marker, new_source, marker):
@@ -50,7 +50,7 @@ def replace_between(file, start_marker, end_marker, new_source, marker):
     end = text.index(end_marker, start)
     if end <= start:
         raise SystemExit(f"{file}: invalid boundary order for {marker}")
-    p.write_text(text[:start] + new_source.rstrip() + "\\n\\n" + text[end:], encoding="utf-8", newline="")
+    p.write_text(text[:start] + new_source.rstrip() + "\n\n" + text[end:], encoding="utf-8", newline="")
 
 # Use a named Windows mutex: file-region locking was not exclusive on the CI runner.
 replace_function(
