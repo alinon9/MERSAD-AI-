@@ -1,0 +1,119 @@
+name: Build MERSAD AI Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "MERSAD_AI_FIXED_5.zip"
+      - ".github/workflows/build-mersad-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check source archive exists
+        shell: pwsh
+        run: |
+          if (!(Test-Path "MERSAD_AI_FIXED_5.zip")) {
+            throw "Upload MERSAD_AI_FIXED_5.zip to the repository root first."
+          }
+
+      - name: Extract source archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "work" | Out-Null
+          Expand-Archive -LiteralPath "MERSAD_AI_FIXED_5.zip" -DestinationPath "work" -Force
+          if (!(Test-Path "work/MERSAD_AI/mersad_live.py")) {
+            throw "Expected source file work/MERSAD_AI/mersad_live.py was not found in the ZIP."
+          }
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: |
+            work/MERSAD_AI/requirements.txt
+            work/MERSAD_AI/constraints-win-x64.txt
+
+      - name: Install pinned dependencies
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
+          python -m venv venv
+          .\venv\Scripts\python.exe -m pip install --upgrade pip
+          .\venv\Scripts\python.exe -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          .\venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-win-x64.txt
+          .\venv\Scripts\python.exe -m pip uninstall -y opencv-python-headless
+          .\venv\Scripts\python.exe -m pip install --force-reinstall --no-deps opencv-python==4.11.0.86
+          .\venv\Scripts\python.exe -m pip install pyinstaller==6.11.1 -c constraints-win-x64.txt
+          .\venv\Scripts\python.exe -m pip check
+
+      - name: Compile and run self-tests
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
+          .\venv\Scripts\python.exe -m compileall -q .
+          .\venv\Scripts\python.exe selftest.py 2>&1 | Tee-Object -FilePath selftest_normal.log
+          if ($LASTEXITCODE -ne 0) { throw "Self-test failed." }
+          $env:MERSAD_BLOCK_SKLEARN = "1"
+          .\venv\Scripts\python.exe selftest.py 2>&1 | Tee-Object -FilePath selftest_nosklearn.log
+          if ($LASTEXITCODE -ne 0) { throw "Self-test without scikit-learn failed." }
+          Remove-Item Env:MERSAD_BLOCK_SKLEARN
+
+      - name: Download and verify AI models
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
+          .\venv\Scripts\python.exe prefetch.py
+          if ($LASTEXITCODE -ne 0) { throw "Model prefetch failed." }
+          .\venv\Scripts\python.exe check_install.py --write-ready
+          if ($LASTEXITCODE -ne 0) { throw "Environment readiness check failed." }
+          .\venv\Scripts\python.exe check_install.py --strict 2>&1 | Tee-Object -FilePath check_install_report.log
+          if ($LASTEXITCODE -ne 0) { throw "Strict installation check failed." }
+
+      - name: Build onedir distribution
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
+          .\venv\Scripts\python.exe -m PyInstaller --noconfirm --clean mersad_ai.spec 2>&1 | Tee-Object -FilePath build_pyinstaller.log
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
+          if (!(Test-Path "dist/MERSAD_AI/MERSAD_AI.exe")) { throw "Expected EXE was not built." }
+          if (!(Test-Path "models")) { throw "Model directory missing after prefetch." }
+          Copy-Item -Path "models" -Destination "dist/MERSAD_AI/models" -Recurse -Force
+
+      - name: Verify standalone executable
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
+          $exe = (Resolve-Path "dist/MERSAD_AI/MERSAD_AI.exe").Path
+          Push-Location $env:TEMP
+          try {
+            & $exe --verify 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/exe_verify_output.txt"
+            if ($LASTEXITCODE -ne 0) { throw "Standalone EXE verification failed." }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Upload Windows distribution and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_AI_Windows_x64_Distribution
+          if-no-files-found: warn
+          path: |
+            work/MERSAD_AI/dist/MERSAD_AI/
+            work/MERSAD_AI/selftest_normal.log
+            work/MERSAD_AI/selftest_nosklearn.log
+            work/MERSAD_AI/check_install_report.log
+            work/MERSAD_AI/build_pyinstaller.log
+            exe_verify_output.txt
