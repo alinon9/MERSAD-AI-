@@ -645,7 +645,7 @@ for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
 # Emit targeted source context in CI logs so remaining Windows failures can be fixed from evidence.
 for file_name, line_ranges in {
     "notify.py": [(1, 250)],
-    "selftest.py": [(650, 720), (850, 970), (1100, 1325), (1330, 1375)],
+    "selftest.py": [(650, 720), (690, 760), (850, 970), (975, 1060), (1100, 1325), (1330, 1375)],
     "mersad_live.py": [(1900, 1965)],
 }.items():
     source_lines = (root / file_name).read_text(encoding="utf-8").splitlines()
