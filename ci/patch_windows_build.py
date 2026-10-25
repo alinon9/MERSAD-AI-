@@ -514,7 +514,7 @@ replace_once(
     "retain listener thread handle",
 )
 def patch_p0e_worker_shutdown():
-    """Make the P0-E multi-process lock test deterministic and stop its polling thread cleanly."""
+    """Make P0-E lock coverage deterministic, expose crash phase, and stop polling cleanly."""
     p = root / "selftest.py"
     source = p.read_text(encoding="utf-8")
     marker = "MERSAD_P0E_COOPERATIVE_LISTENER_SHUTDOWN"
@@ -532,23 +532,55 @@ def patch_p0e_worker_shutdown():
             raise SystemExit(f"selftest.py: P0-E target not found for {label}")
         source = source[:pos] + new + source[pos + len(old):]
 
-    old_import = '            "import mersad_live as m, threading\\n"\n'
-    new_import = '            "import mersad_live as m, threading, notify as n\\n"\n'
-    replace_first_after(old_import, new_import, "import shared notifier module")
-
-    old_event = '            "stop_ev = threading.Event()\\n"\n'
-    new_event = (
-        old_event
-        + '            "def fake_tg_call(*args, **kwargs):\\n"\n'
-        + '            "    stop_ev.wait(0.1)\\n"\n'
-        + "            \"    return {'ok': True, 'result': []}\\n\"\n"
-        + '            "n._call = fake_tg_call\\n"\n'
+    replace_first_after(
+        '            "import mersad_live as m, threading\\n"\n',
+        '            "import mersad_live as m, threading, notify as n\\n"\n',
+        "import shared notifier module",
     )
-    replace_first_after(old_event, new_event, "stub Telegram polling while testing lock ownership")
+
+    replace_first_after(
+        '            "stop_ev = threading.Event()\\n"\n',
+        (
+            '            "stop_ev = threading.Event()\\n"\n'
+            '            "def fake_tg_call(*args, **kwargs):\\n"\n'
+            '            "    stop_ev.wait(0.1)\\n"\n'
+            "            \"    return {'ok': True, 'result': []}\\n\"\n"
+            '            "n._call = fake_tg_call\\n"\n'
+        ),
+        "stub Telegram polling while testing lock ownership",
+    )
+
+    replace_first_after(
+        '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n',
+        (
+            '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n'
+            '            "print(f\'MP_PHASE={cam}:listener={listener_owned}\', flush=True)\\n"\n'
+        ),
+        "log listener lock acquisition phase",
+    )
+
+    replace_first_after(
+        '            "time.sleep(5.0)\\n"\n',
+        (
+            '            "time.sleep(5.0)\\n"\n'
+            '            "print(f\'MP_PHASE={cam}:after_sleep\', flush=True)\\n"\n'
+        ),
+        "log post-overlap phase",
+    )
+
+    replace_first_after(
+        '            "for i in range(50):\\n"\n',
+        (
+            '            "for i in range(50):\\n"\n'
+            '            "    if i in (0, 10, 20, 30, 40, 49): print(f\'MP_PHASE={cam}:alert={i}\', flush=True)\\n"\n'
+        ),
+        "log alert-loop progress",
+    )
 
     old_sync = '            "m._sync_alerts_from_db()\\n"\n'
     new_sync = (
         old_sync
+        + '            "print(f\'MP_PHASE={cam}:after_sync\', flush=True)\\n"\n'
         + '            "stop_ev.set()\\n"\n'
         + "            \"listener_thread = getattr(n, '_LISTENER_THREAD', None)\\n\"\n"
         + '            "if listener_thread is not None: listener_thread.join(timeout=10.0)\\n"\n'
@@ -584,6 +616,7 @@ def patch_selftest_local_get_retry():
         import http.client as _mersad_http_client
         import socket as _mersad_socket
         import time as _mersad_time
+        import ipaddress as _mersad_ipaddress
         import urllib.error as _mersad_urllib_error
         import urllib.parse as _mersad_urllib_parse
         import urllib.request as _mersad_urllib_request
@@ -594,7 +627,11 @@ def patch_selftest_local_get_retry():
             raw_url = getattr(url, "full_url", url)
             try:
                 parsed = _mersad_urllib_parse.urlsplit(str(raw_url))
-                is_loopback = (parsed.hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}
+                hostname = (parsed.hostname or "").lower().rstrip(".")
+                try:
+                    is_loopback = _mersad_ipaddress.ip_address(hostname).is_loopback
+                except ValueError:
+                    is_loopback = hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost")
             except Exception:
                 is_loopback = False
             # Never retry writes or network traffic outside this process's local test server.
@@ -645,7 +682,7 @@ for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
 # Emit targeted source context in CI logs so remaining Windows failures can be fixed from evidence.
 for file_name, line_ranges in {
     "notify.py": [(1, 250)],
-    "selftest.py": [(650, 720), (690, 760), (850, 970), (975, 1060), (1100, 1325), (1330, 1375)],
+    "selftest.py": [(650, 720), (690, 760), (790, 840), (850, 970), (975, 1060), (1100, 1325), (1330, 1375)],
     "mersad_live.py": [(1900, 1965)],
 }.items():
     source_lines = (root / file_name).read_text(encoding="utf-8").splitlines()
