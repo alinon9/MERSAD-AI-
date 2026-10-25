@@ -489,6 +489,53 @@ replace_once(
 )
 
 
+# Retain the Telegram listener thread so test subprocesses can stop and join it cleanly.
+# Abrupt interpreter shutdown while the daemon thread is inside native/network code was
+# intermittently producing Windows STATUS_ACCESS_VIOLATION (0xC0000005).
+replace_once(
+    "notify.py",
+    "_LISTENER_LOCK_FD = None\n",
+    "_LISTENER_LOCK_FD = None\n_LISTENER_THREAD = None\n",
+    "track Telegram listener thread",
+)
+replace_once(
+    "notify.py",
+    'def start_listener(on_press, stop_event=None):\n    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""\n',
+    'def start_listener(on_press, stop_event=None):\n    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""\n    global _LISTENER_THREAD\n',
+    "declare listener thread handle",
+)
+replace_once(
+    "notify.py",
+    '    threading.Thread(target=loop, daemon=True).start()\n    return True\n',
+    '    listener_thread = threading.Thread(target=loop, name="mersad-telegram-listener", daemon=True)\n'
+    '    _LISTENER_THREAD = listener_thread\n'
+    '    listener_thread.start()\n'
+    '    return True\n',
+    "retain listener thread handle",
+)
+replace_once(
+    "selftest.py",
+    '            "import os, sys, time, numpy as np\\n"\n',
+    '            "import os, sys, time, numpy as np, faulthandler\\n"\n'
+    '            "faulthandler.enable(all_threads=True)\\n"\n',
+    "enable faulthandler in multi-process regression workers",
+)
+replace_once(
+    "selftest.py",
+    '            "import mersad_live as m, threading\\n"\n',
+    '            "import mersad_live as m, threading, notify as n\\n"\n',
+    "import notifier module for child worker shutdown",
+)
+replace_once(
+    "selftest.py",
+    '            "m._sync_alerts_from_db()\\n"\n',
+    '            "m._sync_alerts_from_db()\\n"\n'
+    '            "stop_ev.set()\\n"\n'
+    '            "listener_thread = getattr(n, \\'_LISTENER_THREAD\\', None)\\n"\n'
+    '            "if listener_thread is not None: listener_thread.join(timeout=5.0)\\n"\n',
+    "gracefully stop listener worker before subprocess exit",
+)
+
 # Windows self-test reliability: retry transient resets only for idempotent GETs to
 # the loopback dashboard. Persistent service failures still fail the test.
 def patch_selftest_local_get_retry():
@@ -533,10 +580,10 @@ def patch_selftest_local_get_retry():
             for attempt in range(len(delays) + 1):
                 try:
                     return _MERSAD_ORIGINAL_URLOPEN(url, data, timeout, *args, **kwargs)
-                except (ConnectionResetError, ConnectionAbortedError, TimeoutError,
+                except (ConnectionResetError, ConnectionRefusedError, ConnectionAbortedError, TimeoutError,
                         _mersad_http_client.RemoteDisconnected, _mersad_urllib_error.URLError) as exc:
                     reason = getattr(exc, "reason", exc)
-                    transient_types = (ConnectionResetError, ConnectionAbortedError, TimeoutError,
+                    transient_types = (ConnectionResetError, ConnectionRefusedError, ConnectionAbortedError, TimeoutError,
                                        _mersad_http_client.RemoteDisconnected)
                     if not isinstance(reason, transient_types) or attempt == len(delays):
                         raise
