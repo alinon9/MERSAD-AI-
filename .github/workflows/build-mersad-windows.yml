@@ -40,62 +40,11 @@ jobs:
             throw "Expected source file work/MERSAD_AI/mersad_live.py was not found in the ZIP."
           }
 
-      - name: Patch Windows byte-range lock initialization
+      - name: Apply Windows compatibility and security fixes
         shell: pwsh
         run: |
-          @'
-          from pathlib import Path
-
-          path = Path("work/MERSAD_AI/notify.py")
-          lines = path.read_text(encoding="utf-8").splitlines()
-          matches = [
-              i for i, line in enumerate(lines)
-              if line == "        elif msvcrt is not None:"
-              and i + 2 < len(lines)
-              and lines[i + 1].strip() == "fd.seek(0)"
-              and "msvcrt.LK_NBLCK" in lines[i + 2]
-          ]
-          if len(matches) != 1:
-              raise SystemExit(f"Expected one Windows acquire-lock branch, found {len(matches)}")
-          start = matches[0]
-          expected = [
-              "            fd.seek(0)",
-              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)",
-          ]
-          if lines[start + 1:start + 3] != expected:
-              raise SystemExit("Windows listener lock block did not match the expected source.")
-          fixed = [
-              "        elif msvcrt is not None:",
-              "            # Lock a real byte: msvcrt byte-range locks beyond EOF are not reliable.",
-              "            fd.seek(0, os.SEEK_END)",
-              "            if fd.tell() == 0:",
-              "                fd.write(bytes([0]))",
-              "                fd.flush()",
-              "            fd.seek(0)",
-              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)",
-          ]
-          lines[start:start + 3] = fixed
-          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          print("Applied Windows listener-lock byte initialization.")
-          '@ | python -
-
-      - name: Diagnose multiprocessing listener assertion
-        shell: pwsh
-        run: |
-          Write-Host "=== P0-E assertion context ==="
-          Select-String -Path "work/MERSAD_AI/selftest.py" -Pattern "P0-E|MP_OUT" -Context 28,18
-          Write-Host "=== Telegram listener ownership references ==="
-          Get-ChildItem "work/MERSAD_AI" -Recurse -File -Filter "*.py" |
-            Select-String -Pattern "listener_owner|telegram.*listener|listener.*telegram|MP_OUT|is_listener" -Context 2,3 |
-            Select-Object -First 180
-          Write-Host "=== Listener lock implementation ==="
-          Select-String -Path "work/MERSAD_AI/notify.py" -Pattern "def _acquire_listener_lock|def start_listener|def stop_listener|lock_fd|fcntl|msvcrt|chmod|fchmod" -Context 8,12
-          Write-Host "=== Windows secrets permission test ==="
-          Select-String -Path "work/MERSAD_AI/selftest.py" -Pattern "P1-D|interrupted secrets save|0o600" -Context 8,12
-          Write-Host "=== Secrets persistence implementation ==="
-          Get-ChildItem "work/MERSAD_AI" -Recurse -File -Filter "*.py" |
-            Select-String -Pattern "def _save_secrets_file|_SECRETS_FILE|def _.*key|_HMAC_KEY_CACHE|mersad_hmac.key|os.chmod|0o600" -Context 5,10 |
-            Select-Object -First 220
+          python ci/patch_windows_build.py work/MERSAD_AI
+          if ($LASTEXITCODE -ne 0) { throw "Windows compatibility patching failed." }
 
       - name: Set up Python 3.11 x64
         uses: actions/setup-python@v5
