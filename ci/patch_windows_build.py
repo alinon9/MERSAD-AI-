@@ -567,7 +567,8 @@ def patch_windows_slow_rtsp_threshold():
                 if "slow RTSP camera" in child.value or "does NOT block fast camera" in child.value:
                     return True
             if isinstance(child, ast.JoinedStr):
-                if "slow RTSP camera" in ast.get_source_segment(source, child) if ast.get_source_segment(source, child) else False:
+                joined_source = ast.get_source_segment(source, child) or ""
+                if "slow RTSP camera" in joined_source or "does NOT block fast camera" in joined_source:
                     return True
         return False
 
