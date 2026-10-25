@@ -476,6 +476,13 @@ replace_once(
 )
 replace_once(
     "selftest.py",
+    '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n            "m.log(\'session start\', cam)\\n"',
+    '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n            "# Hold ownership briefly so the peer definitely attempts acquisition while this process is alive.\\n"\n            "time.sleep(5.0)\\n"\n            "m.log(\'session start\', cam)\\n"',
+    "synchronize real overlap in multi-process listener test",
+)
+
+replace_once(
+    "selftest.py",
     '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))\n',
     '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:], mp_exit_codes))\n',
     "report P0-E child process exit codes",
