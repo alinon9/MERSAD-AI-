@@ -6,6 +6,7 @@ on:
     branches: [main, master]
     paths:
       - "MERSAD_AI_FIXED_5.zip"
+      - ".github/workflows/build-mersad-windows.yml"
 
 permissions:
   contents: read
@@ -52,7 +53,9 @@ jobs:
           .\venv\Scripts\python.exe -m pip install --upgrade pip
           .\venv\Scripts\python.exe -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
           .\venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-win-x64.txt
-          .\venv\Scripts\python.exe -m pip uninstall -y opencv-python-headless
+          # EasyOCR declares opencv-python-headless as a dependency. Keep that
+          # distribution installed so pip check passes, then reinstall the
+          # same-version full OpenCV wheel last so GUI-capable cv2 files win.
           .\venv\Scripts\python.exe -m pip install --force-reinstall --no-deps opencv-python==4.11.0.86
           .\venv\Scripts\python.exe -m pip install pyinstaller==6.11.1 -c constraints-win-x64.txt
           .\venv\Scripts\python.exe -m pip check
