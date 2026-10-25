@@ -600,6 +600,10 @@ def patch_windows_slow_rtsp_threshold():
                     lo, hi = max(0, i - 2), min(len(lines), i + 3)
                     for n in range(lo, hi):
                         print(f"{n + 1}: {lines[n]}", flush=True)
+        self_lines = (root / "selftest.py").read_text(encoding="utf-8").splitlines()
+        print("===== SELFTEST-P1-C-CONTEXT =====", flush=True)
+        for n in range(1305, min(1405, len(self_lines))):
+            print(f"{n + 1}: {self_lines[n]}", flush=True)
         raise SystemExit("No unique source call found for slow-RTSP timing threshold")
 
     # Prefer the smallest call containing both the test label and timing assertion.
