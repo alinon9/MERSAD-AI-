@@ -513,28 +513,53 @@ replace_once(
     '    return True\n',
     "retain listener thread handle",
 )
-replace_once(
-    "selftest.py",
-    '            "import os, sys, time, numpy as np\\n"\n',
-    '            "import os, sys, time, numpy as np, faulthandler\\n"\n'
-    '            "faulthandler.enable(all_threads=True)\\n"\n',
-    "enable faulthandler in multi-process regression workers",
-)
-replace_once(
-    "selftest.py",
-    '            "import mersad_live as m, threading\\n"\n',
-    '            "import mersad_live as m, threading, notify as n\\n"\n',
-    "import notifier module for child worker shutdown",
-)
-replace_once(
-    "selftest.py",
-    '            "m._sync_alerts_from_db()\\n"\n',
-    '            "m._sync_alerts_from_db()\\n"\n'
-    '            "stop_ev.set()\\n"\n'
-    "            \"listener_thread = getattr(n, '_LISTENER_THREAD', None)\\n\"\n"
-    '            "if listener_thread is not None: listener_thread.join(timeout=5.0)\\n"\n',
-    "gracefully stop listener worker before subprocess exit",
-)
+def patch_p0e_worker_shutdown():
+    """Make the P0-E multi-process lock test deterministic and stop its polling thread cleanly."""
+    p = root / "selftest.py"
+    source = p.read_text(encoding="utf-8")
+    marker = "MERSAD_P0E_COOPERATIVE_LISTENER_SHUTDOWN"
+    if marker in source:
+        return
+    section_marker = "    # P0-E & P2-6: Real 2-process CONCURRENT stress test"
+    start = source.find(section_marker)
+    if start < 0:
+        raise SystemExit("selftest.py: P0-E multiprocessing test section was not found")
+
+    def replace_first_after(old, new, label):
+        nonlocal source
+        pos = source.find(old, start)
+        if pos < 0:
+            raise SystemExit(f"selftest.py: P0-E target not found for {label}")
+        source = source[:pos] + new + source[pos + len(old):]
+
+    old_import = '            "import mersad_live as m, threading\\n"\n'
+    new_import = '            "import mersad_live as m, threading, notify as n\\n"\n'
+    replace_first_after(old_import, new_import, "import shared notifier module")
+
+    old_event = '            "stop_ev = threading.Event()\\n"\n'
+    new_event = (
+        old_event
+        + '            "def fake_tg_call(*args, **kwargs):\\n"\n'
+        + '            "    stop_ev.wait(0.1)\\n"\n'
+        + "            \"    return {'ok': True, 'result': []}\\n\"\n"
+        + '            "n._call = fake_tg_call\\n"\n'
+    )
+    replace_first_after(old_event, new_event, "stub Telegram polling while testing lock ownership")
+
+    old_sync = '            "m._sync_alerts_from_db()\\n"\n'
+    new_sync = (
+        old_sync
+        + '            "stop_ev.set()\\n"\n'
+        + "            \"listener_thread = getattr(n, '_LISTENER_THREAD', None)\\n\"\n"
+        + '            "if listener_thread is not None: listener_thread.join(timeout=10.0)\\n"\n'
+        + '            "print(\'MERSAD_P0E_COOPERATIVE_LISTENER_SHUTDOWN\')\\n"\n'
+    )
+    replace_first_after(old_sync, new_sync, "stop and join listener before worker process exit")
+    p.write_text(source, encoding="utf-8", newline="")
+
+
+patch_p0e_worker_shutdown()
+
 
 # Windows self-test reliability: retry transient resets only for idempotent GETs to
 # the loopback dashboard. Persistent service failures still fail the test.
