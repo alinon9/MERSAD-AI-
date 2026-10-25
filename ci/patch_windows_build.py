@@ -555,13 +555,9 @@ def patch_selftest_local_get_retry():
 # Increase only this check to 0.90s; do not change its frame-count assertions.
 def patch_windows_slow_rtsp_threshold():
     import re
-    p = root / "selftest.py"
-    source = p.read_text(encoding="utf-8")
-    if "MERSAD_WINDOWS_RTSP_THRESHOLD_090" in source:
-        return
-    tree = ast.parse(source, filename="selftest.py")
+    compare_pattern = re.compile(r"(?P<op><=|<)(?P<ws>\s*)(?:0\.8(?:0*)?|\.8(?:0*)?)(?![\d.])")
 
-    def has_target_label(node):
+    def has_target_label(node, source):
         for child in ast.walk(node):
             if isinstance(child, ast.Constant) and isinstance(child.value, str):
                 if "slow RTSP camera" in child.value or "does NOT block fast camera" in child.value:
@@ -572,35 +568,56 @@ def patch_windows_slow_rtsp_threshold():
                     return True
         return False
 
-    candidates = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "check"
-        and has_target_label(node)
-    ]
-    if len(candidates) != 1:
-        print(f"selftest.py: expected one slow-RTSP check call, found {len(candidates)}", flush=True)
-        for needle in ("slow RTSP", "RTSP camera", "does NOT block fast camera", "0.80"):
-            pos = source.lower().find(needle.lower())
-            if pos >= 0:
-                print(f"===== SELFTEST-SLOW-RTSP-CONTEXT ({needle}) =====", flush=True)
-                print(source[max(0, pos - 1800):min(len(source), pos + 1800)], flush=True)
-        raise SystemExit(f"selftest.py: expected one slow-RTSP check call, found {len(candidates)}")
-    old_segment = ast.get_source_segment(source, candidates[0])
-    if not old_segment:
-        raise SystemExit("selftest.py: unable to read slow-RTSP check source")
+    candidates = []
+    python_files = [p for p in root.rglob("*.py") if not any(part in {".venv", "venv", "__pycache__"} for part in p.parts)]
+    for p in python_files:
+        source = p.read_text(encoding="utf-8")
+        if "MERSAD_WINDOWS_RTSP_THRESHOLD_090" in source:
+            return
+        try:
+            tree = ast.parse(source, filename=str(p.relative_to(root)))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not has_target_label(node, source):
+                continue
+            segment = ast.get_source_segment(source, node)
+            if segment and compare_pattern.search(segment):
+                candidates.append((p, source, segment, len(segment)))
+
+    if not candidates:
+        # Print nearby source from all Python files to make a future failure actionable.
+        print("Unable to match slow-RTSP assertion call; locating RTSP/timing source.", flush=True)
+        for p in python_files:
+            try:
+                lines = p.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                continue
+            hits = [i for i, line in enumerate(lines) if "rtsp" in line.lower() or "0.80" in line or "0.8" in line]
+            if hits:
+                print(f"===== RTSP-SOURCE {p.relative_to(root)} =====", flush=True)
+                for i in hits[:12]:
+                    lo, hi = max(0, i - 2), min(len(lines), i + 3)
+                    for n in range(lo, hi):
+                        print(f"{n + 1}: {lines[n]}", flush=True)
+        raise SystemExit("No unique source call found for slow-RTSP timing threshold")
+
+    # Prefer the smallest call containing both the test label and timing assertion.
+    candidates.sort(key=lambda item: item[3])
+    p, source, old_segment, _ = candidates[0]
     segment = old_segment.replace("0.80s", "0.90s").replace("0.80 s", "0.90 s")
-    segment, count = re.subn(
-        r"(?P<op><=|<)(?P<ws>\s*)(?:0\.8(?:0*)?|\.8(?:0*)?)(?![\d.])",
+    segment, count = compare_pattern.subn(
         lambda match: match.group("op") + match.group("ws") + "0.9",
         segment,
     )
     if count != 1:
-        raise SystemExit(f"selftest.py: expected one 0.8-second comparison inside slow-RTSP check, found {count}")
+        raise SystemExit(f"{p.relative_to(root)}: expected one 0.8-second comparison inside slow-RTSP check, found {count}")
     segment = segment + "  # MERSAD_WINDOWS_RTSP_THRESHOLD_090"
-    source = source.replace(old_segment, segment, 1)
-    p.write_text(source, encoding="utf-8", newline="")
+    updated = source.replace(old_segment, segment, 1)
+    if updated == source:
+        raise SystemExit(f"{p.relative_to(root)}: slow-RTSP patch produced no change")
+    p.write_text(updated, encoding="utf-8", newline="")
+    print(f"Updated only the slow-RTSP timing assertion in {p.relative_to(root)} to 0.90s.", flush=True)
 
 
 patch_selftest_local_get_retry()
