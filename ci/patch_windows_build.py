@@ -531,7 +531,7 @@ replace_once(
     '            "m._sync_alerts_from_db()\\n"\n',
     '            "m._sync_alerts_from_db()\\n"\n'
     '            "stop_ev.set()\\n"\n'
-    '            "listener_thread = getattr(n, \\'_LISTENER_THREAD\\', None)\\n"\n'
+    "            \"listener_thread = getattr(n, '_LISTENER_THREAD', None)\\n\"\n"
     '            "if listener_thread is not None: listener_thread.join(timeout=5.0)\\n"\n',
     "gracefully stop listener worker before subprocess exit",
 )
