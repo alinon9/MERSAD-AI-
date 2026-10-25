@@ -40,6 +40,34 @@ jobs:
             throw "Expected source file work/MERSAD_AI/mersad_live.py was not found in the ZIP."
           }
 
+      - name: Patch Windows byte-range lock initialization
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path("work/MERSAD_AI/notify.py")
+          src = p.read_text(encoding="utf-8")
+          old = (
+              "        elif msvcrt is not None:\\n"
+              "            fd.seek(0)\\n"
+              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)\\n"
+          )
+          new = (
+              "        elif msvcrt is not None:\\n"
+              "            # The Windows CRT byte-range lock must target an existing byte.\\n"
+              "            fd.seek(0, os.SEEK_END)\\n"
+              "            if fd.tell() == 0:\\n"
+              "                fd.write(b'\\\\0')\\n"
+              "                fd.flush()\\n"
+              "            fd.seek(0)\\n"
+              "            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)\\n"
+          )
+          if src.count(old) != 1:
+              raise SystemExit(f"Expected one Windows lock block, found {src.count(old)}")
+          p.write_text(src.replace(old, new, 1), encoding="utf-8", newline="")
+          print("Applied Windows listener-lock byte initialization.")
+          '@ | python -
+
       - name: Diagnose multiprocessing listener assertion
         shell: pwsh
         run: |
@@ -53,6 +81,10 @@ jobs:
           Select-String -Path "work/MERSAD_AI/notify.py" -Pattern "def _acquire_listener_lock|def start_listener|def stop_listener|lock_fd|fcntl|msvcrt|chmod|fchmod" -Context 8,12
           Write-Host "=== Windows secrets permission test ==="
           Select-String -Path "work/MERSAD_AI/selftest.py" -Pattern "P1-D|interrupted secrets save|0o600" -Context 8,12
+          Write-Host "=== Secrets persistence implementation ==="
+          Get-ChildItem "work/MERSAD_AI" -Recurse -File -Filter "*.py" |
+            Select-String -Pattern "def _save_secrets_file|_SECRETS_FILE|def _.*key|_HMAC_KEY_CACHE|mersad_hmac.key|os.chmod|0o600" -Context 5,10 |
+            Select-Object -First 220
 
       - name: Set up Python 3.11 x64
         uses: actions/setup-python@v5
