@@ -546,6 +546,8 @@ def patch_p0e_worker_shutdown():
             '            "    stop_ev.wait(0.1)\\n"\n'
             "            \"    return {'ok': True, 'result': []}\\n\"\n"
             '            "n._call = fake_tg_call\\n"\n'
+            '            "m.send_alert = lambda *args, **kwargs: None\\n"\n'
+            '            "n.send_alert = lambda *args, **kwargs: None\\n"\n'
         ),
         "stub Telegram polling while testing lock ownership",
     )
