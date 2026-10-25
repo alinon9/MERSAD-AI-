@@ -310,4 +310,26 @@ replace_once(
 for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
     ast.parse((root / name).read_text(encoding="utf-8"), filename=name)
 
+# Emit targeted source context in CI logs so remaining Windows failures can be fixed from evidence.
+for file_name, line_ranges in {
+    "notify.py": [(1, 250)],
+    "selftest.py": [(650, 720), (850, 970), (1330, 1375)],
+    "mersad_live.py": [(1900, 1965)],
+}.items():
+    source_lines = (root / file_name).read_text(encoding="utf-8").splitlines()
+    print(f"\\n===== WINDOWS-DIAG {file_name} =====", flush=True)
+    if file_name == "notify.py":
+        for idx, line in enumerate(source_lines, 1):
+            if any(token in line.lower() for token in ("listener", "msvcrt.locking", "telegram")):
+                lo, hi = max(1, idx - 5), min(len(source_lines), idx + 11)
+                print(f"--- {file_name}:{lo}-{hi} ---", flush=True)
+                for n in range(lo, hi + 1):
+                    print(f"{n}: {source_lines[n-1]}", flush=True)
+    else:
+        for lo, hi in line_ranges:
+            lo, hi = min(lo, len(source_lines)), min(hi, len(source_lines))
+            print(f"--- {file_name}:{lo}-{hi} ---", flush=True)
+            for n in range(lo, hi + 1):
+                print(f"{n}: {source_lines[n-1]}", flush=True)
+
 print("Patched Windows file locks, private ACLs, and Windows-valid security/path tests.")
