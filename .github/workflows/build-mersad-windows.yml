@@ -48,9 +48,15 @@ jobs:
 
           path = Path("work/MERSAD_AI/notify.py")
           lines = path.read_text(encoding="utf-8").splitlines()
-          matches = [i for i, line in enumerate(lines) if line == "        elif msvcrt is not None:"]
+          matches = [
+              i for i, line in enumerate(lines)
+              if line == "        elif msvcrt is not None:"
+              and i + 2 < len(lines)
+              and lines[i + 1].strip() == "fd.seek(0)"
+              and "msvcrt.LK_NBLCK" in lines[i + 2]
+          ]
           if len(matches) != 1:
-              raise SystemExit(f"Expected one Windows lock branch, found {len(matches)}")
+              raise SystemExit(f"Expected one Windows acquire-lock branch, found {len(matches)}")
           start = matches[0]
           expected = [
               "            fd.seek(0)",
