@@ -467,6 +467,19 @@ replace_between(
     "MERSAD_ISOLATED_UNCALIBRATED_ROUTE_NOTICE_TEST",
 )
 
+replace_once(
+    "selftest.py",
+    '        o1, e1 = p1.communicate(timeout=30)\n        o2, e2 = p2.communicate(timeout=30)\n',
+    '        o1, e1 = p1.communicate(timeout=30)\n        o2, e2 = p2.communicate(timeout=30)\n        mp_exit_codes = (p1.returncode, p2.returncode)\n',
+    "capture P0-E child process exit codes",
+)
+replace_once(
+    "selftest.py",
+    '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))\n',
+    '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:], mp_exit_codes))\n',
+    "report P0-E child process exit codes",
+)
+
 for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
     ast.parse((root / name).read_text(encoding="utf-8"), filename=name)
 
