@@ -580,6 +580,12 @@ def patch_windows_slow_rtsp_threshold():
         and has_target_label(node)
     ]
     if len(candidates) != 1:
+        print(f"selftest.py: expected one slow-RTSP check call, found {len(candidates)}", flush=True)
+        for needle in ("slow RTSP", "RTSP camera", "does NOT block fast camera", "0.80"):
+            pos = source.lower().find(needle.lower())
+            if pos >= 0:
+                print(f"===== SELFTEST-SLOW-RTSP-CONTEXT ({needle}) =====", flush=True)
+                print(source[max(0, pos - 1800):min(len(source), pos + 1800)], flush=True)
         raise SystemExit(f"selftest.py: expected one slow-RTSP check call, found {len(candidates)}")
     old_segment = ast.get_source_segment(source, candidates[0])
     if not old_segment:
