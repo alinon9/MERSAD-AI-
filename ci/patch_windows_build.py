@@ -25,24 +25,128 @@ def insert_after_once(file, anchor, insertion, marker):
         raise SystemExit(f"{file}: expected one anchor for {marker}, found {text.count(anchor)}")
     p.write_text(text.replace(anchor, anchor + insertion, 1), encoding="utf-8", newline="")
 
-# Windows CRT byte-range locks must target an existing byte at offset zero.
-insert_after_once(
+def replace_function(file, name, new_source):
+    p = root / file
+    text = p.read_text(encoding="utf-8")
+    tree = ast.parse(text, filename=file)
+    matches = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
+    if len(matches) != 1:
+        raise SystemExit(f"{file}: expected one function {name}, found {len(matches)}")
+    node = matches[0]
+    lines = text.splitlines()
+    start, end = node.lineno - 1, node.end_lineno
+    replacement = new_source.strip("\\n").splitlines()
+    p.write_text("\\n".join(lines[:start] + replacement + lines[end:]) + "\\n", encoding="utf-8", newline="")
+
+
+def replace_between(file, start_marker, end_marker, new_source, marker):
+    p = root / file
+    text = p.read_text(encoding="utf-8")
+    if marker in text:
+        return
+    if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+        raise SystemExit(f"{file}: expected unique boundaries for {marker}")
+    start = text.index(start_marker)
+    end = text.index(end_marker, start)
+    if end <= start:
+        raise SystemExit(f"{file}: invalid boundary order for {marker}")
+    p.write_text(text[:start] + new_source.rstrip() + "\\n\\n" + text[end:], encoding="utf-8", newline="")
+
+# Use a named Windows mutex: file-region locking was not exclusive on the CI runner.
+replace_function(
     "notify.py",
-    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n',
-    "\n\n# MERSAD_WINDOWS_LOCK_HELPER_MARKER\ndef _ensure_windows_lock_byte(fd):\n"
-    "    fd.seek(0, os.SEEK_END)\n"
-    "    if fd.tell() == 0:\n"
-    "        fd.write(bytes([0]))\n"
-    "        fd.flush()\n"
-    "    fd.seek(0)\n",
-    "MERSAD_WINDOWS_LOCK_HELPER_MARKER",
+    "_acquire_listener_lock",
+    r"""
+def _acquire_listener_lock():
+    """Acquire one process-wide Telegram polling owner lock."""
+    global _LISTENER_LOCK_FD
+    tok_hash = hashlib.sha256((os.getenv("TELEGRAM_TOKEN") or "").encode("utf-8")).hexdigest()[:16]
+    if os.name == "nt":
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.GetLastError.restype = ctypes.c_ulong
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        name = "Local\\MERSAD_TG_LISTENER_" + tok_hash
+        handle = kernel32.CreateMutexW(None, 1, name)
+        if not handle:
+            log.warning("Unable to create Telegram listener mutex (WinError %s)", ctypes.get_last_error())
+            return None
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            return None
+        lock = ("windows_mutex", handle, kernel32)
+        _LISTENER_LOCK_FD = lock
+        return lock
+
+    base_dir = os.environ.get("MERSAD_DATA_DIR") or os.getcwd()
+    lock_path = os.path.join(base_dir, f".tg_listener_{tok_hash[:8]}.lock")
+    fd = None
+    try:
+        fd = open(lock_path, "a+b")
+        if fcntl is not None:
+            fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif msvcrt is not None:
+            fd.seek(0, os.SEEK_END)
+            if fd.tell() == 0:
+                fd.write(bytes([0]))
+                fd.flush()
+            fd.seek(0)
+            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+        _LISTENER_LOCK_FD = fd
+        return fd
+    except (OSError, IOError):
+        try:
+            if fd is not None:
+                fd.close()
+        except Exception:
+            pass
+        return None
+""",
 )
-replace_once(
+replace_function(
     "notify.py",
-    "        elif msvcrt is not None:\n            fd.seek(0)\n            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)\n",
-    "        elif msvcrt is not None:\n            _ensure_windows_lock_byte(fd)\n            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)\n",
-    "Telegram listener byte-range lock",
+    "_release_listener_lock",
+    r"""
+def _release_listener_lock(fd):
+    global _LISTENER_LOCK_FD
+    if fd is None:
+        return
+    if isinstance(fd, tuple) and len(fd) == 3 and fd[0] == "windows_mutex":
+        _, handle, kernel32 = fd
+        try:
+            import ctypes
+            kernel32.ReleaseMutex.argtypes = [ctypes.c_void_p]
+            kernel32.ReleaseMutex.restype = ctypes.c_int
+            kernel32.ReleaseMutex(handle)
+        except Exception:
+            pass
+        try:
+            kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+        if _LISTENER_LOCK_FD is fd:
+            _LISTENER_LOCK_FD = None
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+        elif msvcrt is not None:
+            fd.seek(0)
+            msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+    except Exception:
+        pass
+    try:
+        fd.close()
+    except Exception:
+        pass
+    if _LISTENER_LOCK_FD is fd:
+        _LISTENER_LOCK_FD = None
+""",
 )
+
 
 replace_once(
     "registry.py",
@@ -149,14 +253,22 @@ def _windows_acl_call(path, script):
 def _set_windows_private_acl(path, is_dir=False):
     if os.name != "nt":
         return True
+    path = os.path.abspath(path)
     if not os.path.exists(path):
         raise OSError(f"Cannot set ACL on missing path: {path}")
+    # Protect each parent directory once. Atomic temp files inherit its private
+    # owner-only ACL; do not launch PowerShell for every config save.
+    cache = globals().setdefault("_WINDOWS_PRIVATE_DIRS", set())
+    key = os.path.normcase(path)
+    if is_dir and key in cache:
+        return True
     _windows_current_user_sid()
     _windows_acl_call(path, _windows_acl_script(check_only=False, is_dir=is_dir))
     if not _windows_acl_is_private(path):
         raise OSError(f"Could not verify private Windows ACL on {path}")
+    if is_dir:
+        cache.add(key)
     return True
-
 
 def _windows_acl_is_private(path):
     if os.name != "nt":
@@ -307,6 +419,52 @@ replace_once(
     '                os.chmod(ro_install, 0o755)\n',
     "restore Windows read-only ACL after test")
 
+replace_between(
+    "selftest.py",
+    "        # P1-4 & P1-F: Uncalibrated route conflict",
+    "        # Consent revocation immediately removes face samples and stops matching",
+    r"""
+        # P1-4 & P1-F: Isolated uncalibrated route-notice test (avoid stale sightings/topology).
+        uncal_plate = str(90000 + (os.getpid() % 10000))
+        saved_links = m.db.execute("SELECT from_cam, to_cam, min_sec, expected_sec, source FROM camera_links").fetchall()
+        try:
+            with m.DBL:
+                m.db.execute("DELETE FROM sightings WHERE plate=?", (uncal_plate,))
+                m.db.execute("DELETE FROM camera_links")
+                m.db.commit()
+            if m.INS:
+                m.INS.configure_topology()
+                m.INS.M["last_cam"].pop(uncal_plate, None)
+            msg_uncal, _ = m.register(uncal_plate, 0.91, "CAM1", "car", session_id="s_cam1")
+            time.sleep(0.05)
+            msg_uncal2, _ = m.register(uncal_plate, 0.91, "CAM2", "car", session_id="s_cam2")
+            aid_uncal = m.raise_alert(msg_uncal2, uncal_plate, "CAM2", np.zeros((100, 100, 3), np.uint8))
+            wait(lambda: any(uncal_plate in f.get("caption", "") for f in calls("sendPhoto")), t=3.0)
+            uncal_photo = next(f for f in calls("sendPhoto") if uncal_plate in f.get("caption", ""))
+            check("P1-4", "uncalibrated route conflict raises 'ROUTE NOTICE (uncalibrated)' (🔵 للعلم) with NO patrol dispatch buttons",
+                  msg_uncal2 == "ROUTE NOTICE (uncalibrated)" and "🔵 للعلم" in uncal_photo["caption"]
+                  and "reply_markup" not in uncal_photo, uncal_photo)
+            res_conf_info = post("/api/decision", {"id": aid_uncal, "action": "confirm"})
+            check("P1-F", "server rejects decide('confirm') on INFO_ONLY / uncalibrated route notice alert",
+                  res_conf_info.get("ok") is False and db_q("select status from alerts where id=?", aid_uncal)[0][0] == "pending", res_conf_info)
+            post("/api/decision", {"id": aid_uncal, "action": "ack"})
+        finally:
+            with m.DBL:
+                m.db.execute("DELETE FROM sightings WHERE plate=?", (uncal_plate,))
+                m.db.execute("DELETE FROM camera_links")
+                m.db.executemany(
+                    "INSERT INTO camera_links(from_cam, to_cam, min_sec, expected_sec, source) VALUES(?,?,?,?,?)",
+                    saved_links
+                )
+                m.db.commit()
+            if m.INS:
+                m.INS.configure_topology()
+                m.INS.M["last_cam"].pop(uncal_plate, None)
+
+""",
+    "MERSAD_ISOLATED_UNCALIBRATED_ROUTE_NOTICE_TEST",
+)
+
 for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
     ast.parse((root / name).read_text(encoding="utf-8"), filename=name)
 
@@ -332,4 +490,4 @@ for file_name, line_ranges in {
             for n in range(lo, hi + 1):
                 print(f"{n}: {source_lines[n-1]}", flush=True)
 
-print("Patched Windows file locks, private ACLs, and Windows-valid security/path tests.")
+print("Patched Windows listener mutex, inherited private ACLs, and isolated Windows integration fixtures.")
