@@ -49,6 +49,10 @@ jobs:
           Get-ChildItem "work/MERSAD_AI" -Recurse -File -Filter "*.py" |
             Select-String -Pattern "listener_owner|telegram.*listener|listener.*telegram|MP_OUT|is_listener" -Context 2,3 |
             Select-Object -First 180
+          Write-Host "=== Listener lock implementation ==="
+          Select-String -Path "work/MERSAD_AI/notify.py" -Pattern "def _acquire_listener_lock|def start_listener|def stop_listener|lock_fd|fcntl|msvcrt|chmod|fchmod" -Context 8,12
+          Write-Host "=== Windows secrets permission test ==="
+          Select-String -Path "work/MERSAD_AI/selftest.py" -Pattern "P1-D|interrupted secrets save|0o600" -Context 8,12
 
       - name: Set up Python 3.11 x64
         uses: actions/setup-python@v5
