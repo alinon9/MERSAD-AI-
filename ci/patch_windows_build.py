@@ -85,6 +85,7 @@ def _windows_acl_script(check_only=False, is_dir=False):
     if check_only:
         return r"""
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $p = $env:MERSAD_ACL_PATH
 $acl = Get-Acl -LiteralPath $p
 if (-not $acl.AreAccessRulesProtected) { exit 21 }
@@ -103,6 +104,7 @@ exit 0
     dir_flag = "$true" if is_dir else "$false"
     return r"""
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $p = $env:MERSAD_ACL_PATH
 $isDir = """ + dir_flag + r"""
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -129,7 +131,7 @@ Set-Acl -LiteralPath $p -AclObject $acl
 def _windows_acl_call(path, script):
     env = dict(os.environ)
     env["MERSAD_ACL_PATH"] = os.path.abspath(path)
-    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+    powershell = shutil.which("pwsh.exe") or shutil.which("powershell.exe")
     if not powershell:
         raise OSError("PowerShell is required to secure Windows secret-file ACLs")
     proc = subprocess.run(
