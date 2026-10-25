@@ -494,8 +494,8 @@ replace_once(
 # intermittently producing Windows STATUS_ACCESS_VIOLATION (0xC0000005).
 replace_once(
     "notify.py",
-    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\\n_LISTENER_LOCK_FD = None\\n',
-    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\\n_LISTENER_LOCK_FD = None\\n_LISTENER_THREAD = None\\n',
+    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n',
+    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n_LISTENER_THREAD = None\n',
     "track Telegram listener thread",
 )
 replace_once(
