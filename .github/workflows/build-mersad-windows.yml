@@ -40,6 +40,16 @@ jobs:
             throw "Expected source file work/MERSAD_AI/mersad_live.py was not found in the ZIP."
           }
 
+      - name: Diagnose multiprocessing listener assertion
+        shell: pwsh
+        run: |
+          Write-Host "=== P0-E assertion context ==="
+          Select-String -Path "work/MERSAD_AI/selftest.py" -Pattern "P0-E|MP_OUT" -Context 28,18
+          Write-Host "=== Telegram listener ownership references ==="
+          Get-ChildItem "work/MERSAD_AI" -Recurse -File -Filter "*.py" |
+            Select-String -Pattern "listener_owner|telegram.*listener|listener.*telegram|MP_OUT|is_listener" -Context 2,3 |
+            Select-Object -First 180
+
       - name: Set up Python 3.11 x64
         uses: actions/setup-python@v5
         with:
