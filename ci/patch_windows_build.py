@@ -338,12 +338,16 @@ replace_once(
     '                raise RuntimeError(f"Cannot securely protect Windows HMAC key at {key_path}: {e}") from e\n',
     "secure existing HMAC key",
 )
-replace_once(
-    "registry.py",
-    '            elif msvcrt is not None:\n                fd.seek(0)\n                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)\n',
-    '            elif msvcrt is not None:\n                _ensure_windows_lock_byte(fd)\n                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)\n',
-    "SQLite Windows IPC lock byte-range",
-)
+# V7.1 already initializes the Windows sidecar byte before locking in
+# interprocess_db_lock(); preserve that stronger implementation.
+_registry_source = (root / "registry.py").read_text(encoding="utf-8")
+if "_ensure_lock_byte(opened_fd)" not in _registry_source and "_ensure_windows_lock_byte(fd)" not in _registry_source:
+    replace_once(
+        "registry.py",
+        '            elif msvcrt is not None:\\n                fd.seek(0)\\n                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)\\n',
+        '            elif msvcrt is not None:\\n                _ensure_windows_lock_byte(fd)\\n                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)\\n',
+        "SQLite Windows IPC lock byte-range",
+    )
 
 # If a secrets file already exists, verify/restrict the Windows ACL before reading.
 replace_once(
