@@ -151,12 +151,36 @@ def _release_listener_lock(fd):
 )
 
 
-replace_once(
-    "registry.py",
-    "import contextlib, csv, hashlib, hmac, io, os, re, secrets, shutil, sqlite3, stat, threading, time\n",
-    "import contextlib, csv, hashlib, hmac, io, os, re, secrets, shutil, sqlite3, stat, subprocess, threading, time\n",
-    "Windows ACL subprocess support",
-)
+# V7.1 adds logging to this import list; the legacy V5 source did not.
+def ensure_registry_subprocess_import():
+    p = root / "registry.py"
+    lines = p.read_text(encoding="utf-8").splitlines(keepends=True)
+    if any(line.startswith("import ") and "subprocess" in line and "sqlite3" in line for line in lines):
+        return
+    target = next((i for i, line in enumerate(lines)
+                   if line.startswith("import contextlib, csv, hashlib, hmac, io,")
+                   and "sqlite3" in line and "threading, time" in line), None)
+    if target is None:
+        raise SystemExit("registry.py: no supported import line for Windows ACL subprocess support")
+    lines[target] = lines[target].replace("threading, time", "subprocess, threading, time", 1)
+    p.write_text("".join(lines), encoding="utf-8", newline="")
+
+ensure_registry_subprocess_import():
+    p = root / "registry.py"
+    src = p.read_text(encoding="utf-8")
+    if re.search(r"^import .*\\bsubprocess\\b", src, re.M):
+        return
+    candidates = (
+        "import contextlib, csv, hashlib, hmac, io, logging, os, re, secrets, shutil, sqlite3, stat, threading, time\\n",
+        "import contextlib, csv, hashlib, hmac, io, os, re, secrets, shutil, sqlite3, stat, threading, time\\n",
+    )
+    matches = [line for line in candidates if line in src]
+    if len(matches) != 1:
+        raise SystemExit(f"registry.py: expected one supported import line for Windows ACL subprocess support, found {len(matches)}")
+    src = src.replace(matches[0], matches[0].replace("threading, time", "subprocess, threading, time"), 1)
+    p.write_text(src, encoding="utf-8", newline="")
+
+ensure_registry_subprocess_import()
 
 acl_helpers = r'''
 
