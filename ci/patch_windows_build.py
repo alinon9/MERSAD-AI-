@@ -854,7 +854,7 @@ patch_ultralytics_autoinstall_guard("mersad_ai.spec", "MERSAD_SPEC_ULTRALYTICS_A
 _build_bat = root / "BUILD_EXE.bat"
 if _build_bat.exists():
     _build_text = _build_bat.read_text(encoding="utf-8")
-    if "YOLO_AUTOINSTALL=false" not in _build_text.upper().replace('"', '').replace(' ', ''):
+    if "yolo_autoinstall=false" not in _build_text.lower().replace('"', '').replace(' ', ''):
         _build_lines = _build_text.splitlines(keepends=True)
         _echo_i = next((i for i, line in enumerate(_build_lines) if line.strip().lower() in ("@echo off", "echo off")), None)
         _insert_at = _echo_i + 1 if _echo_i is not None else 0
