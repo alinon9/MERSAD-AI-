@@ -745,9 +745,57 @@ replace_once(
 )
 
 
+
+# MERSAD_VALIDATE_GUI_OPENCV_WITH_EASYOCR_HEADLESS_METADATA
+# EasyOCR requires the headless distribution metadata. The workflow deliberately installs
+# the full OpenCV wheel afterwards, replacing the active cv2 binary with a GUI-capable build.
+# Validate the active binary rather than rejecting the required package metadata by itself.
+replace_once(
+    "check_install.py",
+    "def _file_sha256(path):",
+    '''def _opencv_gui_build_available():
+    """Return True only when the active cv2 module exposes a GUI backend."""
+    try:
+        import cv2
+        info = cv2.getBuildInformation()
+        match = re.search(r"(?m)^\\s*GUI:\\s*(.*?)\\s*$", info)
+        gui = match.group(1).strip().upper() if match else ""
+        if os.name == "nt":
+            return "WIN32UI" in gui
+        return bool(gui) and gui not in ("NONE", "NO")
+    except Exception:
+        return False
+
+
+def _file_sha256(path):''',
+    "add active OpenCV GUI backend verification",
+)
+replace_once(
+    "check_install.py",
+    '    headless_ver = _pkg_version("opencv-python-headless")\\n    if headless_ver is not None:\\n',
+    '    headless_ver = _pkg_version("opencv-python-headless")\\n    if headless_ver is not None and not _opencv_gui_build_available():\\n',
+    "report a headless OpenCV conflict only when active cv2 lacks GUI support",
+)
+
+_check_install_path = root / "check_install.py"
+_check_install_text = _check_install_path.read_text(encoding="utf-8")
+_headless_reject = '''        if "opencv-python-headless" in cur["installed"]:
+            return False, "conflicting_opencv_python_headless_present"'''
+_headless_gui_guard = '''        if "opencv-python-headless" in cur["installed"] and not _opencv_gui_build_available():
+            return False, "conflicting_opencv_python_headless_present"'''
+if _headless_reject in _check_install_text:
+    if _check_install_text.count(_headless_reject) != 2:
+        raise SystemExit("check_install.py: expected exactly two headless readiness guards")
+    _check_install_text = _check_install_text.replace(_headless_reject, _headless_gui_guard)
+    _check_install_path.write_text(_check_install_text, encoding="utf-8", newline="")
+elif _headless_gui_guard not in _check_install_text:
+    raise SystemExit("check_install.py: readiness guard has an unexpected source shape")
+
+
+
 patch_selftest_local_get_retry()
 
-for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
+for name in ("notify.py", "registry.py", "mersad_live.py", "check_install.py", "selftest.py"):
     ast.parse((root / name).read_text(encoding="utf-8"), filename=name)
 
 # Emit targeted source context in CI logs so remaining Windows failures can be fixed from evidence.
