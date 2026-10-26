@@ -1,18 +1,20 @@
-name: Build MERSAD AI Windows EXE
+name: Build MERSAD AI V7.1 Windows EXE
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+      - build/v7.1-windows-exe
     paths:
       - "MERSAD_AI_FIXED_5.zip"
       - ".github/workflows/build-mersad-windows.yml"
-      - "ci/patch_windows_build.py"
+      - "ci/v7patch/*.b64"
 
 permissions:
   contents: read
 
-# Ensure Arabic test labels can be printed on Windows runners (default may be cp1252).
 env:
   PYTHONUTF8: "1"
   PYTHONIOENCODING: "utf-8"
@@ -20,32 +22,25 @@ env:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check source archive exists
+      - name: Confirm base source archive and V7.1 patch parts
         shell: pwsh
         run: |
-          if (!(Test-Path "MERSAD_AI_FIXED_5.zip")) {
-            throw "Upload MERSAD_AI_FIXED_5.zip to the repository root first."
-          }
+          if (!(Test-Path "MERSAD_AI_FIXED_5.zip")) { throw "Base source archive is missing." }
+          $parts = @(Get-ChildItem "ci/v7patch/part*.b64" -File | Sort-Object Name)
+          if ($parts.Count -ne 11) { throw "Expected 11 V7.1 patch chunks, found $($parts.Count)." }
+          Write-Host "Found all $($parts.Count) source-patch chunks."
 
-      - name: Extract source archive
+      - name: Extract base source archive
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "work" | Out-Null
           Expand-Archive -LiteralPath "MERSAD_AI_FIXED_5.zip" -DestinationPath "work" -Force
-          if (!(Test-Path "work/MERSAD_AI/mersad_live.py")) {
-            throw "Expected source file work/MERSAD_AI/mersad_live.py was not found in the ZIP."
-          }
-
-      - name: Apply Windows compatibility and security fixes
-        shell: pwsh
-        run: |
-          python ci/patch_windows_build.py work/MERSAD_AI
-          if ($LASTEXITCODE -ne 0) { throw "Windows compatibility patching failed." }
+          if (!(Test-Path "work/MERSAD_AI/mersad_live.py")) { throw "Expected source file work/MERSAD_AI/mersad_live.py was not found." }
 
       - name: Set up Python 3.11 x64
         uses: actions/setup-python@v5
@@ -57,77 +52,141 @@ jobs:
             work/MERSAD_AI/requirements.txt
             work/MERSAD_AI/constraints-win-x64.txt
 
-      - name: Install pinned dependencies
+      - name: Apply authenticated V7.1 source delta
+        shell: pwsh
+        run: |
+          $parts = @(Get-ChildItem "ci/v7patch/part*.b64" -File | Sort-Object Name)
+          $encoded = ($parts | ForEach-Object { [IO.File]::ReadAllText($_.FullName).Trim() }) -join ""
+          $xzBytes = [Convert]::FromBase64String($encoded)
+          [IO.File]::WriteAllBytes("v7.patch.xz", $xzBytes)
+          $xzHash = (Get-FileHash "v7.patch.xz" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($xzHash -ne "13e3cc7783c503812513c2826862fab398fc9e9736bad654a858473e62cba5a1") {
+            throw "V7.1 compressed patch checksum mismatch: $xzHash"
+          }
+          python -c "import lzma,pathlib; pathlib.Path('v7.patch').write_bytes(lzma.decompress(pathlib.Path('v7.patch.xz').read_bytes()))"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to decompress V7.1 source patch." }
+          $patchHash = (Get-FileHash "v7.patch" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($patchHash -ne "f5970b79226a5197ab0c33327bdb686622ef62bbeec854c3ef9784b57b2b120a") {
+            throw "V7.1 source patch checksum mismatch: $patchHash"
+          }
+          git apply --check --directory=work v7.patch
+          if ($LASTEXITCODE -ne 0) { throw "V7.1 patch does not apply cleanly to the archived base." }
+          git apply --directory=work v7.patch
+          if ($LASTEXITCODE -ne 0) { throw "Unable to apply V7.1 source patch." }
+          if (!(Test-Path "work/MERSAD_AI/analytics.py") -or !(Test-Path "work/MERSAD_AI/camera_history.py")) {
+            throw "Required V7 analytics/camera-history modules were not found after patching."
+          }
+          Write-Host "V7.1 source patch applied and checksums verified."
+
+      - name: Install pinned Python dependencies
         shell: pwsh
         working-directory: work/MERSAD_AI
         run: |
           python -m venv venv
           .\venv\Scripts\python.exe -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
           .\venv\Scripts\python.exe -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { throw "PyTorch CPU wheel installation failed." }
           .\venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints-win-x64.txt
-          # EasyOCR declares opencv-python-headless as a dependency. Keep that
-          # distribution installed so pip check passes, then reinstall the
-          # same-version full OpenCV wheel last so GUI-capable cv2 files win.
+          if ($LASTEXITCODE -ne 0) { throw "Pinned runtime dependency installation failed." }
+          # EasyOCR depends on the headless OpenCV distribution. Retain it for pip's dependency graph,
+          # then reinstall the same-version full OpenCV wheel so GUI-capable cv2 files are available.
           .\venv\Scripts\python.exe -m pip install --force-reinstall --no-deps opencv-python==4.11.0.86
+          if ($LASTEXITCODE -ne 0) { throw "Full OpenCV wheel installation failed." }
           .\venv\Scripts\python.exe -m pip install pyinstaller==6.11.1 -c constraints-win-x64.txt
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed." }
           .\venv\Scripts\python.exe -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "pip check reported dependency conflicts." }
 
-      - name: Compile and run self-tests
+      - name: Compile source and repeat standard tests (3 runs)
         shell: pwsh
         working-directory: work/MERSAD_AI
         run: |
           .\venv\Scripts\python.exe -m compileall -q .
-          .\venv\Scripts\python.exe selftest.py 2>&1 | Tee-Object -FilePath selftest_normal.log
-          if ($LASTEXITCODE -ne 0) { throw "Self-test failed." }
+          if ($LASTEXITCODE -ne 0) { throw "Python compileall failed." }
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "Standard self-test run $i of 3"
+            .\venv\Scripts\python.exe selftest.py 2>&1 | Tee-Object -FilePath "selftest_normal_$i.log"
+            if ($LASTEXITCODE -ne 0) { throw "Standard self-test run $i failed." }
+          }
+
+      - name: Repeat tests with scikit-learn disabled (2 runs)
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
           $env:MERSAD_BLOCK_SKLEARN = "1"
-          .\venv\Scripts\python.exe selftest.py 2>&1 | Tee-Object -FilePath selftest_nosklearn.log
-          if ($LASTEXITCODE -ne 0) { throw "Self-test without scikit-learn failed." }
-          Remove-Item Env:MERSAD_BLOCK_SKLEARN
+          for ($i = 1; $i -le 2; $i++) {
+            Write-Host "No-scikit-learn self-test run $i of 2"
+            .\venv\Scripts\python.exe selftest.py 2>&1 | Tee-Object -FilePath "selftest_nosklearn_$i.log"
+            if ($LASTEXITCODE -ne 0) { throw "No-scikit-learn self-test run $i failed." }
+          }
+          Remove-Item Env:MERSAD_BLOCK_SKLEARN -ErrorAction SilentlyContinue
 
-      - name: Download and verify AI models
+      - name: Download models and run strict installation verification
         shell: pwsh
         working-directory: work/MERSAD_AI
         run: |
-          .\venv\Scripts\python.exe prefetch.py
-          if ($LASTEXITCODE -ne 0) { throw "Model prefetch failed." }
-          .\venv\Scripts\python.exe check_install.py --write-ready
-          if ($LASTEXITCODE -ne 0) { throw "Environment readiness check failed." }
-          .\venv\Scripts\python.exe check_install.py --strict 2>&1 | Tee-Object -FilePath check_install_report.log
-          if ($LASTEXITCODE -ne 0) { throw "Strict installation check failed." }
+          .\venv\Scripts\python.exe prefetch.py 2>&1 | Tee-Object -FilePath "model_prefetch.log"
+          if ($LASTEXITCODE -ne 0) { throw "Model download or SHA-256 verification failed." }
+          .\venv\Scripts\python.exe check_install.py --write-ready 2>&1 | Tee-Object -FilePath "check_install_ready.log"
+          if ($LASTEXITCODE -ne 0) { throw "Environment readiness stamp could not be written." }
+          .\venv\Scripts\python.exe check_install.py --verify-ready 2>&1 | Tee-Object -FilePath "check_install_verify_ready.log"
+          if ($LASTEXITCODE -ne 0) { throw "Environment readiness stamp verification failed." }
+          .\venv\Scripts\python.exe check_install.py --strict 2>&1 | Tee-Object -FilePath "check_install_strict.log"
+          if ($LASTEXITCODE -ne 0) { throw "Strict installation verification failed." }
+          .\venv\Scripts\python.exe -c "import struct,sys; assert sys.version_info[:2] == (3,11); assert struct.calcsize('P')*8 == 64; print(sys.version)"
+          if ($LASTEXITCODE -ne 0) { throw "Python runtime version/architecture check failed." }
 
-      - name: Build onedir distribution
+      - name: Build onedir executable
         shell: pwsh
         working-directory: work/MERSAD_AI
         run: |
-          .\venv\Scripts\python.exe -m PyInstaller --noconfirm --clean mersad_ai.spec 2>&1 | Tee-Object -FilePath build_pyinstaller.log
+          .\venv\Scripts\python.exe -m PyInstaller --noconfirm --clean mersad_ai.spec 2>&1 | Tee-Object -FilePath "build_pyinstaller.log"
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
-          if (!(Test-Path "dist/MERSAD_AI/MERSAD_AI.exe")) { throw "Expected EXE was not built." }
-          if (!(Test-Path "models")) { throw "Model directory missing after prefetch." }
+          if (!(Test-Path "dist/MERSAD_AI/MERSAD_AI.exe")) { throw "Expected dist/MERSAD_AI/MERSAD_AI.exe was not built." }
+          if (!(Test-Path "models")) { throw "Verified models folder is missing." }
+          if (Test-Path "dist/MERSAD_AI/models") { Remove-Item "dist/MERSAD_AI/models" -Recurse -Force }
           Copy-Item -Path "models" -Destination "dist/MERSAD_AI/models" -Recurse -Force
 
-      - name: Verify standalone executable
+      - name: Verify executable and bundled AI models
         shell: pwsh
         working-directory: work/MERSAD_AI
         run: |
           $exe = (Resolve-Path "dist/MERSAD_AI/MERSAD_AI.exe").Path
+          & $exe --verify 2>&1 | Tee-Object -FilePath "exe_verify_audit.log"
+          if ($LASTEXITCODE -ne 0) { throw "Executable audit/evidence verification failed." }
+          & $exe --verify-models 2>&1 | Tee-Object -FilePath "exe_verify_models.log"
+          if ($LASTEXITCODE -ne 0) { throw "Executable model verification failed." }
+
+      - name: Relocate distribution to path containing Arabic and spaces
+        shell: pwsh
+        working-directory: work/MERSAD_AI
+        run: |
+          $relocated = Join-Path $env:RUNNER_TEMP "مرصاد AI V7.1 - Relocation Test"
+          if (Test-Path $relocated) { Remove-Item $relocated -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $relocated | Out-Null
+          Copy-Item -Path "dist/MERSAD_AI/*" -Destination $relocated -Recurse -Force
           Push-Location $env:TEMP
           try {
-            & $exe --verify 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/exe_verify_output.txt"
-            if ($LASTEXITCODE -ne 0) { throw "Standalone EXE verification failed." }
+            & (Join-Path $relocated "MERSAD_AI.exe") --verify 2>&1 | Tee-Object -FilePath "exe_verify_relocated_audit.log"
+            if ($LASTEXITCODE -ne 0) { throw "Relocated executable audit verification failed." }
+            & (Join-Path $relocated "MERSAD_AI.exe") --verify-models 2>&1 | Tee-Object -FilePath "exe_verify_relocated_models.log"
+            if ($LASTEXITCODE -ne 0) { throw "Relocated executable model verification failed." }
           } finally {
             Pop-Location
           }
 
-      - name: Upload Windows distribution and logs
+      - name: Upload Windows EXE distribution and complete build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MERSAD_AI_Windows_x64_Distribution
+          name: MERSAD_AI_V7_1_Windows_x64_Distribution
           if-no-files-found: warn
           path: |
             work/MERSAD_AI/dist/MERSAD_AI/
-            work/MERSAD_AI/selftest_normal.log
-            work/MERSAD_AI/selftest_nosklearn.log
-            work/MERSAD_AI/check_install_report.log
+            work/MERSAD_AI/selftest_normal_*.log
+            work/MERSAD_AI/selftest_nosklearn_*.log
+            work/MERSAD_AI/model_prefetch.log
+            work/MERSAD_AI/check_install_*.log
             work/MERSAD_AI/build_pyinstaller.log
-            exe_verify_output.txt
+            work/MERSAD_AI/exe_verify_*.log
