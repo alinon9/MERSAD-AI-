@@ -703,6 +703,18 @@ replace_once(
 )
 
 
+# MERSAD_WINDOWS_P1C_FRAME_HEADROOM
+# Under Windows CI, the latest-frame camera pipeline intentionally coalesces captured
+# frames while inference runs. Increase only the fake-camera source budget so the
+# existing >=12 processed-frame assertions are not starved by the 18-frame fixture.
+replace_once(
+    "selftest.py",
+    '        globals()["NFR"] = 18\\n',
+    '        globals()["NFR"] = 60\\n',
+    "provide frame headroom for the P1-C Windows camera recovery fixture",
+)
+
+
 patch_selftest_local_get_retry()
 
 for name in ("notify.py", "registry.py", "mersad_live.py", "selftest.py"):
