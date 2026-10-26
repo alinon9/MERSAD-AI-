@@ -11,6 +11,7 @@ on:
       - "MERSAD_AI_FIXED_5.zip"
       - ".github/workflows/build-mersad-windows.yml"
       - "ci/v7patch/*.b64"
+      - "ci/patch_windows_build.py"
 
 permissions:
   contents: read
@@ -77,6 +78,12 @@ jobs:
             throw "Required V7 analytics/camera-history modules were not found after patching."
           }
           Write-Host "V7.1 source patch applied and checksums verified."
+
+      - name: Apply Windows-specific compatibility and ACL fixes
+        shell: pwsh
+        run: |
+          python ci/patch_windows_build.py work/MERSAD_AI
+          if ($LASTEXITCODE -ne 0) { throw "Windows compatibility/ACL patching failed." }
 
       - name: Install pinned Python dependencies
         shell: pwsh
