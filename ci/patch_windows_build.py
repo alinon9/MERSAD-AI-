@@ -753,12 +753,12 @@ replace_once(
 replace_once(
     "check_install.py",
     "def _file_sha256(path):",
-    '''def _opencv_gui_build_available():
+    r'''def _opencv_gui_build_available():
     """Return True only when the active cv2 module exposes a GUI backend."""
     try:
         import cv2
         info = cv2.getBuildInformation()
-        match = re.search(r"(?m)^\\s*GUI:\\s*(.*?)\\s*$", info)
+        match = re.search(r"(?m)^\s*GUI:\s*(.*?)\s*$", info)
         gui = match.group(1).strip().upper() if match else ""
         if os.name == "nt":
             return "WIN32UI" in gui
@@ -772,8 +772,8 @@ def _file_sha256(path):''',
 )
 replace_once(
     "check_install.py",
-    '    headless_ver = _pkg_version("opencv-python-headless")\\n    if headless_ver is not None:\\n',
-    '    headless_ver = _pkg_version("opencv-python-headless")\\n    if headless_ver is not None and not _opencv_gui_build_available():\\n',
+    '    headless_ver = _pkg_version("opencv-python-headless")\n    if headless_ver is not None:\n',
+    '    headless_ver = _pkg_version("opencv-python-headless")\n    if headless_ver is not None and not _opencv_gui_build_available():\n',
     "report a headless OpenCV conflict only when active cv2 lacks GUI support",
 )
 
