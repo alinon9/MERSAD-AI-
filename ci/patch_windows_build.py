@@ -709,8 +709,8 @@ replace_once(
 # existing >=12 processed-frame assertions are not starved by the 18-frame fixture.
 replace_once(
     "selftest.py",
-    '        globals()["NFR"] = 18\\n',
-    '        globals()["NFR"] = 60\\n',
+    '        globals()["NFR"] = 18\n',
+    '        globals()["NFR"] = 60\n',
     "provide frame headroom for the P1-C Windows camera recovery fixture",
 )
 
