@@ -721,26 +721,26 @@ replace_once(
 # expected SHA-256 values with the upstream model files. Verification remains strict.
 replace_once(
     "mersad_live.py",
-    'ZOO_COMMIT = "0d61067727e22ed9fa2f7ef5ce81dac7a8d0fb8a"\\n',
-    'ZOO_COMMIT = "39a1451d0f9b23fc4ebaed06a277127efa0374d0"\\n',
+    'ZOO_COMMIT = "0d61067727e22ed9fa2f7ef5ce81dac7a8d0fb8a"\n',
+    'ZOO_COMMIT = "39a1451d0f9b23fc4ebaed06a277127efa0374d0"\n',
     "replace nonexistent OpenCV Zoo pin with immutable model revision",
 )
 replace_once(
     "mersad_live.py",
-    'ZOO = f"https://github.com/opencv/opencv_zoo/raw/{ZOO_COMMIT}/models/"\\n',
-    'ZOO = f"https://huggingface.co/opencv/opencv_zoo/resolve/{ZOO_COMMIT}/models/"\\n',
+    'ZOO = f"https://github.com/opencv/opencv_zoo/raw/{ZOO_COMMIT}/models/"\n',
+    'ZOO = f"https://huggingface.co/opencv/opencv_zoo/resolve/{ZOO_COMMIT}/models/"\n',
     "download verified OpenCV Zoo model payloads from the pinned HF LFS mirror",
 )
 replace_once(
     "mersad_live.py",
-    '    "yunet.onnx": "8f2383e4dd3cfbb4553bf0fb6cde5e5f80f5f70c6e595e3fd10e819a79d1527c",\\n',
-    '    "yunet.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",\\n',
+    '    "yunet.onnx": "8f2383e4dd3cfbb4553bf0fb6cde5e5f80f5f70c6e595e3fd10e819a79d1527c",\n',
+    '    "yunet.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",\n',
     "correct YuNet model SHA-256 from upstream LFS metadata",
 )
 replace_once(
     "mersad_live.py",
-    '    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da85eab3da1e9bedf8ef69c25eb8d7e52275"\\n',
-    '    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"\\n',
+    '    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da85eab3da1e9bedf8ef69c25eb8d7e52275"\n',
+    '    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"\n',
     "correct SFace model SHA-256 from upstream LFS metadata",
 )
 
