@@ -812,7 +812,56 @@ _check_install_path.write_text("\n".join(_check_lines) + "\n", encoding="utf-8",
 
 patch_selftest_local_get_retry()
 
-for name in ("notify.py", "registry.py", "mersad_live.py", "check_install.py", "selftest.py"):
+
+# MERSAD release-hardening: Ultralytics reads YOLO_AUTOINSTALL (not
+# ULTRALYTICS_AUTOINSTALL). Force auto-install off in the packaged app and spec.
+def patch_ultralytics_autoinstall_guard(py_file, marker):
+    p = root / py_file
+    source = p.read_text(encoding="utf-8")
+    if marker not in source:
+        tree = ast.parse(source, filename=py_file)
+        insert_after = 0
+        body = tree.body
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            insert_after = body[0].end_lineno
+        for node in body:
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                insert_after = max(insert_after, node.end_lineno)
+        lines = source.splitlines(keepends=True)
+        guard = (
+            "\n# " + marker + "\n"
+            "import os as _mersad_env_os\n"
+            "_mersad_env_os.environ['YOLO_AUTOINSTALL'] = 'false'\n"
+        )
+        lines.insert(insert_after, guard)
+        p.write_text("".join(lines), encoding="utf-8", newline="")
+        source = p.read_text(encoding="utf-8")
+    # Guard must appear before any import that can load Ultralytics.
+    guard_pos = source.find(marker)
+    import_positions = [
+        pos for needle in ("from ultralytics import", "import ultralytics")
+        if (pos := source.lower().find(needle)) >= 0
+    ]
+    if import_positions and guard_pos > min(import_positions):
+        raise SystemExit(f"{py_file}: YOLO_AUTOINSTALL guard appears after an Ultralytics import")
+    ast.parse(source, filename=py_file)
+
+
+patch_ultralytics_autoinstall_guard("mersad_live.py", "MERSAD_ULTRALYTICS_AUTOINSTALL_GUARD")
+patch_ultralytics_autoinstall_guard("mersad_ai.spec", "MERSAD_SPEC_ULTRALYTICS_AUTOINSTALL_GUARD")
+
+# Keep local BUILD_EXE.bat behavior consistent with the CI workflow.
+_build_bat = root / "BUILD_EXE.bat"
+if _build_bat.exists():
+    _build_text = _build_bat.read_text(encoding="utf-8")
+    if "YOLO_AUTOINSTALL=false" not in _build_text.upper().replace('"', '').replace(' ', ''):
+        _build_lines = _build_text.splitlines(keepends=True)
+        _echo_i = next((i for i, line in enumerate(_build_lines) if line.strip().lower() in ("@echo off", "echo off")), None)
+        _insert_at = _echo_i + 1 if _echo_i is not None else 0
+        _build_lines.insert(_insert_at, 'set "YOLO_AUTOINSTALL=false"\n')
+        _build_bat.write_text("".join(_build_lines), encoding="utf-8", newline="")
+
+for name in ("notify.py", "registry.py", "mersad_live.py", "check_install.py", "selftest.py", "mersad_ai.spec"):
     ast.parse((root / name).read_text(encoding="utf-8"), filename=name)
 
 # Emit targeted source context in CI logs so remaining Windows failures can be fixed from evidence.
