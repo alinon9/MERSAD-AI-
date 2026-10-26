@@ -488,45 +488,56 @@ replace_once(
     '        o1, e1 = p1.communicate(timeout=30)\n        o2, e2 = p2.communicate(timeout=30)\n        mp_exit_codes = (p1.returncode, p2.returncode)\n',
     "capture P0-E child process exit codes",
 )
-replace_once(
-    "selftest.py",
-    '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n            "m.log(\'session start\', cam)\\n"',
-    '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n            "# Hold ownership briefly so the peer definitely attempts acquisition while this process is alive.\\n"\n            "time.sleep(5.0)\\n"\n            "m.log(\'session start\', cam)\\n"',
-    "synchronize real overlap in multi-process listener test",
-)
+_p0e_selftest = (root / "selftest.py").read_text(encoding="utf-8")
+if "barrier_dir = sys.argv[3]" not in _p0e_selftest:
+    replace_once(
+        "selftest.py",
+        '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n'
+        '            "m.log(\'session start\', cam)\\n"',
+        '            "listener_owned = m.start_listener(lambda d, w: \'ok\', stop_event=stop_ev)\\n"\n'
+        '            "# Hold ownership briefly so the peer definitely attempts acquisition while this process is alive.\\n"\n'
+        '            "time.sleep(5.0)\\n"\n'
+        '            "m.log(\'session start\', cam)\\n"',
+        "synchronize real overlap in multi-process listener test",
+    )
 
-replace_once(
-    "selftest.py",
-    '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))\n',
-    '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:], mp_exit_codes))\n',
-    "report P0-E child process exit codes",
-)
+_p0e_selftest = (root / "selftest.py").read_text(encoding="utf-8")
+if "barrier_dir = sys.argv[3]" not in _p0e_selftest:
+    replace_once(
+        "selftest.py",
+        '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))\\n',
+        '              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:], mp_exit_codes))\\n',
+        "report P0-E child process exit codes",
+    )
 
 
-# Retain the Telegram listener thread so test subprocesses can stop and join it cleanly.
-# Abrupt interpreter shutdown while the daemon thread is inside native/network code was
-# intermittently producing Windows STATUS_ACCESS_VIOLATION (0xC0000005).
-replace_once(
-    "notify.py",
-    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n',
-    'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n_LISTENER_THREAD = None\n',
-    "track Telegram listener thread",
-)
-replace_once(
-    "notify.py",
-    'def start_listener(on_press, stop_event=None):\n    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""\n',
-    'def start_listener(on_press, stop_event=None):\n    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""\n    global _LISTENER_THREAD\n',
-    "declare listener thread handle",
-)
-replace_once(
-    "notify.py",
-    '    threading.Thread(target=loop, daemon=True).start()\n    return True\n',
-    '    listener_thread = threading.Thread(target=loop, name="mersad-telegram-listener", daemon=True)\n'
-    '    _LISTENER_THREAD = listener_thread\n'
-    '    listener_thread.start()\n'
-    '    return True\n',
-    "retain listener thread handle",
-)
+# V7.1 already retains and joins its Telegram listener thread. Only apply these
+# legacy compatibility edits to source archives that lack that lifecycle API.
+_notify_source = (root / "notify.py").read_text(encoding="utf-8")
+if "_LISTENER_THREAD = None" not in _notify_source or "wait_listener_stopped" not in _notify_source:
+    replace_once(
+        "notify.py",
+        'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n',
+        'TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}\n_LISTENER_LOCK_FD = None\n_LISTENER_THREAD = None\n',
+        "track Telegram listener thread",
+    )
+    replace_once(
+        "notify.py",
+        'def start_listener(on_press, stop_event=None):\n    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""\n',
+        'def start_listener(on_press, stop_event=None):\n    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""\n    global _LISTENER_THREAD\n',
+        "declare listener thread handle",
+    )
+    replace_once(
+        "notify.py",
+        '    threading.Thread(target=loop, daemon=True).start()\n    return True\n',
+        '    listener_thread = threading.Thread(target=loop, name="mersad-telegram-listener", daemon=True)\n'
+        '    _LISTENER_THREAD = listener_thread\n'
+        '    listener_thread.start()\n'
+        '    return True\n',
+        "retain listener thread handle",
+    )
+    
+
 def patch_p0e_worker_shutdown():
     """Make P0-E lock coverage deterministic, expose crash phase, and stop polling cleanly."""
     p = root / "selftest.py"
@@ -606,7 +617,9 @@ def patch_p0e_worker_shutdown():
     p.write_text(source, encoding="utf-8", newline="")
 
 
-patch_p0e_worker_shutdown()
+_p0e_selftest = (root / "selftest.py").read_text(encoding="utf-8")
+if "barrier_dir = sys.argv[3]" not in _p0e_selftest:
+    patch_p0e_worker_shutdown()
 
 
 # Windows self-test reliability: retry transient resets only for idempotent GETs to
