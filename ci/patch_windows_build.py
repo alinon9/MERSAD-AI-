@@ -770,27 +770,44 @@ replace_once(
 def _file_sha256(path):''',
     "add active OpenCV GUI backend verification",
 )
-replace_once(
-    "check_install.py",
-    '    headless_ver = _pkg_version("opencv-python-headless")\n    if headless_ver is not None:\n',
-    '    headless_ver = _pkg_version("opencv-python-headless")\n    if headless_ver is not None and not _opencv_gui_build_available():\n',
-    "report a headless OpenCV conflict only when active cv2 lacks GUI support",
-)
 
 _check_install_path = root / "check_install.py"
 _check_install_text = _check_install_path.read_text(encoding="utf-8")
-_headless_reject = '''        if "opencv-python-headless" in cur["installed"]:
-            return False, "conflicting_opencv_python_headless_present"'''
-_headless_gui_guard = '''        if "opencv-python-headless" in cur["installed"] and not _opencv_gui_build_available():
-            return False, "conflicting_opencv_python_headless_present"'''
-if _headless_reject in _check_install_text:
-    if _check_install_text.count(_headless_reject) != 2:
-        raise SystemExit("check_install.py: expected exactly two headless readiness guards")
-    _check_install_text = _check_install_text.replace(_headless_reject, _headless_gui_guard)
-    _check_install_path.write_text(_check_install_text, encoding="utf-8", newline="")
-elif _headless_gui_guard not in _check_install_text:
-    raise SystemExit("check_install.py: readiness guard has an unexpected source shape")
+_check_lines = _check_install_text.splitlines()
 
+# Locate the diagnostic condition by its package query rather than assuming exact whitespace.
+_diag_indexes = [
+    i for i, line in enumerate(_check_lines)
+    if 'headless_ver = _pkg_version("opencv-python-headless")' in line
+]
+if len(_diag_indexes) != 1:
+    raise SystemExit(f"check_install.py: expected one headless diagnostic, found {len(_diag_indexes)}")
+_diag_i = _diag_indexes[0]
+_diag_cond_i = next(
+    (j for j in range(_diag_i + 1, min(_diag_i + 5, len(_check_lines)))
+     if _check_lines[j].lstrip().startswith("if headless_ver is not None")),
+    None,
+)
+if _diag_cond_i is None:
+    raise SystemExit("check_install.py: unable to locate headless diagnostic condition")
+_indent = _check_lines[_diag_cond_i][:len(_check_lines[_diag_cond_i]) - len(_check_lines[_diag_cond_i].lstrip())]
+_check_lines[_diag_cond_i] = _indent + "if headless_ver is not None and not _opencv_gui_build_available():"
+
+# Keep strict readiness checks, but fail only if the active cv2 binary is actually headless.
+_guard_indexes = [
+    i for i, line in enumerate(_check_lines)
+    if '"opencv-python-headless" in cur["installed"]'
+    and i + 1 < len(_check_lines)
+    and 'conflicting_opencv_python_headless_present' in _check_lines[i + 1]
+]
+if len(_guard_indexes) != 2:
+    raise SystemExit(f"check_install.py: expected two headless readiness guards, found {len(_guard_indexes)}")
+for _guard_i in _guard_indexes:
+    if "_opencv_gui_build_available()" not in _check_lines[_guard_i]:
+        _indent = _check_lines[_guard_i][:len(_check_lines[_guard_i]) - len(_check_lines[_guard_i].lstrip())]
+        _check_lines[_guard_i] = _indent + 'if "opencv-python-headless" in cur["installed"] and not _opencv_gui_build_available():'
+
+_check_install_path.write_text("\n".join(_check_lines) + "\n", encoding="utf-8", newline="")
 
 
 patch_selftest_local_get_retry()
