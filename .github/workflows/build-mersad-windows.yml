@@ -7,6 +7,7 @@ on:
       - main
       - master
       - build/v7.1-windows-exe
+      - fix/v7.1-yolo-autoinstall-20261026
     paths:
       - "MERSAD_AI_FIXED_5.zip"
       - ".github/workflows/build-mersad-windows.yml"
@@ -19,6 +20,8 @@ permissions:
 env:
   PYTHONUTF8: "1"
   PYTHONIOENCODING: "utf-8"
+  # Ultralytics checks YOLO_AUTOINSTALL; ULTRALYTICS_AUTOINSTALL is not its guard.
+  YOLO_AUTOINSTALL: "false"
 
 jobs:
   build:
