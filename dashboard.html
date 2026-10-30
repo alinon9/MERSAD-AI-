@@ -588,17 +588,18 @@ function renderPlateEvalReport(rep){
   <div class="bar"><b>نتائج التقييم الآلي الموثّقة (${esc(rep.evaluation_date||"")}):</b> <span class="chip ok">محسوبة فعلياً بواسطة محرك التقييم</span> <span class="chip">${esc(rep.model_used||rep.detector_mode||"")}</span></div>
   <p class="mu">المسار: <b>${esc(rep.dataset_path)}</b> · العينات المقيّمة الصالحة: <b>${rep.valid_files_count??rep.total_samples}</b> · الملفات التالفة/المفقودة المستبعدة: <b>${rep.invalid_files_count||0}</b> · متوسط زمن المعالجة: <b>${m.mean_latency_ms||0} ms/صورة</b></p>
   <div class="g" style="margin:10px 0">
-   <div class="c" style="margin:0"><h2 style="color:var(--ac)">أولاً: دقة اكتشاف اللوحة والمركبة (Detection)</h2>
-    <p style="margin:4px 0">اللوحات المكتشفة: <b>${m.detected_count??0}</b> من <b>${rep.total_samples}</b> (فشل الاكتشاف: <b>${m.failed_detection_count??0}</b>)</p>
-    <p style="margin:4px 0">استدعاء الاكتشاف (Recall): <b>${((m.detection_recall||0)*100).toFixed(1)}%</b> · دقة الاكتشاف (Precision): <b>${((m.detection_precision||0)*100).toFixed(1)}%</b> · متوسط التداخل (IoU): <b>${m.mean_iou!=null?m.mean_iou:"غير متاح"}</b></p>
+   <div class="c" style="margin:0"><h2 style="color:var(--ac)">أولاً: دقة اكتشاف اللوحة والمركبة (Detection Metrics)</h2>
+    <p style="margin:4px 0">اللوحات المكتشفة: <b>${m.detected_count??0}</b> من <b>${rep.total_samples}</b> (فشل الاكتشاف: <b>${m.failed_detection_count??0}</b> · TP: <b>${m.true_positive_boxes??m.detected_count??0}</b> · FP: <b>${m.false_positive_boxes??0}</b>)</p>
+    <p style="margin:4px 0">استدعاء الاكتشاف (Recall): <b>${((m.detection_recall||0)*100).toFixed(1)}%</b> · دقة الاكتشاف (Precision): <b>${((m.detection_precision||0)*100).toFixed(1)}%</b> · معيار التوازن (F1): <b>${((m.detection_f1||0)*100).toFixed(1)}%</b> · متوسط التداخل (IoU): <b>${m.mean_iou!=null?m.mean_iou:"غير متاح"}</b></p>
    </div>
    <div class="c" style="margin:0"><h2 style="color:var(--wn)">ثانياً: دقة قراءة أحرف وأرقام اللوحة (Character & Digit OCR)</h2>
     <p style="margin:4px 0">دقة قراءة المحارف (1 - CER): <b>${((m.char_accuracy_rate||0)*100).toFixed(1)}%</b> (معدل خطأ المحارف CER: <b>${m.cer??0}</b>)</p>
     <p style="margin:4px 0">دقة مطابقة الأرقام الأساسية (Digits Match): <b>${((m.digits_match_rate||0)*100).toFixed(1)}%</b> (${m.digits_match_count??0}/${rep.total_samples})</p>
    </div>
   </div>
-  <div class="c" style="margin:0 0 10px 0"><h2 style="color:var(--ok)">ثالثاً: دقة القراءة الكاملة للوحة (Full Plate Exact Match)</h2>
-   <p style="margin:4px 0">المطابقة الكاملة للوحة (الأحرف/المحافظة + الأرقام): <b style="font-size:1.15rem;color:var(--ok)">${((m.exact_match_rate||0)*100).toFixed(1)}%</b> (<b>${m.exact_match_count??0}</b> مطابقة كاملة من أصل <b>${rep.total_samples}</b> · فشل القراءة الكاملة: <b>${m.failed_ocr_count??0}</b>)</p>
+  <div class="c" style="margin:0 0 10px 0"><h2 style="color:var(--ok)">ثالثاً: المطابقة الكاملة لخط الأنابيب مقابل OCR المعزول (End-to-End vs Cropped OCR)</h2>
+   <p style="margin:4px 0">المطابقة الكاملة لخط الأنابيب (End-to-End Exact Match): <b style="font-size:1.15rem;color:var(--ok)">${(((m.end_to_end_exact_match_rate??m.exact_match_rate)||0)*100).toFixed(1)}%</b> (<b>${m.end_to_end_exact_match_count??m.exact_match_count??0}</b> من <b>${rep.total_samples}</b> · فشل القراءة الكاملة: <b>${m.failed_ocr_count??0}</b>)</p>
+   <p style="margin:4px 0" class="mu">دقة قراءة OCR على الصندوق المقصوص بمعزل عن الكاشف (Cropped OCR Exact Match): <b>${(((m.cropped_ocr_exact_match_rate??m.exact_match_rate)||0)*100).toFixed(1)}%</b> (<b>${m.cropped_ocr_exact_match_count??m.exact_match_count??0}</b> من <b>${rep.total_samples}</b>)</p>
   </div>
   <div class="tw"><table><thead><tr><th>الصورة</th><th>اللوحة المرجعية</th><th>اللوحة المقروءة</th><th>اكتشاف اللوحة</th><th>IoU</th><th>دقة المحارف</th><th>مطابقة الأرقام</th><th>المطابقة الكاملة</th><th>الزمن (ms)</th></tr></thead><tbody>${
    (rep.samples||[]).slice(0,50).map(s=>`<tr><td>${esc(s.filename)}</td><td>${plate(s.expected_plate)}</td><td>${s.predicted_plate?plate(s.predicted_plate):'<span class="mu">—</span>'}</td><td>${s.detected?'<span class="chip ok">مكتشفة</span>':'<span class="chip er">فشل اكتشاف</span>'}</td><td>${s.iou!=null?s.iou:"—"}</td><td>${Math.round((s.char_accuracy??0)*100)}%</td><td>${s.digits_match?'<span class="chip ok">نعم</span>':'<span class="chip er">لا</span>'}</td><td>${s.exact_match?'<span class="chip ok">مطابقة كاملة</span>':'<span class="chip er">غير مطابقة</span>'}</td><td>${s.latency_ms}</td></tr>`).join("")

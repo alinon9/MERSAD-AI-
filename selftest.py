@@ -3886,6 +3886,370 @@ def run_stage11_field_calibration_and_eval_tests():
 
 
 run_stage11_field_calibration_and_eval_tests()
+
+
+def run_stage12_security_and_eval_integrity_tests():
+    import ast, pickle, re, subprocess, zipfile
+    import server as srv_mod
+    import http.client
+
+    # 1. STAGE12-AUDIT001-PICKLE-RCE-BLOCK: Negative exploit tests for malicious pickle .pt, UNC paths, symlinks, outside models/, and HMAC trusted manifest
+    s12_dir = tempfile.mkdtemp(prefix="mersad_s12_audit001_")
+    try:
+        # (a) Construct a malicious PyTorch .pt ZIP archive whose data.pkl attempts RCE via os.system
+        class _MaliciousPayload:
+            def __reduce__(self):
+                return (os.system, ("echo PWNED_BY_PICKLE",))
+
+        evil_pkl_bytes = pickle.dumps({"exploit": _MaliciousPayload()}, protocol=2)
+        evil_pt_path = os.path.join(s12_dir, "evil_rce_model.pt")
+        with zipfile.ZipFile(evil_pt_path, "w") as zf:
+            zf.writestr("archive/data.pkl", evil_pkl_bytes + (b"\x00" * 2048))
+            zf.writestr("archive/version", b"3\n")
+            zf.writestr("archive/data/0", b"\x00" * 4096)
+
+        ok_evil_zip, reason_evil_zip = m.verify_yolo_pt_file(evil_pt_path, min_bytes=512)
+        val_evil = m.validate_plate_model_path(evil_pt_path, min_bytes=512, enforce_trusted=False)
+
+        # (b) Construct a clean .pt archive outside models/ -> rejected when enforce_trusted=True
+        clean_pkl_bytes = pickle.dumps({"epoch": 1, "weights_shape": [16, 3, 3, 3]}, protocol=4)
+        outside_clean_pt = os.path.join(s12_dir, "outside_clean_plates.pt")
+        with zipfile.ZipFile(outside_clean_pt, "w") as zf:
+            zf.writestr("archive/data.pkl", clean_pkl_bytes + (b"\x80\x04." * 400))
+            zf.writestr("archive/version", b"3\n")
+            zf.writestr("archive/data/0", b"\x00" * 4096)
+
+        val_outside_untrusted = m.validate_plate_model_path(outside_clean_pt, min_bytes=512, enforce_trusted=True)
+
+        # (c) Copy clean .pt into APPDIR/models/ WITHOUT registering its SHA-256 in HMAC manifest -> still rejected when enforce_trusted=True!
+        models_dir_app = os.path.join(m.APPDIR, "models")
+        os.makedirs(models_dir_app, exist_ok=True)
+        unreg_in_models = os.path.join(models_dir_app, "unregistered_yemen.pt")
+        shutil.copy2(outside_clean_pt, unreg_in_models)
+        val_unreg_in_models = m.validate_plate_model_path(unreg_in_models, min_bytes=512, enforce_trusted=True)
+
+        # (d) Attempt to register the malicious .pt via register_trusted_model -> MUST be rejected!
+        reg_evil = m.register_trusted_model(evil_pt_path, who="test_admin", min_bytes=512)
+
+        # (e) Register the clean .pt via register_trusted_model -> copies/registers in models/.trusted_models.json with HMAC signature -> accepted!
+        reg_clean = m.register_trusted_model(outside_clean_pt, who="test_admin", min_bytes=512)
+        val_reg_clean = m.validate_plate_model_path(reg_clean.get("path", ""), min_bytes=512, enforce_trusted=True)
+
+        # (f) Tamper with HMAC signature in models/.trusted_models.json -> must reject model!
+        manifest_file = os.path.join(models_dir_app, ".trusted_models.json")
+        orig_manifest = open(manifest_file, "rb").read() if os.path.isfile(manifest_file) else b""
+        tampered_rejected = False
+        if orig_manifest:
+            tampered_obj = json.loads(orig_manifest.decode("utf-8"))
+            tampered_obj["hmac"] = "0" * 64
+            with open(manifest_file, "w", encoding="utf-8") as mf:
+                json.dump(tampered_obj, mf)
+            val_after_tamper = m.validate_plate_model_path(reg_clean.get("path", ""), min_bytes=512, enforce_trusted=True)
+            tampered_rejected = (val_after_tamper.get("ok") is False and val_after_tamper.get("reason") == "untrusted_model_sha256")
+            with open(manifest_file, "wb") as mf:
+                mf.write(orig_manifest)
+
+        # (g) Reject UNC network paths and '..' traversal paths
+        val_unc = m.validate_plate_model_path(r"\\evil-server\share\plates.pt", min_bytes=512, enforce_trusted=False)
+        val_dots = m.validate_plate_model_path("../models/plates.pt", min_bytes=512, enforce_trusted=False)
+
+        check(
+            "STAGE12-AUDIT001-PICKLE-RCE-BLOCK",
+            "static pickle bytecode scanner blocks RCE payloads, rejects UNC/traversal/outside-models paths, and enforces HMAC-signed trusted SHA-256 manifest",
+            ok_evil_zip is False and "unsafe_pickle" in reason_evil_zip
+            and val_evil.get("ok") is False
+            and val_outside_untrusted.get("ok") is False and val_outside_untrusted.get("reason") == "outside_trusted_models_dir"
+            and val_unreg_in_models.get("ok") is False and val_unreg_in_models.get("reason") == "untrusted_model_sha256"
+            and reg_evil.get("ok") is False
+            and reg_clean.get("ok") is True and val_reg_clean.get("ok") is True and val_reg_clean.get("trusted_verified") is True
+            and tampered_rejected
+            and val_unc.get("ok") is False and val_dots.get("ok") is False,
+            (ok_evil_zip, reason_evil_zip, val_outside_untrusted, val_unreg_in_models, reg_evil, reg_clean, val_reg_clean, tampered_rejected),
+        )
+    finally:
+        for fn_cl in ("unregistered_yemen.pt", "outside_clean_plates.pt"):
+            p_cl = os.path.join(m.APPDIR, "models", fn_cl)
+            if os.path.exists(p_cl):
+                try: os.remove(p_cl)
+                except OSError: pass
+        shutil.rmtree(s12_dir, ignore_errors=True)
+
+    # 2. STAGE12-AUDIT002-PATH-TRAVERSAL-BLOCK: Negative exploit tests for path traversal in inspect_plate_dataset & evaluate_plates_dataset
+    s12_pt_dir = tempfile.mkdtemp(prefix="mersad_s12_audit002_")
+    try:
+        ds_sub = os.path.join(s12_pt_dir, "eval_dataset")
+        os.makedirs(ds_sub, exist_ok=True)
+        outside_secret_img = os.path.join(s12_pt_dir, "secret_outside.jpg")
+        im_sec = np.full((120, 240, 3), 255, dtype=np.uint8)
+        cv2.rectangle(im_sec, (20, 25), (220, 95), (0, 0, 0), 3)
+        cv2.imwrite(outside_secret_img, im_sec)
+
+        inside_ok_img = os.path.join(ds_sub, "safe_inside.jpg")
+        cv2.imwrite(inside_ok_img, im_sec)
+
+        symlink_inside = os.path.join(ds_sub, "sym_secret.jpg")
+        try:
+            os.symlink(outside_secret_img, symlink_inside)
+            has_symlink = True
+        except OSError:
+            has_symlink = False
+
+        with open(os.path.join(ds_sub, "ground_truth.csv"), "w", encoding="utf-8", newline="") as gtf:
+            gtf.write("filename,expected_plate,x,y,w,h\n")
+            gtf.write("safe_inside.jpg,عدن-12345,20,25,200,70\n")
+            gtf.write("../secret_outside.jpg,عدن-99999,20,25,200,70\n")
+            gtf.write("sub/../../secret_outside.jpg,عدن-88888,20,25,200,70\n")
+            gtf.write(f"{outside_secret_img},عدن-77777,20,25,200,70\n")
+            gtf.write("\\\\127.0.0.1\\c$\\secret.jpg,عدن-66666,20,25,200,70\n")
+            if has_symlink:
+                gtf.write("sym_secret.jpg,عدن-55555,20,25,200,70\n")
+
+        class _CountReader:
+            def __init__(self):
+                self.calls = 0
+            def readtext(self, c):
+                self.calls += 1
+                return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 12345", 0.95)]
+
+        cr = _CountReader()
+        insp_pt = m.inspect_plate_dataset(ds_sub)
+        rep_pt = m.evaluate_plates_dataset(ds_sub, reader=cr, print_report=False, save_to_db=False)
+        expected_rejected = 5 if has_symlink else 4
+
+        check(
+            "STAGE12-AUDIT002-PATH-TRAVERSAL-BLOCK",
+            "inspect_plate_dataset and evaluate_plates_dataset block '../', nested traversal, absolute paths, UNC shares, and symlinks without reading outside images",
+            insp_pt.get("ok") is True
+            and insp_pt.get("valid_files_count") == 1
+            and insp_pt.get("security_rejected_count") == expected_rejected
+            and rep_pt.get("ok") is True
+            and rep_pt.get("valid_files_count") == 1
+            and len(rep_pt.get("rejected_unsafe_paths") or []) == expected_rejected
+            and cr.calls == 1,
+            (insp_pt, rep_pt.get("rejected_unsafe_paths"), cr.calls),
+        )
+    finally:
+        shutil.rmtree(s12_pt_dir, ignore_errors=True)
+
+    # 3. STAGE12-AUDIT003-EVAL-METRICS-INTEGRITY: Verify strict separation of the 5 metrics and zero inflation when detection fails
+    s12_m_dir = tempfile.mkdtemp(prefix="mersad_s12_audit003_")
+    try:
+        # Sample 1 (s1_det_ok_ocr_ok.jpg): plate detected (IoU=1.0) & OCR matches 'عدن-12345'
+        im1 = np.full((360, 640, 3), 30, dtype=np.uint8)
+        cv2.rectangle(im1, (200, 240), (400, 292), (255, 255, 255), -1)
+        cv2.rectangle(im1, (200, 240), (400, 292), (0, 0, 0), 3)
+        cv2.imwrite(os.path.join(s12_m_dir, "s1_det_ok_ocr_ok.jpg"), im1)
+
+        # Sample 2 (s2_det_fail_gt_readable.jpg): 2 false-positive distractor rectangles in top corners (y=20..70, IoU=0.0 with gt_box at y=260..312),
+        # and no contour at gt_box (low-contrast gray at 200,260,190,52), while OCR can read the gt_box crop if cropped directly!
+        im2 = np.full((360, 640, 3), 30, dtype=np.uint8)
+        cv2.rectangle(im2, (20, 20), (180, 65), (255, 255, 255), -1)
+        cv2.rectangle(im2, (20, 20), (180, 65), (0, 0, 0), 3)
+        cv2.rectangle(im2, (420, 20), (580, 65), (255, 255, 255), -1)
+        cv2.rectangle(im2, (420, 20), (580, 65), (0, 0, 0), 3)
+        cv2.imwrite(os.path.join(s12_m_dir, "s2_det_fail_gt_readable.jpg"), im2)
+
+        # Sample 3 (s3_det_ok_ocr_wrong.jpg): plate detected (IoU=1.0) at (200,240,220,52), but OCR reads wrong digits
+        im3 = np.full((360, 640, 3), 30, dtype=np.uint8)
+        cv2.rectangle(im3, (200, 240), (420, 292), (255, 255, 255), -1)
+        cv2.rectangle(im3, (200, 240), (420, 292), (0, 0, 0), 3)
+        cv2.imwrite(os.path.join(s12_m_dir, "s3_det_ok_ocr_wrong.jpg"), im3)
+
+        with open(os.path.join(s12_m_dir, "ground_truth.csv"), "w", encoding="utf-8", newline="") as gtf:
+            gtf.write("filename,expected_plate,x,y,w,h\n")
+            gtf.write("s1_det_ok_ocr_ok.jpg,عدن-12345,200,240,200,52\n")
+            gtf.write("s2_det_fail_gt_readable.jpg,عدن-55555,200,260,190,52\n")
+            gtf.write("s3_det_ok_ocr_wrong.jpg,صنعاء-77777,200,240,220,52\n")
+
+        class _StrictReader:
+            def readtext(self, crop):
+                cw = crop.shape[1] if (crop is not None and crop.ndim >= 2) else 0
+                if abs(cw - 200) <= 6:
+                    return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 12345", 0.96)]
+                if abs(cw - 190) <= 6:
+                    # gt_box crop of Sample 2 -> OCR reads it as exact match 'عدن 55555'
+                    return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 55555", 0.94)]
+                return [([[0, 0], [1, 0], [1, 1], [0, 1]], "صنعاء 77799", 0.90)]
+
+        rep_m = m.evaluate_plates_dataset(s12_m_dir, reader=_StrictReader(), print_report=False, save_to_db=True)
+        met_m = rep_m.get("metrics") or {}
+        samples_by_fn = {s["filename"]: s for s in (rep_m.get("samples") or [])}
+        s2_res = samples_by_fn.get("s2_det_fail_gt_readable.jpg", {})
+
+        # Mathematical expectations:
+        # - Detected: Sample 1 (TP=1, FP=0), Sample 2 (TP=0, FP=2, FN=1), Sample 3 (TP=1, FP=0)
+        # - Total TP=2, FP=2, FN=1 -> Recall = 2/3 = 0.6667, Precision = 2/(2+2) = 0.5, F1 = 2*0.5*(2/3)/(0.5+2/3) = 0.5714
+        # - End-to-End Exact Match: Sample 1 ONLY (1/3 = 0.3333). Sample 2 MUST NOT count as End-to-End Exact Match!
+        # - Cropped OCR Exact Match: Sample 1 + Sample 2 (2/3 = 0.6667).
+        check(
+            "STAGE12-AUDIT003-EVAL-METRICS-INTEGRITY",
+            "evaluate_plates_dataset separates detection_precision, detection_recall, detection_f1, end_to_end_exact_match_rate, and cropped_ocr_exact_match_rate without counting failed detection as E2E match",
+            rep_m.get("ok") is True
+            and s2_res.get("detected") is False
+            and s2_res.get("predicted_plate") == ""
+            and s2_res.get("exact_match") is False
+            and s2_res.get("end_to_end_exact_match") is False
+            and s2_res.get("cropped_ocr_exact_match") is True
+            and met_m.get("true_positive_boxes") == 2
+            and met_m.get("false_positive_boxes") == 2
+            and met_m.get("false_negative_boxes") == 1
+            and met_m.get("detection_recall") == round(2.0 / 3.0, 4)
+            and met_m.get("detection_precision") == 0.5
+            and met_m.get("detection_f1") == 0.5714
+            and met_m.get("end_to_end_exact_match_rate") == round(1.0 / 3.0, 4)
+            and met_m.get("exact_match_rate") == round(1.0 / 3.0, 4)
+            and met_m.get("cropped_ocr_exact_match_rate") == round(2.0 / 3.0, 4),
+            (met_m, s2_res),
+        )
+    finally:
+        shutil.rmtree(s12_m_dir, ignore_errors=True)
+
+    # 4. STAGE12-AUDIT004-SHARED-ENGINES-MEMORY: Verify shared reader & vyolo reuse across evaluation jobs & thread-safe concurrent inference
+    s12_mem_dir = tempfile.mkdtemp(prefix="mersad_s12_audit004_")
+    try:
+        im_m4 = np.full((360, 640, 3), 30, dtype=np.uint8)
+        cv2.rectangle(im_m4, (200, 340), (400, 392), (255, 255, 255), -1)
+        cv2.rectangle(im_m4, (200, 340), (400, 392), (0, 0, 0), 3)
+        cv2.imwrite(os.path.join(s12_mem_dir, "m1.jpg"), im_m4)
+        with open(os.path.join(s12_mem_dir, "ground_truth.csv"), "w", encoding="utf-8", newline="") as gtf:
+            gtf.write("filename,expected_plate,x,y,w,h\nm1.jpg,عدن-12345,200,340,200,52\n")
+
+        class _SharedMockReader:
+            def __init__(self):
+                self.active_threads = 0
+                self.max_concurrent = 0
+                self.lock = threading.Lock()
+                self.calls = 0
+            def readtext(self, crop):
+                with self.lock:
+                    self.active_threads += 1
+                    self.calls += 1
+                    if self.active_threads > self.max_concurrent:
+                        self.max_concurrent = self.active_threads
+                time.sleep(0.005)
+                with self.lock:
+                    self.active_threads -= 1
+                return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 12345", 0.95)]
+
+        shared_rdr = _SharedMockReader()
+        shared_vy = YOLO("yolov8n.pt")
+        with m._SHARED_ENGINES_LOCK:
+            m._SHARED_ENGINES["reader_reuses"] = 0
+            m._SHARED_ENGINES["vyolo_reuses"] = 0
+        m.register_shared_engines(reader=shared_rdr, vyolo=shared_vy)
+
+        # Run a concurrent live inference simulation thread while 3 evaluation jobs execute via start_plate_eval_job(reader=None, vyolo=None)
+        conc_errs = []
+        stop_bg = threading.Event()
+        def _live_cam_sim():
+            while not stop_bg.is_set():
+                try:
+                    m.detect_vehicles(im_m4, shared_vy)
+                    m.read_plate(shared_rdr, im_m4[340:392, 200:400])
+                except Exception as e:
+                    conc_errs.append(repr(e))
+
+        bg_th = threading.Thread(target=_live_cam_sim, daemon=True)
+        bg_th.start()
+        try:
+            for _ in range(3):
+                j_out = m.start_plate_eval_job(
+                    {"dataset_path": s12_mem_dir, "use_vehicle_detector": True},
+                    who="s12_mem_test",
+                    sync=True,
+                )
+                if not (j_out.get("last_report") or {}).get("ok"):
+                    conc_errs.append(f"eval_failed:{j_out}")
+        finally:
+            stop_bg.set()
+            bg_th.join(timeout=3.0)
+
+        with m._SHARED_ENGINES_LOCK:
+            r_reuses = m._SHARED_ENGINES["reader_reuses"]
+            v_reuses = m._SHARED_ENGINES["vyolo_reuses"]
+            same_rdr = (m._SHARED_ENGINES["reader"] is shared_rdr)
+            same_vy = (m._SHARED_ENGINES["vyolo"] is shared_vy)
+
+        check(
+            "STAGE12-AUDIT004-SHARED-ENGINES-MEMORY",
+            "start_plate_eval_job reuses registered reader and vyolo instances without duplicate loading and serializes concurrent OCR/YOLO calls safely",
+            len(conc_errs) == 0 and same_rdr and same_vy and r_reuses >= 3 and v_reuses >= 3 and shared_rdr.max_concurrent == 1,
+            (conc_errs, same_rdr, same_vy, r_reuses, v_reuses, shared_rdr.max_concurrent),
+        )
+    finally:
+        shutil.rmtree(s12_mem_dir, ignore_errors=True)
+
+    # 5. STAGE12-AUDIT005-SUBPROCESS-BROWSE-DIALOG: Verify browse_local_path never imports tkinter in HTTP worker thread and supports --internal-browse-dialog & busy lock
+    ml_ast_src = open(os.path.join(WORK, "mersad_live.py"), encoding="utf-8").read()
+    tree_ml = ast.parse(ml_ast_src)
+    browse_fn_imports_tk = False
+    for node in ast.walk(tree_ml):
+        if isinstance(node, ast.FunctionDef) and node.name == "browse_local_path":
+            for sub in ast.walk(node):
+                if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                    names = [a.name for a in sub.names] + ([sub.module] if getattr(sub, "module", None) else [])
+                    if any("tkinter" in str(n) for n in names):
+                        browse_fn_imports_tk = True
+
+    # Test non-blocking busy guard when _BROWSE_DIALOG_LOCK is already held
+    m._BROWSE_DIALOG_LOCK.acquire()
+    try:
+        # Force simulated DISPLAY so we reach the lock check on Linux
+        old_disp = os.environ.get("DISPLAY")
+        os.environ["DISPLAY"] = ":99"
+        busy_res = m.browse_local_path(mode="folder", timeout=2.0)
+    finally:
+        if old_disp is None:
+            os.environ.pop("DISPLAY", None)
+        else:
+            os.environ["DISPLAY"] = old_disp
+        m._BROWSE_DIALOG_LOCK.release()
+
+    # Test subprocess --internal-browse-dialog CLI flag directly
+    sub_dlg = subprocess.run(
+        [sys.executable, os.path.join(WORK, "mersad_live.py"), "--internal-browse-dialog", "folder"],
+        capture_output=True, text=True, timeout=10,
+        env={k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")},
+    )
+    sub_dlg_json = json.loads(sub_dlg.stdout.strip().splitlines()[-1]) if sub_dlg.stdout.strip() else {}
+
+    check(
+        "STAGE12-AUDIT005-SUBPROCESS-BROWSE-DIALOG",
+        "browse_local_path never imports tkinter in the HTTP server thread, enforces non-blocking _BROWSE_DIALOG_LOCK, and runs --internal-browse-dialog in a child process",
+        not browse_fn_imports_tk
+        and busy_res.get("ok") is False and busy_res.get("busy") is True
+        and sub_dlg.returncode == 0 and isinstance(sub_dlg_json, dict) and "ok" in sub_dlg_json,
+        (browse_fn_imports_tk, busy_res, sub_dlg.returncode, sub_dlg_json),
+    )
+
+    # 6. STAGE12-DOC-PARITY: Verify dashboard.html JS syntax via node --check and Stage 12 new metric labels in UI
+    dash_html_12 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    has_5_metrics_ui = (
+        "detection_f1" in dash_html_12
+        and "end_to_end_exact_match_rate" in dash_html_12
+        and "cropped_ocr_exact_match_rate" in dash_html_12
+    )
+    js_blocks = re.findall(r"<script[^>]*>(.*?)</script>", dash_html_12, flags=re.S)
+    js_tmp = os.path.join(tempfile.gettempdir(), f"mersad_s12_dash_{os.getpid()}.js")
+    try:
+        with open(js_tmp, "w", encoding="utf-8") as jf:
+            jf.write("\n".join(js_blocks))
+        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=10)
+        js_ok = (node_chk.returncode == 0)
+    finally:
+        if os.path.exists(js_tmp):
+            try: os.remove(js_tmp)
+            except OSError: pass
+
+    check(
+        "STAGE12-DOC-PARITY",
+        "dashboard.html renders all 5 separated evaluation metrics (Recall, Precision, F1, End-to-End Exact Match, Cropped OCR Exact Match) and passes node --check",
+        has_5_metrics_ui and js_ok,
+        (has_5_metrics_ui, js_ok),
+    )
+
+
+run_stage12_security_and_eval_integrity_tests()
 m.db.close()
 n_pass = sum(1 for _, _, st, _ in RESULTS if st == "PASS")
 n_skip = sum(1 for _, _, st, _ in RESULTS if st == "SKIP")

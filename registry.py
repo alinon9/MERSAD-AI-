@@ -486,8 +486,11 @@ def _ensure_calibration_and_eval_schema(db):
         failed_ocr_count INTEGER DEFAULT 0,
         detection_recall REAL DEFAULT 0,
         detection_precision REAL DEFAULT 0,
+        detection_f1 REAL DEFAULT 0,
         mean_iou REAL,
         exact_match_rate REAL DEFAULT 0,
+        end_to_end_exact_match_rate REAL DEFAULT 0,
+        cropped_ocr_exact_match_rate REAL DEFAULT 0,
         digits_match_rate REAL DEFAULT 0,
         char_accuracy_rate REAL DEFAULT 0,
         cer REAL DEFAULT 0,
@@ -495,6 +498,17 @@ def _ensure_calibration_and_eval_schema(db):
         status TEXT DEFAULT 'completed',
         report_json TEXT DEFAULT '{}'
     )""")
+    cols_pe = {r[1] for r in db.execute("PRAGMA table_info(plate_eval_runs)").fetchall()}
+    for col_name, col_ddl in (
+        ("detection_f1", "ALTER TABLE plate_eval_runs ADD COLUMN detection_f1 REAL DEFAULT 0"),
+        ("end_to_end_exact_match_rate", "ALTER TABLE plate_eval_runs ADD COLUMN end_to_end_exact_match_rate REAL DEFAULT 0"),
+        ("cropped_ocr_exact_match_rate", "ALTER TABLE plate_eval_runs ADD COLUMN cropped_ocr_exact_match_rate REAL DEFAULT 0"),
+    ):
+        if col_name not in cols_pe:
+            try:
+                db.execute(col_ddl)
+            except sqlite3.OperationalError:
+                pass
 
 
 def migrate_db(db, lock, db_path=None):
