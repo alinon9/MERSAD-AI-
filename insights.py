@@ -127,17 +127,18 @@ TRAFFIC_CONDITIONS = {
 
 
 def _compute_calibration_completeness(min_sec, expected_sec, max_sec=0.0, distance_m=0.0, observations_count=0, calibration_date="", is_cal=True):
-    """Determine whether a camera link calibration is complete or needs additional field metadata."""
+    """Determine whether a camera link calibration is complete or needs additional field metadata (Stage 11, AUDIT-007).
+    Requires min_sec >= 1.0, expected_sec >= min_sec, at least one spatial/upper bound (max_sec >= expected_sec or distance_m > 0),
+    and at least 3 field observations (or >= 1 observation when BOTH max_sec >= expected_sec and distance_m > 0 are provided)."""
     if not is_cal:
         return "uncalibrated", "غير معاير (افتراضي 90 ثانية)"
-    has_rich_meta = (
-        (max_sec is not None and float(max_sec or 0) >= float(expected_sec or 0) and float(max_sec or 0) > 0)
-        or (distance_m is not None and float(distance_m or 0) > 0)
-        or (observations_count is not None and int(observations_count or 0) >= 1)
-    )
+    has_max = bool(max_sec is not None and float(max_sec or 0) >= float(expected_sec or 0) and float(max_sec or 0) > 0)
+    has_dist = bool(distance_m is not None and float(distance_m or 0) > 0)
+    obs_cnt = int(observations_count or 0) if observations_count is not None else 0
+    has_rich_meta = bool((has_max or has_dist) and (obs_cnt >= 3 or (obs_cnt >= 1 and has_max and has_dist)))
     if min_sec and expected_sec and float(min_sec) >= 1.0 and float(expected_sec) >= float(min_sec) and has_rich_meta:
         return "complete", "معايرة مكتملة"
-    return "basic_needs_data", "معايرة أساسية — يوصى باستكمال (الحد الأعلى / المسافة / عدد القياسات)"
+    return "basic_needs_data", "معايرة أساسية — يوصى باستكمال (الحد الأعلى / المسافة / 3 قياسات على الأقل)"
 
 
 def configure_topology(topology=None):
@@ -523,6 +524,17 @@ def save_camera_link(data, who="operator"):
         if math.isnan(distance_m) or math.isinf(distance_m) or distance_m < 0:
             return {"ok": False, "error": "المسافة التقريبية لا يجوز أن تكون قيمة سالبة"}
         distance_m = round(distance_m, 2)
+        if distance_m > 0:
+            max_implied_kmh = (distance_m / min_sec) * 3.6
+            exp_implied_kmh = (distance_m / expected_sec) * 3.6
+            if max_implied_kmh > 260.0 or exp_implied_kmh < 0.5:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"المسافة المدخلة ({distance_m}م) غير متسقة فيزيائياً مع زمن الانتقال "
+                        f"(السرعة الضمنية القصوى {max_implied_kmh:.1f} كم/ساعة والمعتادة {exp_implied_kmh:.1f} كم/ساعة خارج النطاق المعقول 0.5–260 كم/ساعة)"
+                    ),
+                }
 
     raw_obs = data.get("observations_count")
     observations_count = 0

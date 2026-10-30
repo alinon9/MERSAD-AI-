@@ -91,7 +91,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div id="path-res" style="margin-bottom:12px"></div>
 <div class="g"><div><h2 style="font-size:.88rem;color:var(--mu)">أبرز محاور واتجاهات الحركة بين الكاميرات</h2><div class="tw" id="ins-cor"></div></div>
 <div><h2 style="font-size:.88rem;color:var(--mu)">أحدث مسارات المركبات المرصودة</h2><div class="tw" id="ins-pt"></div></div></div></div>
-<div class="c"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button onclick="resetCameraLinkForm()">+ إضافة رابط كاميرات جديد</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportCameraLinks(this.files[0]);this.value=''"></label></div></div>
+<div id="ins-cl-slot"><div class="c" id="cl-card-master"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button onclick="resetCameraLinkForm()">+ إضافة رابط كاميرات جديد</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportCameraLinks(this.files[0]);this.value=''"></label></div></div>
 <p class="mu">إدارة وحفظ أزمنة الانتقال الميدانية بين الكاميرات (وحدة التخزين المعيارية: الثانية). تُربط هذه المعايرة مباشرة بمحرك تتبع المسارات وكشف تعارض الانتقال وتقليل المطابقات الخاطئة.</p>
 <input type="hidden" id="cl-mode" value="upsert">
 <div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
@@ -116,7 +116,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 </div>
 <div id="cl-msg" class="mu" style="margin:6px 0"></div>
 <div class="tw" id="cl-table"></div>
-</div>
+</div></div>
 <div class="c"><h2>أبرز الحالات الشاذة والاشتباهات المكتشفة (تتطلب مراجعة بشرية)</h2><div class="tw" id="ins-an"></div></div>
 </section>
 <section id="t-analytics" hidden>
@@ -131,11 +131,8 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="c"><h2>الأحداث الأخيرة لتغير حالة الكاميرا</h2><div class="tw" id="health-events"></div></div>
 </section>
 <section id="t-calibration" hidden>
-<div class="c">
-<div class="bar"><h2>1. معايرة روابط الكاميرات — Camera Link Calibration</h2><button class="ok" onclick="document.querySelector('button[data-t=insights]')?.click();setTimeout(()=>$('#cl-from')?.focus(),80)">فتح جدول ونموذج روابط الكاميرات الكامل</button></div>
-<p class="mu">يمكنك إضافة وتعديل وحذف وتصدير واستيراد روابط الكاميرات المعايرة من قسم «معايرة روابط الكاميرات» أدناه أو من تبويب «التحليل والتعلّم». جميع التعديلات تُحفظ ذرياً في قاعدة البيانات وتنعكس فوراً في محرك تتبع المسارات.</p>
-<div id="cal-links-mirror" class="tw"></div>
-</div>
+<div id="cal-cl-slot"></div>
+<div id="cal-links-mirror" class="tw" hidden></div>
 
 <div class="c">
 <div class="bar"><h2>2. تقييم ومعايرة اللوحات اليمنية — Yemeni Plate Evaluation</h2>
@@ -143,6 +140,8 @@ ul{margin:4px 0;padding-inline-start:18px}
 <button onclick="inspectEvalDataset()">فحص مجموعة البيانات</button>
 <button class="ok" id="pe-start-btn" onclick="startPlateEval()">بدء التقييم الآلي</button>
 <button class="er" id="pe-cancel-btn" onclick="cancelPlateEval()" disabled>إلغاء التقييم الجاري</button>
+<a class="btn" id="pe-export-json" href="/api/plate_eval/export?fmt=json">تصدير JSON</a>
+<a class="btn" id="pe-export-csv" href="/api/plate_eval/export?fmt=csv">تصدير CSV</a>
 </div></div>
 <p class="mu">أجرِ التقييم المعياري لقراءة اللوحات اليمنية مباشرة من الواجهة دون الحاجة لكتابة أوامر في الطرفية (يستدعي نفس المحرك البرمجي لـ <code>--evaluate-plates</code> مع الفصل الصارم بين دقة اكتشاف اللوحة، ودقة قراءة المحارف والأرقام، والمطابقة الكاملة للوحة).</p>
 <div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
@@ -356,9 +355,16 @@ function resetCameraLinkForm(){
  if($("#cl-save-btn"))$("#cl-save-btn").textContent="إضافة وحفظ المعايرة";
  if($("#cl-msg"))$("#cl-msg").innerHTML='<span class="chip mu">وضع إضافة رابط جديد — أدخل الكاميرا المصدر والوجهة وأزمنة الانتقال ثم اضغط حفظ.</span>';
 }
+function mountCameraLinksCard(targetTab){
+ const card=$("#cl-card-master"),slot=targetTab==="calibration"?$("#cal-cl-slot"):$("#ins-cl-slot");
+ if(card&&slot&&card.parentElement!==slot)slot.appendChild(card);
+}
 function editCameraLink(fc,tc){
  const item=CL_CACHE.find(x=>x.from_cam===fc&&x.to_cam===tc&&!x.inferred);
  if(!item)return;
+ if($("#t-calibration")&&!$("#t-calibration").hidden)mountCameraLinksCard("calibration");
+ else if($("#t-insights")&&!$("#t-insights").hidden)mountCameraLinksCard("insights");
+ else{document.querySelector("button[data-t=calibration]")?.click();mountCameraLinksCard("calibration")}
  if($("#cl-from"))$("#cl-from").value=item.from_cam||"";
  if($("#cl-to"))$("#cl-to").value=item.to_cam||"";
  if($("#cl-unit"))$("#cl-unit").value="sec";
@@ -375,7 +381,7 @@ function editCameraLink(fc,tc){
  if($("#cl-mode"))$("#cl-mode").value="upsert";
  if($("#cl-save-btn"))$("#cl-save-btn").textContent="تحديث المعايرة المحفوظة";
  if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip wn">تعديل الرابط ${esc(fc)} ➔ ${esc(tc)}</span>`;
- if($("#t-insights")&&$("#t-insights").hidden){document.querySelector("button[data-t=insights]")?.click()}
+ $("#cl-min")?.focus();
 }
 async function loadCameraLinks(){
  const box=$("#cl-table"),mirror=$("#cal-links-mirror");if(!box&&!mirror)return;
@@ -432,6 +438,7 @@ async function doImportCameraLinks(file){
 }
 async function loadIns(){
  try{
+  mountCameraLinksCard("insights");
   if($("#ins-demo-banner"))$("#ins-demo-banner").hidden=!DEMO_MODE;
   const url=DEMO_MODE?"/api/insights?demo=1":"/api/insights";
   const r=await rJson(url),m=r.model||{};
@@ -530,6 +537,9 @@ $("#health-periods")?.addEventListener("click",e=>{const b=e.target.closest("but
 let PE_POLL_TIMER=null,FC_CACHE=[];
 async function loadCalibrationTab(){
  try{
+  mountCameraLinksCard("calibration");
+  if($("#pe-export-json"))$("#pe-export-json").href=qSep("/api/plate_eval/export?fmt=json");
+  if($("#pe-export-csv"))$("#pe-export-csv").href=qSep("/api/plate_eval/export?fmt=csv");
   if($("#fc-export-json"))$("#fc-export-json").href=qSep("/api/field_calibrations/export?fmt=json");
   if($("#fc-export-csv"))$("#fc-export-csv").href=qSep("/api/field_calibrations/export?fmt=csv");
   await loadCameraLinks();
@@ -548,16 +558,34 @@ async function browseEvalPath(mode,targetSel){
 async function uploadEvalDataset(fileList){
  if(!fileList||!fileList.length)return;
  try{
-  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML='<span class="chip wn">جارٍ رفع وتجهيز ملفات التقييم...</span>';
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML='<span class="chip wn">جارٍ قراءة وتجهيز ملفات التقييم...</span>';
   const filesData=[];
   for(const f of fileList){
    const b64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(f)});
    filesData.push({name:f.name,content_base64:b64});
   }
-  const r=await post("/api/plate_eval/upload_dataset",{files:filesData});
-  if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"فشل رفع ملفات التقييم")}</span>`;return}
-  if($("#pe-dataset-path"))$("#pe-dataset-path").value=r.dataset_path||"";
-  renderInspectResult(r.inspection);
+  const chunks=[];
+  let curChunk=[],curBytes=0;
+  for(const item of filesData){
+   const sz=(item.content_base64||"").length;
+   if(curChunk.length>0&&(curBytes+sz>2400000||curChunk.length>=6)){
+    chunks.push(curChunk);curChunk=[];curBytes=0;
+   }
+   curChunk.push(item);curBytes+=sz;
+  }
+  if(curChunk.length>0)chunks.push(curChunk);
+  const batch_id="batch_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+  let lastResp=null;
+  for(let i=0;i<chunks.length;i++){
+   if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip wn">جارٍ رفع الدفعة (${i+1}/${chunks.length})...</span>`;
+   const r=await post("/api/plate_eval/upload_dataset",{batch_id,finalize:i===chunks.length-1,files:chunks[i]});
+   if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"فشل رفع ملفات التقييم")}</span>`;return}
+   lastResp=r;
+  }
+  if(lastResp){
+   if($("#pe-dataset-path"))$("#pe-dataset-path").value=lastResp.dataset_path||"";
+   if(lastResp.inspection)renderInspectResult(lastResp.inspection);
+  }
  }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر رفع الملفات")}</span>`}
 }
 function renderInspectResult(insp){

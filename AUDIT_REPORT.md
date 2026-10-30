@@ -1,6 +1,6 @@
-# ملحق التدقيق النهائي — MERSAD AI V7.1 (اكتمال المراحل 1–10)
+# ملحق التدقيق النهائي — MERSAD AI V7.1 (اكتمال المراحل 1–13)
 
-- **الحصيلة النهائية لاختبارات التحقق الآلي (`selftest.py`)**: **`175 PASS, 0 SKIP, 0 FAIL`** (في كلا وضعي التشغيل القياسي و`MERSAD_BLOCK_SKLEARN=1`).
+- **الحصيلة النهائية لاختبارات التحقق الآلي (`selftest.py`)**: **`187 PASS, 0 SKIP, 0 FAIL`** (في كلا وضعي التشغيل القياسي و`MERSAD_BLOCK_SKLEARN=1`).
 - **الأدوات والخيارات الموحدة في `V7.1`**: دعم `--verify`، و`--verify-models`، و`--evaluate-plates` (مع دعم قص المركبة أولاً `vyolo -> find_plates` عبر `--use-vehicle-detector` / `--vehicle-model`)، و`--device auto|cpu|cuda` / `--gpu`، وفحص `--camera` و`--verify-pip-deps` في `check_install.py`.
 - **توحيد سكربتات التشغيل والبناء**: تطابق `RUN.bat` و`RUN_LAN.bat` في اشتراط `check_install.py --strict`، وتطابق `hiddenimports` في `mersad_ai.spec` و`BUILD_EXE.bat`، وعزل اختبارات الدخان لنسخة `MERSAD_AI.exe` في `.github/workflows/windows-build.yml` داخل `$env:RUNNER_TEMP`.
 

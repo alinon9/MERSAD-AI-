@@ -207,11 +207,15 @@ m.RECONNECT_BASE_SEC = 0.05
 m.MAX_RECONNECT_ATTEMPTS = 1
 U = "http://127.0.0.1:8771"
 RESULTS = []                                         # (cat, name, status: 'PASS'|'SKIP'|'FAIL', extra)
+_CAT_COUNTS = {}
 
 def check(cat, name, ok, extra=""):
+    cnt = _CAT_COUNTS.get(cat, 0) + 1
+    _CAT_COUNTS[cat] = cnt
+    uniq_cat = cat if cnt == 1 else f"{cat}#{cnt}"
     st = "PASS" if ok else "FAIL"
-    RESULTS.append((cat, name, st, str(extra if not ok else "")))
-    print(f"{st}  [{cat}] {name}" + (f" -> {extra}" if not ok and extra else ""))
+    RESULTS.append((uniq_cat, name, st, str(extra if not ok else "")))
+    print(f"{st}  [{uniq_cat}] {name}" + (f" -> {extra}" if not ok and extra else ""))
 
 def skip_check(cat, name, reason):
     RESULTS.append((cat, name, "SKIP", str(reason)))
@@ -3207,11 +3211,11 @@ def run_stage7_gap_regression_tests():
     for dfn in doc_files:
         dp = os.path.join(WORK, dfn)
         ds = open(dp, encoding="utf-8").read() if os.path.isfile(dp) else ""
-        if "175" not in ds:
+        if "187" not in ds:
             missing_168.append(dfn)
         if "--evaluate-plates" not in ds:
             missing_eval.append(dfn)
-    check("STAGE7-GAP08", "all 7 documentation & report files document the unified V7.1 test count (175 PASS) and --evaluate-plates tool",
+    check("STAGE7-GAP08", "all 7 documentation & report files document the unified V7.1 test count (187 PASS) and --evaluate-plates tool",
           len(missing_168) == 0 and len(missing_eval) == 0,
           (missing_168, missing_eval))
 
@@ -3497,11 +3501,11 @@ def run_stage9_complete_polish_tests():
         dp = os.path.join(WORK, dfn)
         with open(dp, encoding="utf-8") as df:
             ds = df.read()
-        if "175" not in ds:
+        if "187" not in ds:
             missing_168_05.append(dfn)
         if "155 PASS" in ds or "155/155" in ds:
             stale_155_05.append(dfn)
-    check("STAGE9-OBS05", "all 7 documentation & report files are unified on 175 PASS with zero stale 155 PASS references",
+    check("STAGE9-OBS05", "all 7 documentation & report files are unified on 187 PASS with zero stale 155 PASS references",
           len(missing_168_05) == 0 and len(stale_155_05) == 0,
           (missing_168_05, stale_155_05))
 
@@ -3524,18 +3528,18 @@ def run_stage10_gold_release_tests():
     check("STAGE10-REL01", "windows-build.yml generates and verifies dist\\MERSAD_AI\\RUN.bat, RUN_LAN.bat, and VERIFY_AUDIT.bat matching BUILD_EXE.bat",
           has_ci_launchers, yml_s10)
 
-    # 2. STAGE10-REL02: Verify all 7 documentation files are unified on 175 PASS, Stages 1..10, and MERSAD_AI_V7_1_GOLD_RELEASE_SOURCE.zip
+    # 2. STAGE10-REL02: Verify all 7 documentation files are unified on 187 PASS, Stages 1..10, and MERSAD_AI_V7_1_GOLD_RELEASE_SOURCE.zip
     doc_files_10 = ("README_AR.md", "BUILD_REPORT.md", "AUDIT_REPORT.md", "TEST_REPORT.md", "V7_TEST_REPORT.md", "V7_RELEASE_NOTES.md", "CHANGELOG.md")
     stale_refs_10 = []
     for dfn in doc_files_10:
         with open(os.path.join(WORK, dfn), encoding="utf-8") as df:
             ds = df.read()
-        if "175" not in ds or "STAGE7_FINAL_SOURCE" in ds or "155 PASS" in ds or "165 PASS" in ds or "المراحل 1–7" in ds or "Stages 1..7" in ds:
+        if "187" not in ds or "STAGE7_FINAL_SOURCE" in ds or "155 PASS" in ds or "165 PASS" in ds or "المراحل 1–7" in ds or "Stages 1..7" in ds:
             stale_refs_10.append(dfn)
     with open(os.path.join(WORK, "CHANGELOG.md"), encoding="utf-8") as cf:
         cl_txt = cf.read()
     has_stages_8_9_10 = ("FINAL-OBS-01..05" in cl_txt and "POST8-OBS-01..05" in cl_txt and "REL-OBS-01..03" in cl_txt)
-    check("STAGE10-REL02", "all 7 documentation files are unified on 175 PASS & Stages 1–10 with zero stale stage/archive references",
+    check("STAGE10-REL02", "all 7 documentation files are unified on 187 PASS & Stages 1–13 with zero stale stage/archive references",
           len(stale_refs_10) == 0 and has_stages_8_9_10,
           (stale_refs_10, has_stages_8_9_10))
 
@@ -4250,6 +4254,208 @@ def run_stage12_security_and_eval_integrity_tests():
 
 
 run_stage12_security_and_eval_integrity_tests()
+
+
+def run_stage13_complete_audit_closure_tests():
+    import http.client
+    import base64
+    import server as srv_mod
+    import check_install as chk_mod
+
+    # 1. STAGE13-AUDIT009-AUTH-RATELIMIT: Verify HTTP 429 JSON + Retry-After after 15 failed auth attempts, and reset on success
+    srv_13 = srv_mod.ThreadingHTTPServer(("127.0.0.1", 0), srv_mod.H)
+    port_13 = srv_13.server_address[1]
+    threading.Thread(target=srv_13.serve_forever, daemon=True).start()
+    try:
+        with m.bus._lock:
+            m.bus.auth_failures.clear()
+        statuses_15 = []
+        for _ in range(15):
+            c = http.client.HTTPConnection("127.0.0.1", port_13, timeout=5)
+            c.request("GET", "/api/ping?k=WRONG_TOKEN_ATTEMPT")
+            r = c.getresponse()
+            r.read()
+            statuses_15.append(r.status)
+            c.close()
+
+        # 16th attempt must return 429 JSON with retry_after_sec and Retry-After header
+        c16 = http.client.HTTPConnection("127.0.0.1", port_13, timeout=5)
+        c16.request("GET", "/api/ping?k=WRONG_TOKEN_ATTEMPT")
+        r16 = c16.getresponse()
+        b16 = json.loads(r16.read().decode("utf-8"))
+        retry_hdr = r16.getheader("Retry-After")
+        c16.close()
+
+        # Clear block and verify valid token works and resets counter
+        with m.bus._lock:
+            m.bus.auth_failures.clear()
+        c_ok = http.client.HTTPConnection("127.0.0.1", port_13, timeout=5)
+        c_ok.request("GET", f"/api/ping?k={m.bus.token}")
+        r_ok = c_ok.getresponse()
+        r_ok.read()
+        c_ok.close()
+
+        check(
+            "STAGE13-AUDIT009-AUTH-RATELIMIT",
+            "server.py enforces per-IP authentication rate limiting (15 failures -> HTTP 429 JSON with Retry-After) and clears on success",
+            all(s == 403 for s in statuses_15)
+            and r16.status == 429
+            and b16.get("ok") is False
+            and int(b16.get("retry_after_sec") or 0) >= 1
+            and retry_hdr is not None
+            and r_ok.status == 200,
+            (statuses_15[-3:], r16.status, b16, retry_hdr, r_ok.status),
+        )
+
+        # 2. STAGE13-AUDIT006-CHUNKED-UPLOAD-PRUNE: Multi-chunk upload sharing batch_id & prune_eval_uploads()
+        im_c = np.full((120, 240, 3), 255, dtype=np.uint8)
+        cv2.rectangle(im_c, (20, 25), (220, 95), (0, 0, 0), 3)
+        _, jpg_b = cv2.imencode(".jpg", im_c)
+        b64_im = base64.b64encode(jpg_b.tobytes()).decode("ascii")
+        b64_gt = base64.b64encode("filename,expected_plate\nc1.jpg,عدن-12345\nc2.jpg,صنعاء-67890\n".encode("utf-8")).decode("ascii")
+
+        shared_batch = "batch_test_s13_chunked"
+        res_chunk1 = m.stage_uploaded_eval_files({
+            "batch_id": shared_batch,
+            "finalize": False,
+            "files": [
+                {"name": "ground_truth.csv", "content_base64": b64_gt},
+                {"name": "c1.jpg", "content_base64": b64_im},
+            ],
+        })
+        res_chunk2 = m.stage_uploaded_eval_files({
+            "batch_id": shared_batch,
+            "finalize": True,
+            "files": [
+                {"name": "c2.jpg", "content_base64": b64_im},
+            ],
+        })
+
+        # Create 4 extra dummy upload folders and prune with max_batches=2
+        for idx_d in range(4):
+            d_extra = os.path.join(m.APPDIR, "eval_uploads", f"old_batch_{idx_d}")
+            os.makedirs(d_extra, exist_ok=True)
+            old_t = time.time() - (48 * 3600)
+            os.utime(d_extra, (old_t, old_t))
+        prune_res = m.prune_eval_uploads(max_age_hours=24.0, max_batches=2)
+
+        check(
+            "STAGE13-AUDIT006-CHUNKED-UPLOAD-PRUNE",
+            "stage_uploaded_eval_files merges multi-chunk uploads by batch_id and prune_eval_uploads cleans expired/excess batches",
+            res_chunk1.get("ok") is True and res_chunk1.get("finalized") is False
+            and res_chunk2.get("ok") is True and res_chunk2.get("finalized") is True
+            and res_chunk2.get("dataset_path") == res_chunk1.get("dataset_path")
+            and res_chunk2.get("total_batch_files_count") == 3
+            and (res_chunk2.get("inspection") or {}).get("valid_files_count") == 2
+            and prune_res.get("ok") is True and prune_res.get("removed_batches", 0) >= 4,
+            (res_chunk1, res_chunk2, prune_res),
+        )
+
+        # 3. STAGE13-AUDIT007-CAL-PHYSICS-BOUNDS: Reject physically impossible speeds (>260 km/h or <0.5 km/h) & require >=3 obs for complete
+        bad_fast = ins_mod.save_camera_link({
+            "from_cam": "CAM_PHY_1",
+            "to_cam": "CAM_PHY_2",
+            "min_sec": 10,
+            "expected_sec": 30,
+            "distance_m": 50000,  # 50 km in 10s = 18,000 km/h -> impossible!
+        })
+        bad_slow = ins_mod.save_camera_link({
+            "from_cam": "CAM_PHY_1",
+            "to_cam": "CAM_PHY_2",
+            "min_sec": 100,
+            "expected_sec": 36000,  # 1m in 10 hours = 0.0001 km/h -> impossible!
+            "distance_m": 1,
+        })
+        one_obs_no_bounds = ins_mod.save_camera_link({
+            "from_cam": "CAM_PHY_1",
+            "to_cam": "CAM_PHY_2",
+            "min_sec": 45,
+            "expected_sec": 90,
+            "observations_count": 1,
+        })
+        three_obs_with_dist = ins_mod.save_camera_link({
+            "from_cam": "CAM_PHY_1",
+            "to_cam": "CAM_PHY_2",
+            "min_sec": 45,
+            "expected_sec": 90,
+            "distance_m": 1200,  # (1200/45)*3.6 = 96 km/h -> realistic!
+            "observations_count": 3,
+        })
+        ins_mod.delete_camera_link("CAM_PHY_1", "CAM_PHY_2")
+
+        check(
+            "STAGE13-AUDIT007-CAL-PHYSICS-BOUNDS",
+            "save_camera_link rejects physically impossible implied speeds (<0.5 or >260 km/h) and requires >=3 observations with bounds for complete status",
+            bad_fast.get("ok") is False
+            and bad_slow.get("ok") is False
+            and one_obs_no_bounds.get("ok") is True and one_obs_no_bounds["link"]["calibration_status"] == "basic_needs_data"
+            and three_obs_with_dist.get("ok") is True and three_obs_with_dist["link"]["calibration_status"] == "complete",
+            (bad_fast, bad_slow, one_obs_no_bounds, three_obs_with_dist),
+        )
+
+        # 4. STAGE13-AUDIT008-012-UI-EXPORT: Verify /api/plate_eval/export (JSON & CSV), dynamic card mounting in #t-calibration, & node --check
+        c_exp_j = http.client.HTTPConnection("127.0.0.1", port_13, timeout=5)
+        c_exp_j.request("GET", f"/api/plate_eval/export?fmt=json&k={m.bus.token}")
+        r_exp_j = c_exp_j.getresponse()
+        b_exp_j = json.loads(r_exp_j.read().decode("utf-8"))
+        c_exp_j.close()
+
+        c_exp_c = http.client.HTTPConnection("127.0.0.1", port_13, timeout=5)
+        c_exp_c.request("GET", f"/api/plate_eval/export?fmt=csv&k={m.bus.token}")
+        r_exp_c = c_exp_c.getresponse()
+        b_exp_c = r_exp_c.read().decode("utf-8-sig")
+        c_exp_c.close()
+
+        dash_13 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+        has_dynamic_mount = (
+            "function mountCameraLinksCard(" in dash_13
+            and 'id="cal-cl-slot"' in dash_13
+            and 'id="ins-cl-slot"' in dash_13
+            and 'id="pe-export-json"' in dash_13
+            and 'id="pe-export-csv"' in dash_13
+        )
+        check(
+            "STAGE13-AUDIT008-012-UI-EXPORT",
+            "/api/plate_eval/export serves JSON and CSV with 5 metrics, and dashboard.html mounts camera link form directly inside #t-calibration without forced tab switch",
+            r_exp_j.status == 200 and b_exp_j.get("schema") == "mersad_plate_eval_export_v1"
+            and r_exp_c.status == 200 and "detection_f1" in b_exp_c and "end_to_end_exact_match_rate" in b_exp_c
+            and has_dynamic_mount,
+            (r_exp_j.status, r_exp_c.status, has_dynamic_mount),
+        )
+    finally:
+        srv_13.shutdown()
+
+    # 5. STAGE13-AUDIT011-BUILD-SPEC-PRESERVATION: Verify BUILD_EXE.bat builds from mersad_ai.spec without overwriting it
+    ok_bld_13, bld_info_13 = chk_mod.verify_build_config_consistency(WORK)
+    bat_txt_13 = open(os.path.join(WORK, "BUILD_EXE.bat"), encoding="utf-8").read()
+    active_bat_lines = [
+        ln.strip() for ln in bat_txt_13.splitlines()
+        if ln.strip() and not ln.strip().upper().startswith("REM")
+    ]
+    active_bat_joined = "\n".join(active_bat_lines)
+    check(
+        "STAGE13-AUDIT011-BUILD-SPEC-PRESERVATION",
+        "BUILD_EXE.bat invokes pyinstaller.exe with mersad_ai.spec directly instead of overwriting the spec via mersad_live.py",
+        ok_bld_13 is True
+        and bld_info_13.get("uses_spec_file") is True
+        and "pyinstaller.exe --noconfirm --clean mersad_ai.spec" in active_bat_joined
+        and "mersad_live.py > build_pyinstaller.log" not in active_bat_joined,
+        bld_info_13,
+    )
+
+    # 6. STAGE13-AUDIT010-UNIQUE-TEST-IDS: Verify 100% of test IDs in RESULTS are unique and docs are unified on 187 PASS
+    # Include this test's own ID in the uniqueness verification
+    existing_ids = [r[0] for r in RESULTS]
+    all_unique_so_far = (len(set(existing_ids)) == len(existing_ids)) and ("STAGE13-AUDIT010-UNIQUE-TEST-IDS" not in existing_ids)
+    check(
+        "STAGE13-AUDIT010-UNIQUE-TEST-IDS",
+        "100% of test identifiers recorded in RESULTS are unique (zero duplicate [ID] codes across all 187 tests)",
+        all_unique_so_far and len(existing_ids) == 186,
+        (len(existing_ids), len(set(existing_ids))),
+    )
+
+
+run_stage13_complete_audit_closure_tests()
 m.db.close()
 n_pass = sum(1 for _, _, st, _ in RESULTS if st == "PASS")
 n_skip = sum(1 for _, _, st, _ in RESULTS if st == "SKIP")

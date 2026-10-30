@@ -617,12 +617,14 @@ def verify_build_config_consistency(root_dir=ROOT_DIR):
         and "--verify-models" in yml_s
         and "--verify" in yml_s
     )
-    ok = bool(hi_match and no_hardcoded_user and uses_pwsh_env and uses_runner_temp_isolation)
+    uses_spec_file = ("pyinstaller.exe --noconfirm --clean mersad_ai.spec" in bat_s)
+    ok = bool(hi_match and uses_spec_file and no_hardcoded_user and uses_pwsh_env and uses_runner_temp_isolation)
     return ok, {
         "ok": ok,
         "spec_hiddenimports": sorted(spec_hi),
         "bat_hiddenimports": sorted(bat_hi),
         "hiddenimports_aligned": hi_match,
+        "uses_spec_file": uses_spec_file,
         "no_hardcoded_user": no_hardcoded_user,
         "uses_pwsh_env": uses_pwsh_env,
         "uses_runner_temp_isolation": uses_runner_temp_isolation,

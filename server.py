@@ -42,9 +42,13 @@ class Bus:
         self.on_list = self.on_template = self.on_import = self.on_insights = self.on_stats = self.on_path = None
         self.on_camera_links = self.on_camera_links_export = self.on_camera_links_import = None
         self.on_field_calibrations = self.on_field_calibrations_export = self.on_field_calibrations_import = None
-        self.on_plate_eval_status = self.on_plate_eval_history = None
+        self.on_plate_eval_status = self.on_plate_eval_history = self.on_plate_eval_export = None
         self.on_analytics = self.on_analytics_export = None
         self.on_camera_health = self.on_camera_health_export = None
+        self.auth_failures = {}                          # ip -> [count, window_start_ts, blocked_until_ts]
+        self.auth_max_failures = 15
+        self.auth_window_sec = 60.0
+        self.auth_block_sec = 60.0
         self.evidence_dir = "evidence"
         self.archive_dir = "evidence_archive"
 
@@ -121,13 +125,54 @@ class H(BaseHTTPRequestHandler):
         return ""
 
     def _auth(self):
+        client_ip = str(self.client_address[0] if getattr(self, "client_address", None) else "unknown")
+        now_ts = time.time()
+        with bus._lock:
+            rec = bus.auth_failures.get(client_ip)
+            if rec and now_ts < rec[2]:
+                retry_sec = max(1, int(round(rec[2] - now_ts)))
+                self._send(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "تم حظر المحاولات مؤقتاً بسبب تجاوز عدد محاولات الدخول الخاطئة؛ حاول بعد دقيقة",
+                            "retry_after_sec": retry_sec,
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                    headers={"Retry-After": str(retry_sec)},
+                    code=429,
+                )
+                return None
         provided = self.arg("k") or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
         if not provided or not bus.token or not secrets.compare_digest(str(provided), str(bus.token)):
+            with bus._lock:
+                if len(bus.auth_failures) >= 1024 and client_ip not in bus.auth_failures:
+                    expired_ips = [
+                        ip for ip, r in bus.auth_failures.items()
+                        if now_ts >= r[2] and (now_ts - r[1]) > bus.auth_window_sec
+                    ]
+                    for ip in expired_ips[:256]:
+                        bus.auth_failures.pop(ip, None)
+                    if len(bus.auth_failures) >= 1024:
+                        oldest_ip = min(bus.auth_failures.keys(), key=lambda ip: bus.auth_failures[ip][1])
+                        bus.auth_failures.pop(oldest_ip, None)
+                rec = bus.auth_failures.get(client_ip)
+                if not rec or (now_ts - rec[1]) > bus.auth_window_sec:
+                    rec = [1, now_ts, 0.0]
+                else:
+                    rec[0] += 1
+                if rec[0] >= bus.auth_max_failures:
+                    rec[2] = now_ts + bus.auth_block_sec
+                bus.auth_failures[client_ip] = rec
             try:
                 self.send_error(403, "Forbidden")
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
             return None
+        with bus._lock:
+            bus.auth_failures.pop(client_ip, None)
         return urlparse(self.path).path
 
     def _send(self, body, ctype="text/html; charset=utf-8", headers=None, code=200):
@@ -226,6 +271,9 @@ class H(BaseHTTPRequestHandler):
                 self._json(bus.on_plate_eval_status() if bus.on_plate_eval_status else {"ok": True, "running": False, "status": "idle"})
             elif p == "/api/plate_eval/history":
                 self._json(bus.on_plate_eval_history() if bus.on_plate_eval_history else {"ok": True, "runs": []})
+            elif p == "/api/plate_eval/export" and bus.on_plate_eval_export:
+                body, name, mime = bus.on_plate_eval_export(self.arg("fmt") or "json")
+                self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
             elif p == "/api/list" and self.arg("kind") in ("vehicles", "persons"):
                 self._json(bus.on_list(self.arg("kind"), self.arg("q")[:80]))
             elif p == "/api/template" and self.arg("kind") in ("vehicles", "persons"):

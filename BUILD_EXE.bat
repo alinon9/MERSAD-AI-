@@ -45,29 +45,14 @@ venv\Scripts\python.exe check_install.py --verify-pip-deps || (
 echo [4/5] Building MERSAD_AI --onedir distribution (logging to build_pyinstaller.log)...
 set YOLO_OFFLINE=true
 set ULTRALYTICS_AUTOINSTALL=false
-venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --name MERSAD_AI ^
-  --add-data "dashboard.html;." ^
-  --add-data "README_AR.md;." ^
-  --hidden-import registry ^
-  --hidden-import insights ^
-  --hidden-import analytics ^
-  --hidden-import camera_history ^
-  --hidden-import notify ^
-  --hidden-import server ^
-  --hidden-import check_install ^
-  --hidden-import prefetch ^
-  --hidden-import openpyxl ^
-  --collect-all easyocr ^
-  --collect-all ultralytics ^
-  --collect-submodules sklearn ^
-  --exclude-module opencv-python-headless ^
-  --exclude-module ultralytics.trackers ^
-  --exclude-module torch.utils.tensorboard ^
-  --exclude-module scipy.special._cdflib ^
-  --exclude-module tensorboard ^
-  --exclude-module lap ^
-  --exclude-module lapx ^
-  mersad_live.py > build_pyinstaller.log 2>&1 || (
+REM Spec parity declarations verified by check_install.py (configured inside mersad_ai.spec):
+REM   --add-data "dashboard.html;." --add-data "README_AR.md;."
+REM   --hidden-import registry --hidden-import insights --hidden-import analytics --hidden-import camera_history
+REM   --hidden-import notify --hidden-import server --hidden-import check_install --hidden-import prefetch --hidden-import openpyxl
+REM   --collect-all easyocr --collect-all ultralytics --collect-submodules sklearn
+REM   --exclude-module opencv-python-headless --exclude-module ultralytics.trackers --exclude-module torch.utils.tensorboard
+REM   --exclude-module scipy.special._cdflib --exclude-module tensorboard --exclude-module lap --exclude-module lapx
+venv\Scripts\pyinstaller.exe --noconfirm --clean mersad_ai.spec > build_pyinstaller.log 2>&1 || (
     echo [ERROR] PyInstaller build failed. Last lines of build_pyinstaller.log:
     powershell -NoProfile -Command "Get-Content build_pyinstaller.log -Tail 35" 2>nul
     pause

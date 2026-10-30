@@ -1300,6 +1300,7 @@ def _dispatch_retry_loop(stop_event=None):
                 archive_old_evidence(who="periodic_scheduler")
                 if CAMERA_HISTORY and hasattr(CAMERA_HISTORY, "prune_history"):
                     CAMERA_HISTORY.prune_history()
+                prune_eval_uploads()
         except Exception as e:
             logger.debug("Retry loop error: %s", e)
         time.sleep(0.25)
@@ -2702,6 +2703,7 @@ def wire():
     )
     bus.on_plate_eval_status = get_plate_eval_status
     bus.on_plate_eval_history = list_plate_eval_runs
+    bus.on_plate_eval_export = export_plate_eval_runs
     bus.post = {
         "/api/decision": lambda d, ip: {"ok": bool(d.get("action") in ("confirm", "ack", "dismiss") and str(d.get("id", "")).isdigit() and decide(int(d["id"]), d["action"], ip))},
         "/api/retry_dispatch": lambda d, ip: retry_dispatch(int(d["id"]), ip) if str(d.get("id", "")).isdigit() else {"ok": False, "error": "معرّف غير صالح"},
@@ -4675,13 +4677,119 @@ def start_plate_eval_job(data, who="operator", sync=False, reader=None, yolo=Non
     return {"ok": True, "job_id": job_id, "status": "running", "inspection": insp}
 
 
+def export_plate_eval_runs(fmt="json"):
+    """Export automated plate evaluation runs history and latest sample details as JSON or UTF-8-BOM CSV (AUDIT-012)."""
+    hist = list_plate_eval_runs(limit=100)
+    runs = hist.get("runs") or []
+    with _EVAL_JOB_LOCK:
+        last_rep = _EVAL_JOB_STATE.get("last_report")
+    f_norm = str(fmt or "json").strip().lower()
+    if f_norm == "csv":
+        out = io.StringIO(newline="")
+        w = csv.writer(out, lineterminator="\r\n")
+        w.writerow([
+            "id", "eval_date", "dataset_path", "model_used", "detector_mode", "vehicle_stage_enabled",
+            "valid_files_count", "invalid_files_count", "detected_count", "failed_detection_count",
+            "detection_recall", "detection_precision", "detection_f1", "mean_iou",
+            "end_to_end_exact_match_rate", "cropped_ocr_exact_match_rate",
+            "digits_match_rate", "char_accuracy_rate", "cer", "mean_latency_ms", "verification_status"
+        ])
+        def _safe_c(v):
+            s = "" if v is None else str(v)
+            if s.lstrip(" \t\r\n\ufeff").startswith(("=", "+", "-", "@")):
+                return "'" + s
+            return s
+        for r in runs:
+            w.writerow([
+                r.get("id"),
+                _safe_c(r.get("eval_date")),
+                _safe_c(r.get("dataset_path")),
+                _safe_c(r.get("model_used")),
+                _safe_c(r.get("detector_mode")),
+                int(bool(r.get("vehicle_stage_enabled"))),
+                r.get("valid_files_count", 0),
+                r.get("invalid_files_count", 0),
+                r.get("detected_count", 0),
+                r.get("failed_detection_count", 0),
+                r.get("detection_recall", 0.0),
+                r.get("detection_precision", 0.0),
+                r.get("detection_f1", 0.0),
+                "" if r.get("mean_iou") is None else r.get("mean_iou"),
+                r.get("end_to_end_exact_match_rate", r.get("exact_match_rate", 0.0)),
+                r.get("cropped_ocr_exact_match_rate", r.get("exact_match_rate", 0.0)),
+                r.get("digits_match_rate", 0.0),
+                r.get("char_accuracy_rate", 0.0),
+                r.get("cer", 0.0),
+                r.get("mean_latency_ms", 0.0),
+                "automated_verified",
+            ])
+        return ("\ufeff" + out.getvalue()).encode("utf-8"), "mersad_plate_evaluation_runs.csv", "text/csv; charset=utf-8"
+    payload = {
+        "schema": "mersad_plate_eval_export_v1",
+        "verification_status": "automated_verified",
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+        "latest_report": last_rep,
+        "runs": runs,
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8"), "mersad_plate_evaluation_report.json", "application/json; charset=utf-8"
+
+
+def prune_eval_uploads(max_age_hours=24.0, max_batches=10):
+    """Prune old or excess staged upload directories under APPDIR/eval_uploads/ safely without touching any active evaluation job (AUDIT-006)."""
+    uploads_root = os.path.realpath(os.path.join(APPDIR, "eval_uploads"))
+    if not os.path.isdir(uploads_root) or os.path.islink(uploads_root):
+        return {"ok": True, "removed_batches": 0, "kept_batches": 0}
+    with _EVAL_JOB_LOCK:
+        active_ds = os.path.realpath(str(_EVAL_JOB_STATE.get("dataset_path") or "")) if _EVAL_JOB_STATE.get("running") else ""
+    now_ts = time.time()
+    max_age_sec = max(60.0, float(max_age_hours or 24.0) * 3600.0)
+    max_keep = max(1, int(max_batches or 10))
+    batch_entries = []
+    for name in os.listdir(uploads_root):
+        full_p = os.path.join(uploads_root, name)
+        if os.path.islink(full_p) or not os.path.isdir(full_p):
+            continue
+        real_p = os.path.realpath(full_p)
+        try:
+            if os.path.commonpath([uploads_root, real_p]) != uploads_root:
+                continue
+            mtime = os.path.getmtime(real_p)
+        except OSError:
+            continue
+        batch_entries.append((mtime, real_p))
+    batch_entries.sort(key=lambda x: x[0], reverse=True)
+    removed = 0
+    kept = 0
+    for idx, (mtime, real_p) in enumerate(batch_entries):
+        if active_ds and real_p == active_ds:
+            kept += 1
+            continue
+        if idx >= max_keep or (now_ts - mtime) > max_age_sec:
+            shutil.rmtree(real_p, ignore_errors=True)
+            removed += 1
+        else:
+            kept += 1
+    return {"ok": True, "removed_batches": removed, "kept_batches": kept}
+
+
 def stage_uploaded_eval_files(data, who="operator"):
-    """Accept browser-selected evaluation files (ground_truth.csv/.json + images encoded in base64) and stage them in APPDIR/eval_uploads/ (Stage 11)."""
+    """Accept browser-selected evaluation files (ground_truth.csv/.json + images encoded in base64) across single or multi-chunk
+    requests sharing a sanitized batch_id, stage them in APPDIR/eval_uploads/<batch_id>, and prune stale batches (Stage 11, AUDIT-006)."""
     if not isinstance(data, dict) or not isinstance(data.get("files"), list) or not data["files"]:
         return {"ok": False, "error": "لم يتم اختيار أي ملفات لرفعها"}
     import base64
-    batch_id = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-    target_dir = os.path.join(APPDIR, "eval_uploads", batch_id)
+    prune_eval_uploads()
+    raw_batch = str(data.get("batch_id") or "").strip()
+    clean_batch = re.sub(r"[^A-Za-z0-9_\-]", "", raw_batch)[:48]
+    batch_id = clean_batch if len(clean_batch) >= 4 else (time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6])
+    uploads_root = os.path.realpath(os.path.join(APPDIR, "eval_uploads"))
+    os.makedirs(uploads_root, exist_ok=True)
+    target_dir = os.path.realpath(os.path.join(uploads_root, batch_id))
+    try:
+        if os.path.commonpath([uploads_root, target_dir]) != uploads_root:
+            return {"ok": False, "error": "معرّف دفعة الرفع غير آمن"}
+    except ValueError:
+        return {"ok": False, "error": "معرّف دفعة الرفع غير آمن"}
     os.makedirs(target_dir, exist_ok=True)
     saved_files = []
     for fobj in data["files"][:250]:
@@ -4708,11 +4816,16 @@ def stage_uploaded_eval_files(data, who="operator"):
         saved_files.append(raw_name)
     if not saved_files:
         return {"ok": False, "error": "لم يتم حفظ أي ملفات صالحة"}
-    insp = inspect_plate_dataset(target_dir)
+    finalize = bool(data.get("finalize", True))
+    insp = inspect_plate_dataset(target_dir) if finalize else None
+    total_staged = len([f for f in os.listdir(target_dir) if os.path.isfile(os.path.join(target_dir, f))])
     return {
         "ok": True,
+        "batch_id": batch_id,
         "dataset_path": target_dir,
         "saved_files_count": len(saved_files),
+        "total_batch_files_count": total_staged,
+        "finalized": finalize,
         "inspection": insp,
     }
 
