@@ -1919,3 +1919,104 @@ def import_field_calibrations(raw_data, filename="", who="operator"):
         "error": errors[0] if (added == 0 and errors) else "",
     }
 
+
+def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, apply_directly=False, who="operator"):
+    """Analyze recorded multi-camera vehicle transitions in sightings and statistically derive calibrated
+    (min_sec, expected_sec, max_sec, observations_count) values for each observed camera pair (STAGE14-03).
+    When apply_directly=True, atomically persists all derived links into camera_links with measurement_source='computed_logs'."""
+    if not D.get("db") or not D.get("lock"):
+        return {"ok": False, "error": "قاعدة البيانات غير متصلة", "suggestions": []}
+    import registry as R
+    R.migrate_db(D["db"], D["lock"], db_path=D.get("db_path"))
+    inc_demo = bool(include_demo)
+    min_obs = max(1, int(min_observations or 3))
+    rows = _fetch_sightings(days=90, include_demo=inc_demo)
+
+    by_plate = {}
+    for row in rows:
+        rid, ts, cam, plate, vc, conf, src, direction = row[:8]
+        sess = row[8] if len(row) > 8 else ""
+        key = _canonical_plate(plate)
+        by_plate.setdefault(key, []).append((rid, ts, cam, vc, conf, src, direction, sess, key))
+
+    pair_dts = {}
+    for key, pts in by_plate.items():
+        dedup_pts = []
+        for pt in pts:
+            if dedup_pts and dedup_pts[-1][2] == pt[2] and (pt[1] - dedup_pts[-1][1]) < DEDUP_SAME_CAM_SEC:
+                continue
+            dedup_pts.append(pt)
+        if len(dedup_pts) < 2:
+            continue
+        for i in range(1, len(dedup_pts)):
+            id0, t0, c0, _, conf0, src0, _, sess0, _ = dedup_pts[i - 1]
+            id1, t1, c1, vc1, conf1, src1, dir1, sess1, pl1 = dedup_pts[i]
+            dt = float(t1 - t0)
+            if c1 != c0 and 1.0 <= dt <= 7200.0:
+                if sess0 and sess1 and sess0 == sess1 and not sess0.startswith("multi:"):
+                    continue
+                pair_dts.setdefault((c0, c1), []).append(dt)
+
+    existing_links = {}
+    with D["lock"]:
+        for r in D["db"].execute("SELECT from_cam, to_cam, COALESCE(distance_m,0), COALESCE(via,''), COALESCE(notes,'') FROM camera_links").fetchall():
+            existing_links[(str(r[0]), str(r[1]))] = {
+                "distance_m": float(r[2] or 0.0),
+                "via": str(r[3] or ""),
+                "notes": str(r[4] or ""),
+            }
+
+    today_str = time.strftime("%Y-%m-%d", time.localtime())
+    suggestions = []
+    applied_links = []
+    for (c0, c1), dts in sorted(pair_dts.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        obs_n = len(dts)
+        if obs_n < min_obs:
+            continue
+        arr = np.array(dts, dtype=np.float64)
+        p05 = float(np.percentile(arr, 5))
+        med = float(np.median(arr))
+        p95 = float(np.percentile(arr, 95))
+        calc_min = round(max(1.0, min(p05 * 0.85, med * 0.85)), 1)
+        calc_exp = round(max(calc_min, med), 1)
+        calc_max = round(max(calc_exp, p95 * 1.15), 1)
+        ex_meta = existing_links.get((c0, c1), {})
+        dist_m = float(ex_meta.get("distance_m") or 0.0)
+        # Ensure existing distance_m does not violate physical bounds with new calc_min
+        if dist_m > 0 and ((dist_m / calc_min) * 3.6 > 260.0 or (dist_m / calc_exp) * 3.6 < 0.5):
+            dist_m = 0.0
+        cal_st, cal_st_ar = _compute_calibration_completeness(
+            calc_min, calc_exp, calc_max, dist_m, obs_n, today_str, is_cal=True
+        )
+        sug = {
+            "from_cam": c0,
+            "to_cam": c1,
+            "min_sec": calc_min,
+            "expected_sec": calc_exp,
+            "max_sec": calc_max,
+            "distance_m": dist_m,
+            "observations_count": obs_n,
+            "calibration_date": today_str,
+            "traffic_condition": "normal",
+            "measurement_source": "computed_logs",
+            "measurement_source_ar": MEASUREMENT_SOURCES["computed_logs"],
+            "via": ex_meta.get("via", ""),
+            "notes": ex_meta.get("notes") or f"معايرة محسوبة تلقائياً من {obs_n} انتقال مرصود",
+            "calibration_status": cal_st,
+            "calibration_status_ar": cal_st_ar,
+        }
+        suggestions.append(sug)
+        if apply_directly:
+            sv_res = save_camera_link({**sug, "mode": "upsert"}, who=who)
+            if sv_res.get("ok"):
+                applied_links.append(sv_res["link"])
+
+    return {
+        "ok": True,
+        "includes_demo": inc_demo,
+        "min_observations": min_obs,
+        "suggestions_count": len(suggestions),
+        "applied_count": len(applied_links),
+        "suggestions": suggestions,
+        "applied_links": applied_links,
+    }

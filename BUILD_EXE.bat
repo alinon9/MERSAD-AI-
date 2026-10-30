@@ -98,6 +98,7 @@ echo chcp 65001 ^>nul
 echo cd /d "%%~dp0"
 echo MERSAD_AI.exe --verify
 echo MERSAD_AI.exe --verify-models
+echo MERSAD_AI.exe --readiness-report
 echo pause
 ) > "dist\MERSAD_AI\VERIFY_AUDIT.bat"
 

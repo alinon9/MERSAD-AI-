@@ -6,8 +6,8 @@
 |---|---|
 | `python -m compileall -q .` | اجتاز الفحص بعد إضافة وحدات التحليلات وسجل الكاميرات. |
 | فحص JavaScript داخل `dashboard.html` باستخدام `node --check` | اجتاز فحص الصياغة. |
-| `python selftest.py` | **187 PASS / 0 SKIP / 0 FAIL** في آخر تشغيل مكتمل ناجح. |
-| `MERSAD_BLOCK_SKLEARN=1 python selftest.py` | **187 PASS / 0 SKIP / 0 FAIL**. |
+| `python selftest.py` | **193 PASS / 0 SKIP / 0 FAIL** في آخر تشغيل مكتمل ناجح. |
+| `MERSAD_BLOCK_SKLEARN=1 python selftest.py` | **193 PASS / 0 SKIP / 0 FAIL**. |
 | `python mersad_live.py --evaluate-plates` | أداة التقييم المعيارية للوحات اليمنية (مع دعم قص المركبات أولاً `vyolo`) متحققة برمجياً ضمن `STAGE5-GAP17` و`STAGE7-GAP06`. |
 | اختبارات V7 | اختُبرت المقارنة الزمنية، استبعاد السجلات التجريبية، توزيع الثقة والفئات، توصيات التشغيل، خصوصية CSV، حماية حقن الصيغ، تغيّر حالة الكاميرات، حساب فترات التشغيل/الانقطاع، وواجهات API المحمية وتصديرها. |
 | `python check_install.py --json` | خرج برمز 0 وصنّف البيئة `DEV_WITHOUT_HEAVY_WEIGHTS`. النماذج ومكتبات الاستدلال الثقيلة غير موجودة محلياً، لذلك لم يُعلن عن جاهزية الاستدلال الميداني. |

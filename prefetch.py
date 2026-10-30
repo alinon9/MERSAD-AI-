@@ -14,6 +14,7 @@ from mersad_live import (
     MODEL_MIN_BYTES,
     YOLO_MODEL_URL,
     YOLO_RELEASE_VERSION,
+    register_trusted_model,
     resolve_compute_device,
     safe_download_model,
     verify_onnx_file,
@@ -95,6 +96,11 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
             digest = hashlib.sha256(yf.read()).hexdigest()
         with open(sha_sidecar, "w", encoding="utf-8") as sf:
             sf.write(f"{digest}  yolov8n.pt\n")
+    if os.path.isfile(yolo_target):
+        try:
+            register_trusted_model(yolo_target, who="prefetch")
+        except Exception:
+            pass
 
     # Verify YOLO model actually loads via Ultralytics if installed
     try:

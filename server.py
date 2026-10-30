@@ -42,7 +42,8 @@ class Bus:
         self.on_list = self.on_template = self.on_import = self.on_insights = self.on_stats = self.on_path = None
         self.on_camera_links = self.on_camera_links_export = self.on_camera_links_import = None
         self.on_field_calibrations = self.on_field_calibrations_export = self.on_field_calibrations_import = None
-        self.on_plate_eval_status = self.on_plate_eval_history = self.on_plate_eval_export = None
+        self.on_plate_eval_status = self.on_plate_eval_history = self.on_plate_eval_export = self.on_plate_eval_template = None
+        self.on_camera_links_suggestions = self.on_readiness = None
         self.on_analytics = self.on_analytics_export = None
         self.on_camera_health = self.on_camera_health_export = None
         self.auth_failures = {}                          # ip -> [count, window_start_ts, blocked_until_ts]
@@ -259,6 +260,12 @@ class H(BaseHTTPRequestHandler):
                         self._json(bus.on_camera_links())
                 else:
                     self._json({"ok": True, "links": [], "inferred_links": [], "calibrated_cameras": []})
+            elif p == "/api/readiness":
+                self._json(bus.on_readiness() if bus.on_readiness else {"ok": True})
+            elif p == "/api/camera_links/suggestions":
+                inc_demo = self.arg("demo").strip().lower() in ("1", "true", "yes")
+                min_obs = int(self.arg("min_obs")) if self.arg("min_obs").strip().isdigit() else 3
+                self._json(bus.on_camera_links_suggestions(include_demo=inc_demo, min_observations=min_obs) if bus.on_camera_links_suggestions else {"ok": True, "suggestions": []})
             elif p == "/api/camera_links/export" and bus.on_camera_links_export:
                 body, name, mime = bus.on_camera_links_export(self.arg("fmt") or "json")
                 self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
@@ -273,6 +280,9 @@ class H(BaseHTTPRequestHandler):
                 self._json(bus.on_plate_eval_history() if bus.on_plate_eval_history else {"ok": True, "runs": []})
             elif p == "/api/plate_eval/export" and bus.on_plate_eval_export:
                 body, name, mime = bus.on_plate_eval_export(self.arg("fmt") or "json")
+                self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
+            elif p == "/api/plate_eval/template" and bus.on_plate_eval_template:
+                body, name, mime = bus.on_plate_eval_template(self.arg("fmt") or "csv")
                 self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
             elif p == "/api/list" and self.arg("kind") in ("vehicles", "persons"):
                 self._json(bus.on_list(self.arg("kind"), self.arg("q")[:80]))

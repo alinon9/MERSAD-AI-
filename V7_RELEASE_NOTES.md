@@ -35,8 +35,8 @@
 
 - Python compilation: PASS.
 - Dashboard JavaScript syntax (`node --check`): PASS.
-- `python selftest.py`: **187 PASS / 0 SKIP / 0 FAIL** in final successful run.
-- `MERSAD_BLOCK_SKLEARN=1 python selftest.py`: **187 PASS / 0 SKIP / 0 FAIL** in final successful run.
+- `python selftest.py`: **193 PASS / 0 SKIP / 0 FAIL** in final successful run.
+- `MERSAD_BLOCK_SKLEARN=1 python selftest.py`: **193 PASS / 0 SKIP / 0 FAIL** in final successful run.
 - `python check_install.py --json`: exit code 0; environment is classified as development without heavy AI weights, because this Linux container does not contain EasyOCR/Ultralytics weights and the target runtime is Windows Python 3.11 x64.
 
 ## Source archive and release limitation
@@ -45,4 +45,4 @@ The supplied attachments included the V6 test report and V6 release notes, but *
 
 The Windows EXE was **not** built or run in this Linux environment. Real camera throughput, field Arabic OCR accuracy, actual Telegram delivery, and Windows CI remain release gates.
 
-- V7.1 Stages 1–13 engineering remediation completed (**187 PASS / 0 SKIP / 0 FAIL**), including `--evaluate-plates` two-stage vehicle/plate evaluation.
+- V7.1 Stages 1–14 engineering remediation completed (**193 PASS / 0 SKIP / 0 FAIL**), including `--evaluate-plates` two-stage vehicle/plate evaluation.

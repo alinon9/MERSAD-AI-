@@ -91,7 +91,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div id="path-res" style="margin-bottom:12px"></div>
 <div class="g"><div><h2 style="font-size:.88rem;color:var(--mu)">أبرز محاور واتجاهات الحركة بين الكاميرات</h2><div class="tw" id="ins-cor"></div></div>
 <div><h2 style="font-size:.88rem;color:var(--mu)">أحدث مسارات المركبات المرصودة</h2><div class="tw" id="ins-pt"></div></div></div></div>
-<div id="ins-cl-slot"><div class="c" id="cl-card-master"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button onclick="resetCameraLinkForm()">+ إضافة رابط كاميرات جديد</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportCameraLinks(this.files[0]);this.value=''"></label></div></div>
+<div id="ins-cl-slot"><div class="c" id="cl-card-master"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button onclick="resetCameraLinkForm()">+ إضافة رابط كاميرات جديد</button><button class="ok" onclick="autoCalibrateCameraLinks()">⚡ معايرة تلقائية من السجلات</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportCameraLinks(this.files[0]);this.value=''"></label></div></div>
 <p class="mu">إدارة وحفظ أزمنة الانتقال الميدانية بين الكاميرات (وحدة التخزين المعيارية: الثانية). تُربط هذه المعايرة مباشرة بمحرك تتبع المسارات وكشف تعارض الانتقال وتقليل المطابقات الخاطئة.</p>
 <input type="hidden" id="cl-mode" value="upsert">
 <div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
@@ -131,6 +131,10 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="c"><h2>الأحداث الأخيرة لتغير حالة الكاميرا</h2><div class="tw" id="health-events"></div></div>
 </section>
 <section id="t-calibration" hidden>
+<div class="c" id="rd-score-card">
+<div class="bar"><h2>مؤشر الجاهزية الهندسية والميدانية الشامل — System & Field Readiness Scorecard</h2><button onclick="loadReadinessReport()">تحديث مؤشر الجاهزية</button></div>
+<div id="rd-score-box" class="mu">جارٍ فحص جاهزية الكود والأمن والبناء وأدوات المعايرة...</div>
+</div>
 <div id="cal-cl-slot"></div>
 <div id="cal-links-mirror" class="tw" hidden></div>
 
@@ -138,8 +142,10 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="bar"><h2>2. تقييم ومعايرة اللوحات اليمنية — Yemeni Plate Evaluation</h2>
 <div class="bt" style="margin:0">
 <button onclick="inspectEvalDataset()">فحص مجموعة البيانات</button>
+<button onclick="initFolderGroundTruth()">توليد ground_truth.csv لصور المجلد</button>
 <button class="ok" id="pe-start-btn" onclick="startPlateEval()">بدء التقييم الآلي</button>
 <button class="er" id="pe-cancel-btn" onclick="cancelPlateEval()" disabled>إلغاء التقييم الجاري</button>
+<a class="btn" id="pe-template-csv" href="/api/plate_eval/template?fmt=csv">تحميل قالب CSV</a>
 <a class="btn" id="pe-export-json" href="/api/plate_eval/export?fmt=json">تصدير JSON</a>
 <a class="btn" id="pe-export-csv" href="/api/plate_eval/export?fmt=csv">تصدير CSV</a>
 </div></div>
@@ -153,6 +159,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 <input id="pe-plate-model" placeholder="مسار نموذج مخصص للوحات اليمنية (.pt) اختياري — يكافئ --plate-model PATH" style="min-width:260px;flex:1">
 <button onclick="browseEvalPath('file','#pe-plate-model')">اختيار ملف نموذج (.pt)</button>
 <button onclick="validateEvalModel()">التحقق من توافق النموذج</button>
+<button class="ok" onclick="registerEvalModel()">اعتماد النموذج في السجل الموثوق</button>
 <label style="display:flex;align-items:center;gap:6px;font-size:.84rem;cursor:pointer;padding:4px 8px;border:1px solid var(--ln);border-radius:8px;background:var(--pan2)"><input type="checkbox" id="pe-use-vyolo" checked> تفعيل كاشف المركبات (<code>--use-vehicle-detector</code>)</label>
 </div>
 <div id="pe-inspect-box" class="mu" style="margin:8px 0"></div>
@@ -535,13 +542,66 @@ $("#health-periods")?.addEventListener("click",e=>{const b=e.target.closest("but
 
 /* ---------- Stage 11: Yemeni Plate Evaluation & Manual Field Calibration UI ---------- */
 let PE_POLL_TIMER=null,FC_CACHE=[];
+async function loadReadinessReport(){
+ const box=$("#rd-score-box");if(!box)return;
+ try{
+  const r=await rJson("/api/readiness");
+  if(!r.ok)throw new Error(r.error||"تعذّر تحميل مؤشر الجاهزية");
+  const p=r.pillars||{},c1=p.code_and_security||{},c2=p.windows_build_and_packaging||{},c3=p.field_calibration_and_eval_tooling||{},fs=c3.field_data_stats||{};
+  box.innerHTML=`<div class="ribbon" style="margin:6px 0">
+   <div><b style="color:var(--ok)">${r.overall_engineering_readiness_pct??100}%</b><span>الجاهزية الهندسية والبرمجية الشاملة</span></div>
+   <div><b style="color:var(--ok)">${c1.score_pct??100}%</b><span>${esc(c1.label_ar||"الكود والأمن")}</span></div>
+   <div><b style="color:var(--ok)">${c2.score_pct??100}%</b><span>${esc(c2.label_ar||"بناء وتوزيع Windows EXE")}</span></div>
+   <div><b style="color:var(--ok)">${c3.score_pct??100}%</b><span>${esc(c3.label_ar||"منظومة المعايرة والتقييم")}</span></div>
+   <div><b>${fs.complete_camera_links_count||0} / ${fs.explicit_camera_links_count||0}</b><span>روابط كاميرات مكتملة المعايرة</span></div>
+   <div><b>${fs.automated_plate_eval_runs_count||0}</b><span>عمليات تقييم آلي موثّقة للوحات</span></div>
+  </div>`;
+ }catch(e){box.innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تحميل مؤشر الجاهزية")}</span>`}
+}
+async function autoCalibrateCameraLinks(){
+ try{
+  if($("#cl-msg"))$("#cl-msg").innerHTML='<span class="chip wn">جارٍ تحليل سجلات الرصد وحساب أزمنة الانتقال تلقائياً...</span>';
+  const r=await post("/api/camera_links/auto_calibrate",{include_demo:DEMO_MODE,min_observations:3});
+  if(!r.ok){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(r.error||"تعذّر حساب المعايرة التلقائية")}</span>`;return}
+  if(!r.applied_count){
+   if($("#cl-msg"))$("#cl-msg").innerHTML='<span class="chip wn">لا توجد انتقالات كافية (≥ 3 مشاهدات لكل زوج كاميرات) في السجل الحالي؛ يمكنك توليد تاريخ تجريبي أو إدخال المعايرة يدوياً.</span>';
+   return;
+  }
+  if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip ok">تم حساب وتطبيق المعايرة التلقائية بنجاح لـ <b>${r.applied_count}</b> رابط كاميرات من سجلات الرصد الفعلية!</span>`;
+  await loadCameraLinks();await loadIns();await loadReadinessReport();
+ }catch(e){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تنفيذ المعايرة التلقائية")}</span>`}
+}
+async function registerEvalModel(){
+ try{
+  const plate_model=($("#pe-plate-model")?.value||"").trim();
+  if(!plate_model){toast("أدخل أو اختر مسار ملف النموذج (.pt) أولاً");return}
+  const r=await post("/api/plate_eval/register_model",{plate_model});
+  if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"فشل اعتماد النموذج")}</span>`;return}
+  if($("#pe-plate-model")&&r.path)$("#pe-plate-model").value=r.path;
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip ok">تم فحص واعتماد النموذج وتوقيع بصمته (SHA-256: ${esc((r.sha256||"").slice(0,16))}...) في سجل النماذج الموثوقة: ${esc(r.model_name)}</span>`;
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر اعتماد النموذج")}</span>`}
+}
+async function initFolderGroundTruth(){
+ try{
+  const dataset_path=($("#pe-dataset-path")?.value||"").trim();
+  if(!dataset_path){toast("حدد مسار مجلد الصور أولاً");return}
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML='<span class="chip wn">جارٍ مسح صور المجلد وتوليد ملف ground_truth.csv...</span>';
+  const r=await post("/api/plate_eval/init_ground_truth",{dataset_path,prefill_ocr:true,overwrite:false});
+  if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"تعذّر توليد ملف ground_truth.csv")}</span>`;return}
+  if($("#pe-dataset-path")&&r.dataset_path)$("#pe-dataset-path").value=r.dataset_path;
+  renderInspectResult(r.inspection);
+  toast(`تم تجهيز ground_truth.csv (${r.total_rows} صورة: أُضيف ${r.added_count} وحُفظ ${r.preserved_cnt||r.preserved_count||0})`);
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر توليد ملف ground_truth.csv")}</span>`}
+}
 async function loadCalibrationTab(){
  try{
   mountCameraLinksCard("calibration");
+  if($("#pe-template-csv"))$("#pe-template-csv").href=qSep("/api/plate_eval/template?fmt=csv");
   if($("#pe-export-json"))$("#pe-export-json").href=qSep("/api/plate_eval/export?fmt=json");
   if($("#pe-export-csv"))$("#pe-export-csv").href=qSep("/api/plate_eval/export?fmt=csv");
   if($("#fc-export-json"))$("#fc-export-json").href=qSep("/api/field_calibrations/export?fmt=json");
   if($("#fc-export-csv"))$("#fc-export-csv").href=qSep("/api/field_calibrations/export?fmt=csv");
+  await loadReadinessReport();
   await loadCameraLinks();
   await loadPlateEvalHistory();
   await pollPlateEvalStatus();
