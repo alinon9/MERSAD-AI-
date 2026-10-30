@@ -1,0 +1,10 @@
+# MERSAD AI — Pinned Runtime Dependencies (Target: Python 3.11 64-bit / Windows x64 & Linux x64)
+# Note: On Windows CPU-only machines, install PyTorch CPU wheels first (automated in setup.bat):
+#   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+opencv-python==4.11.0.86
+numpy==1.26.4
+Pillow==10.4.0
+easyocr==1.7.2
+ultralytics==8.3.0
+openpyxl==3.1.5
+scikit-learn==1.5.2

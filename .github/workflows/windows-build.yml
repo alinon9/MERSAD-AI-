@@ -1,0 +1,162 @@
+name: MERSAD AI Windows x64 Build & Verification CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  YOLO_OFFLINE: "true"
+  ULTRALYTICS_AUTOINSTALL: "false"
+
+jobs:
+  build-and-test-windows-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 (64-bit)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Create clean virtual environment and install pinned dependencies
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m venv venv
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\python.exe -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\pip.exe install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\pip.exe install -r requirements.txt -c constraints-win-x64.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\pip.exe uninstall -y opencv-python-headless
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\pip.exe install --force-reinstall --no-deps opencv-python==4.11.0.86
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\pip.exe install pyinstaller==6.11.1 -c constraints-win-x64.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Check dependency conflicts (check_install.py --verify-pip-deps)
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\venv\Scripts\python.exe check_install.py --verify-pip-deps
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\pip.exe list | Out-File -FilePath pip_installed_versions.txt -Encoding utf8
+
+      - name: Compile all Python modules and run self-test suite (with and without scikit-learn)
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\venv\Scripts\python.exe -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\python.exe selftest.py *> selftest_normal.log
+          $rcNormal = $LASTEXITCODE
+          Get-Content selftest_normal.log
+          if ($rcNormal -ne 0) { exit 1 }
+
+          $env:MERSAD_BLOCK_SKLEARN = "1"
+          try {
+            .\venv\Scripts\python.exe selftest.py *> selftest_nosklearn.log
+            $rcNoSklearn = $LASTEXITCODE
+            Get-Content selftest_nosklearn.log
+            if ($rcNoSklearn -ne 0) { exit 1 }
+          } finally {
+            Remove-Item Env:\MERSAD_BLOCK_SKLEARN -ErrorAction SilentlyContinue
+          }
+
+      - name: Download and verify all AI models (OpenCV Zoo SHA-256 + YOLOv8n + EasyOCR)
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\venv\Scripts\python.exe prefetch.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\python.exe check_install.py --write-ready
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\venv\Scripts\python.exe check_install.py --strict *> check_install_report.log
+          $rcStrict = $LASTEXITCODE
+          Get-Content check_install_report.log
+          if ($rcStrict -ne 0) { exit 1 }
+
+      - name: Build Windows --onedir distribution via PyInstaller
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\venv\Scripts\pyinstaller.exe --noconfirm --clean mersad_ai.spec *> build_pyinstaller.log
+          $rcBuild = $LASTEXITCODE
+          if ($rcBuild -ne 0) {
+            Get-Content build_pyinstaller.log -Tail 80
+            exit 1
+          }
+          Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
+          Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
+          Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
+          Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify`r`nMERSAD_AI.exe --verify-models`r`npause"
+          foreach ($reqDistFile in @("dist\MERSAD_AI\MERSAD_AI.exe", "dist\MERSAD_AI\RUN.bat", "dist\MERSAD_AI\RUN_LAN.bat", "dist\MERSAD_AI\VERIFY_AUDIT.bat")) {
+            if (-not (Test-Path -LiteralPath $reqDistFile)) {
+              Write-Error "Required distribution file was not generated: $reqDistFile"
+              exit 1
+            }
+          }
+
+      - name: Test standalone distribution in isolated temp data dir with spaces and Arabic characters (without venv)
+        run: |
+          $ErrorActionPreference = "Stop"
+          $baseTemp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [System.IO.Path]::GetTempPath() }
+          $testRoot = Join-Path $baseTemp "اختبار مرصاد AI"
+          $testDistDir = Join-Path $testRoot "نسخة التوزيع\MERSAD_AI"
+          $testDataDir = Join-Path $baseTemp "اختبار مرصاد الذكي بيانات"
+          New-Item -ItemType Directory -Path $testDistDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $testDataDir -Force | Out-Null
+          try {
+            Copy-Item -Path "dist\MERSAD_AI\*" -Destination $testDistDir -Recurse -Force
+            $exePath = Join-Path $testDistDir "MERSAD_AI.exe"
+            $env:MERSAD_DATA_DIR = $testDataDir
+
+            & $exePath --verify-models *> exe_verify_models_output.txt
+            $rcModels = $LASTEXITCODE
+            Get-Content exe_verify_models_output.txt
+            if ($rcModels -ne 0 -or -not (Select-String -Path exe_verify_models_output.txt -SimpleMatch "MODELS OK" -Quiet)) {
+              Write-Error "MERSAD_AI.exe --verify-models failed"
+              exit 1
+            }
+
+            & $exePath --verify *> exe_verify_output.txt
+            $rcVerify = $LASTEXITCODE
+            Get-Content exe_verify_output.txt
+            if ($rcVerify -ne 0 -or -not (Select-String -Path exe_verify_output.txt -SimpleMatch "Audit chain OK" -Quiet)) {
+              Write-Error "MERSAD_AI.exe --verify failed"
+              exit 1
+            }
+
+            foreach ($forbidden in @("mersad.db", ".mersad_hmac.key", "mersad.log")) {
+              $distPollution = Join-Path "dist\MERSAD_AI" $forbidden
+              if (Test-Path -LiteralPath $distPollution) {
+                Write-Error "Distribution folder dist\MERSAD_AI was polluted with runtime file: $forbidden"
+                exit 1
+              }
+            }
+          } finally {
+            Remove-Item Env:\MERSAD_DATA_DIR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $testDataDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload build logs and distribution artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_AI_Windows_x64_Distribution_and_Logs
+          path: |
+            pip_installed_versions.txt
+            selftest_normal.log
+            selftest_nosklearn.log
+            check_install_report.log
+            build_pyinstaller.log
+            dist/MERSAD_AI/
