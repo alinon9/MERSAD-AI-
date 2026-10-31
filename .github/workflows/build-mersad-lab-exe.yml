@@ -71,7 +71,7 @@ jobs:
           if marker not in source:
               raise SystemExit("Could not locate main() for UTF-8 console patch")
           source = source.replace(marker, patch, 1)
-          p.write_text(source, encoding="utf-8", newline="\\n")
+          p.write_text(source, encoding="utf-8")
           print("Applied UTF-8 console patch.")
           '@ | python -
 
