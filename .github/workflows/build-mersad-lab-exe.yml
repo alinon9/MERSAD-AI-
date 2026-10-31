@@ -144,7 +144,7 @@ jobs:
           [Dirs]
           Name: "{localappdata}\MERSAD LAB\reports"
           [Files]
-          Source: "dist\MERSAD_LAB\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+          Source: "..\dist\MERSAD_LAB\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
           [Icons]
           Name: "{autoprograms}\MERSAD LAB"; Filename: "{app}\MERSAD_LAB.exe"
           Name: "{autodesktop}\MERSAD LAB"; Filename: "{app}\MERSAD_LAB.exe"; Tasks: desktopicon
