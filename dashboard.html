@@ -238,7 +238,7 @@ async function rJson(u,opts){
  if(!r.ok){let errMsg="HTTP "+r.status;try{const j=await r.json();if(j&&j.error)errMsg=j.error}catch(_){}throw new Error(errMsg)}
  return await r.json();
 }
-const post=(u,b)=>rJson(u,{method:"POST",body:JSON.stringify(b)});
+const post=(u,b)=>rJson(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
 function toast(t){const e=$("#toast");e.textContent=t;e.style.display="block";clearTimeout(toast.h);toast.h=setTimeout(()=>e.style.display="none",4000)}
 
 /* ---------- registry config ---------- */

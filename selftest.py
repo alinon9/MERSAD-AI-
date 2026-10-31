@@ -4671,6 +4671,201 @@ def run_stage14_100pct_readiness_tests():
 
 
 run_stage14_100pct_readiness_tests()
+
+
+def run_stage15_forensic_remediation_tests():
+    import http.client, io, pickle, zipfile
+    import server as srv_mod
+
+    # 1. STAGE15-GAP01-MODEL-TRUST-BOUNDARY: Web register_model blocks outside-models copy, and foreign manifest with populated map rejects unlisted model
+    s15_dir = tempfile.mkdtemp(prefix="mersad_s15_01_")
+    try:
+        clean_pkl = pickle.dumps({"epoch": 1, "arch": "yolov8n"}, protocol=4)
+        ext_pt = os.path.join(s15_dir, "outside_web.pt")
+        with zipfile.ZipFile(ext_pt, "w") as zf:
+            zf.writestr("archive/data.pkl", clean_pkl + (b"\x80\x04." * 400))
+            zf.writestr("archive/version", b"3\n")
+            zf.writestr("archive/data/0", b"\x00" * 4096)
+
+        # Calling register_plate_model_api with allow_outside_copy=False (as wired on HTTP POST /api/plate_eval/register_model) must reject outside path
+        web_reg = m.register_plate_model_api({"plate_model": ext_pt}, who="http_op", allow_outside_copy=False)
+        check(
+            "STAGE15-GAP01-MODEL-TRUST-BOUNDARY",
+            "HTTP /api/plate_eval/register_model blocks copying .pt files from outside models/ and enforces trusted directory boundary",
+            web_reg.get("ok") is False and web_reg.get("reason") == "outside_trusted_models_dir_blocked",
+            web_reg,
+        )
+    finally:
+        shutil.rmtree(s15_dir, ignore_errors=True)
+
+    # 2. STAGE15-GAP02-PICKLE-STRICT-ALLOWLIST: _scan_pt_pickle_safety blocks unallowed modules (e.g. xmlrpc.client, tarfile) and builtins.getattr
+    buf_unallowed_mod = io.BytesIO()
+    with zipfile.ZipFile(buf_unallowed_mod, "w") as zf:
+        # GLOBAL opcode referencing xmlrpc.client ServerProxy
+        zf.writestr("archive/data.pkl", b"\x80\x04cxmlrpc.client\nServerProxy\nq\x00.")
+    with zipfile.ZipFile(io.BytesIO(buf_unallowed_mod.getvalue()), "r") as zf_r1:
+        ok_p1, rsn_p1 = m._scan_pt_pickle_safety(zf_r1)
+
+    buf_getattr = io.BytesIO()
+    with zipfile.ZipFile(buf_getattr, "w") as zf:
+        zf.writestr("archive/data.pkl", b"\x80\x04cbuiltins\ngetattr\nq\x00.")
+    with zipfile.ZipFile(io.BytesIO(buf_getattr.getvalue()), "r") as zf_r2:
+        ok_p2, rsn_p2 = m._scan_pt_pickle_safety(zf_r2)
+
+    check(
+        "STAGE15-GAP02-PICKLE-STRICT-ALLOWLIST",
+        "_scan_pt_pickle_safety enforces strict allowlist blocking unallowed stdlib modules (xmlrpc.client) and builtins.getattr",
+        (not ok_p1 and "unsafe_pickle_unallowed_module" in rsn_p1)
+        and (not ok_p2 and ("unsafe_pickle_builtin" in rsn_p2 or "unsafe_pickle_unallowed_builtin" in rsn_p2)),
+        (ok_p1, rsn_p1, ok_p2, rsn_p2),
+    )
+
+    # 3. STAGE15-GAP03-CSRF-AND-HEADERS: Verify CSRF Origin mismatch block, cookie-only text/plain POST block, and CSP/Referrer-Policy headers
+    srv_15 = srv_mod.ThreadingHTTPServer(("127.0.0.1", 0), srv_mod.H)
+    port_15 = srv_15.server_address[1]
+    threading.Thread(target=srv_15.serve_forever, daemon=True).start()
+    try:
+        # (a) Check CSP & Referrer-Policy on GET /api/ping
+        c1 = http.client.HTTPConnection("127.0.0.1", port_15, timeout=5)
+        c1.request("GET", f"/api/ping?k={m.bus.token}")
+        r1 = c1.getresponse()
+        csp_hdr = r1.getheader("Content-Security-Policy") or ""
+        ref_hdr = r1.getheader("Referrer-Policy") or ""
+        r1.read()
+        c1.close()
+
+        # (b) Cookie-only POST with foreign Origin -> must return 403
+        c2 = http.client.HTTPConnection("127.0.0.1", port_15, timeout=5)
+        c2.request(
+            "POST",
+            "/api/vehicle/delete",
+            body=b'{"key":"12345"}',
+            headers={
+                "Cookie": f"mersad_k={m.bus.token}",
+                "Content-Type": "application/json",
+                "Origin": "http://127.0.0.1:9999",
+            },
+        )
+        r2 = c2.getresponse()
+        st_csrf_origin = r2.status
+        r2.read()
+        c2.close()
+
+        # (c) Cookie-only POST with Content-Type: text/plain (no-cors simple request) -> must return 403
+        c3 = http.client.HTTPConnection("127.0.0.1", port_15, timeout=5)
+        c3.request(
+            "POST",
+            "/api/vehicle/delete",
+            body=b'{"key":"12345"}',
+            headers={
+                "Cookie": f"mersad_k={m.bus.token}",
+                "Content-Type": "text/plain",
+            },
+        )
+        r3 = c3.getresponse()
+        st_csrf_ctype = r3.status
+        r3.read()
+        c3.close()
+    finally:
+        srv_15.shutdown()
+
+    check(
+        "STAGE15-GAP03-CSRF-AND-HEADERS",
+        "server.py blocks Cross-Port CSRF (Origin mismatch & cookie-only text/plain POST) with HTTP 403 and emits CSP & Referrer-Policy headers",
+        "default-src 'self'" in csp_hdr
+        and ref_hdr == "no-referrer"
+        and st_csrf_origin == 403
+        and st_csrf_ctype == 403,
+        (csp_hdr, ref_hdr, st_csrf_origin, st_csrf_ctype),
+    )
+
+    # 4. STAGE15-GAP04-SOCKET-TIMEOUT-AND-SUBS: Verify H.timeout == 15 and Bus.max_subs == 32 cap
+    test_bus = srv_mod.Bus()
+    for i_q in range(40):
+        test_bus.add_sub(f"q_{i_q}")
+    check(
+        "STAGE15-GAP04-SOCKET-TIMEOUT-AND-SUBS",
+        "server.H enforces 15s socket timeout and Bus.add_sub caps concurrent SSE subscribers at max_subs=32",
+        getattr(srv_mod.H, "timeout", None) == 15 and len(test_bus.subs) == 32 and test_bus.subs[-1] == "q_39",
+        (getattr(srv_mod.H, "timeout", None), len(test_bus.subs)),
+    )
+
+    # 5. STAGE15-GAP05-EPHEMERAL-APPDIR-WARNING: Verify build_readiness_report exposes runtime_models_and_deps_readiness_pct & ephemeral_storage_warning
+    rep_15 = m.build_readiness_report()
+    check(
+        "STAGE15-GAP05-EPHEMERAL-APPDIR-WARNING",
+        "build_readiness_report exposes runtime_models_and_deps_readiness_pct, field_data_calibration_readiness_pct, deployment_classification & ephemeral_storage_warning",
+        "runtime_models_and_deps_readiness_pct" in rep_15
+        and "field_data_calibration_readiness_pct" in rep_15
+        and "deployment_classification" in rep_15
+        and "ephemeral_storage_warning" in rep_15,
+        rep_15,
+    )
+
+    # 6. STAGE15-GAP06-GT-HUMAN-VERIFIED-AND-CSV-SAFE: Verify init_ground_truth_for_folder marks human_verified=0, uses UNVERIFIED_PLATE instead of fake عدن-00000, and sanitizes CSV cells
+    s15_gt_dir = tempfile.mkdtemp(prefix="mersad_s15_06_")
+    try:
+        im_blank = np.zeros((160, 320, 3), dtype=np.uint8)
+        cv2.imwrite(os.path.join(s15_gt_dir, "blank_01.jpg"), im_blank)
+        gt_init = m.init_ground_truth_for_folder({"dataset_path": s15_gt_dir, "prefill_ocr": False, "overwrite": True}, who="s15_test")
+        gt_csv_15 = os.path.join(s15_gt_dir, "ground_truth.csv")
+        raw_gt_txt = open(gt_csv_15, encoding="utf-8-sig").read()
+        insp_15 = gt_init.get("inspection") or {}
+        check(
+            "STAGE15-GAP06-GT-HUMAN-VERIFIED-AND-CSV-SAFE",
+            "init_ground_truth_for_folder avoids fake عدن-00000, writes human_verified=0 column, sanitizes CSV cells, and flags unverified_rows_count",
+            gt_init.get("ok") is True
+            and "عدن-00000" not in raw_gt_txt
+            and "UNVERIFIED_PLATE" in raw_gt_txt
+            and "human_verified" in raw_gt_txt
+            and insp_15.get("unverified_rows_count", 0) == 1
+            and insp_15.get("requires_human_review_warning") is True,
+            (raw_gt_txt, insp_15),
+        )
+    finally:
+        shutil.rmtree(s15_gt_dir, ignore_errors=True)
+
+    # 7. STAGE15-GAP07-PROTECT-MANUAL-CALIBRATION: Verify suggest_camera_links_from_sightings(apply_directly=True) protects complete field_data links & distance_m
+    today_15 = time.strftime("%Y-%m-%d", time.localtime())
+    sv_man = ins_mod.save_camera_link({
+        "from_cam": "CAM_MAN_1",
+        "to_cam": "CAM_MAN_2",
+        "min_sec": 60,
+        "expected_sec": 90,
+        "max_sec": 150,
+        "distance_m": 1500,
+        "observations_count": 10,
+        "calibration_date": today_15,
+        "measurement_source": "field_data",
+        "mode": "upsert",
+    }, who="s15_field")
+    now_15 = time.time()
+    with m.DBL:
+        for i_m, dt_m in enumerate((110.0, 120.0, 130.0, 140.0)):
+            t_s = now_15 - 2000.0 + (i_m * 300.0)
+            p_m = f"عدن-7710{i_m}"
+            m.db.execute("INSERT INTO sightings(ts, cam, plate, conf, vclass, src, direction, session_id) VALUES(?,?,?,?,?,'live','','s_m1')", (t_s, "CAM_MAN_1", p_m, 0.95, "car"))
+            m.db.execute("INSERT INTO sightings(ts, cam, plate, conf, vclass, src, direction, session_id) VALUES(?,?,?,?,?,'live','','s_m2')", (t_s + dt_m, "CAM_MAN_2", p_m, 0.95, "car"))
+        m.db.commit()
+
+    auto_15 = ins_mod.suggest_camera_links_from_sightings(include_demo=False, min_observations=3, apply_directly=True, overwrite_manual=False, who="s15_auto")
+    links_after = ins_mod.list_camera_links().get("links") or []
+    man_link_after = next((x for x in links_after if x.get("from_cam") == "CAM_MAN_1" and x.get("to_cam") == "CAM_MAN_2"), {})
+    ins_mod.delete_camera_link("CAM_MAN_1", "CAM_MAN_2")
+
+    check(
+        "STAGE15-GAP07-PROTECT-MANUAL-CALIBRATION",
+        "suggest_camera_links_from_sightings(apply_directly=True) skips overwriting complete field_data/manual links and preserves measured distance_m",
+        sv_man.get("ok") is True
+        and auto_15.get("skipped_manual_count", 0) >= 1
+        and man_link_after.get("measurement_source") == "field_data"
+        and float(man_link_after.get("distance_m") or 0) == 1500.0
+        and float(man_link_after.get("min_sec") or 0) == 60.0,
+        (auto_15.get("skipped_manual_links"), man_link_after),
+    )
+
+
+run_stage15_forensic_remediation_tests()
 m.db.close()
 n_pass = sum(1 for _, _, st, _ in RESULTS if st == "PASS")
 n_skip = sum(1 for _, _, st, _ in RESULTS if st == "SKIP")

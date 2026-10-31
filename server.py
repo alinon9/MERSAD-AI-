@@ -80,9 +80,13 @@ class Bus:
             fdisp_copy = list(self.failed_dispatches)
         return json.dumps({"type": "init", "alerts": alerts_copy, "failed_dispatches": fdisp_copy}, ensure_ascii=False)
 
+    max_subs = 32
+
     def add_sub(self, q):
         with self._lock:
             if q not in self.subs:
+                if len(self.subs) >= self.max_subs:
+                    self.subs.pop(0)
                 self.subs.append(q)
 
     def remove_sub(self, q):
@@ -108,6 +112,8 @@ bus = Bus()
 
 
 class H(BaseHTTPRequestHandler):
+    timeout = 15
+
     def log_message(self, *a): pass
 
     def arg(self, k): return parse_qs(urlparse(self.path).query).get(k, [""])[0]
@@ -183,6 +189,11 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+            )
             self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
@@ -221,6 +232,7 @@ class H(BaseHTTPRequestHandler):
                     self.send_response(302)
                     self.send_header("Set-Cookie", cookie_val)
                     self.send_header("Location", "/")
+                    self.send_header("Referrer-Policy", "no-referrer")
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
@@ -308,6 +320,12 @@ class H(BaseHTTPRequestHandler):
         p = self._auth()
         if p is None: return
         try:
+            origin_hdr = self.headers.get("Origin", "").strip()
+            host_hdr = self.headers.get("Host", "").strip()
+            if origin_hdr and host_hdr:
+                orig_netloc = urlparse(origin_hdr).netloc.strip().lower()
+                if orig_netloc and orig_netloc != host_hdr.lower():
+                    return self._json({"ok": False, "error": "رفض الطلب بسبب تعارض المصدر (CSRF Origin Mismatch)"}, code=403)
             try:
                 n = int(self.headers.get("Content-Length", 0))
             except ValueError:
@@ -327,6 +345,13 @@ class H(BaseHTTPRequestHandler):
                 elif p == "/api/field_calibrations/import" and bus.on_field_calibrations_import:
                     res = bus.on_field_calibrations_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
                 elif post_fn is not None:
+                    ctype_hdr = (self.headers.get("Content-Type") or "").strip().lower()
+                    has_explicit_tok = bool(self.arg("k") or self.headers.get("X-Mersad-Token"))
+                    if not has_explicit_tok and not ctype_hdr.startswith("application/json"):
+                        return self._json(
+                            {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو رمز X-Mersad-Token)"},
+                            code=403,
+                        )
                     payload = json.loads(raw.decode("utf-8") if raw else "{}")
                     if not isinstance(payload, dict):
                         res = {"ok": False, "error": "بيانات الطلب غير صالحة"}

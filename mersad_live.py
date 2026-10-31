@@ -89,17 +89,23 @@ def _is_sqlite_usable_dir(dir_path):
                     pass
 
 
+USING_EPHEMERAL_TEMP_APPDIR = False
+
+
 def resolve_writable_appdir(preferred_dir=None, explicit_env=None):
-    """Resolve persistent writable data directory supporting SQLite transactions (Stage 5d, STAGE14-01):
+    """Resolve persistent writable data directory supporting SQLite transactions (Stage 5d, STAGE14-01, STAGE15-GAP06):
     - Never uses temporary _MEIPASS directory for database, keys, secrets, or evidence.
     - If MERSAD_DATA_DIR is explicitly set in environment, uses it directly (preserving fail-closed security tests).
     - Otherwise checks preferred_dir (INSTALL_DIR), then _default_user_data_dir(), and if both reside on a network/virtual
-      mount that rejects SQLite locking (such as 9p/SMB), falls back to a local temp appdir."""
+      mount that rejects SQLite locking (such as 9p/SMB), falls back to a restricted (0o700) local temp appdir with warning."""
+    global USING_EPHEMERAL_TEMP_APPDIR
     env_dir = explicit_env if explicit_env is not None else os.environ.get("MERSAD_DATA_DIR")
     if env_dir:
+        USING_EPHEMERAL_TEMP_APPDIR = False
         return os.path.abspath(env_dir)
     cand = os.path.abspath(preferred_dir or INSTALL_DIR)
     if _is_sqlite_usable_dir(cand):
+        USING_EPHEMERAL_TEMP_APPDIR = False
         return cand
     fallback = _default_user_data_dir()
     try:
@@ -107,11 +113,21 @@ def resolve_writable_appdir(preferred_dir=None, explicit_env=None):
     except OSError:
         pass
     if _is_sqlite_usable_dir(fallback):
+        USING_EPHEMERAL_TEMP_APPDIR = False
         return fallback
     local_tmp_fallback = os.path.abspath(
         os.path.join(tempfile.gettempdir(), "MERSAD_AI" if os.name == "nt" else "mersad_ai")
     )
     os.makedirs(local_tmp_fallback, exist_ok=True)
+    try:
+        os.chmod(local_tmp_fallback, 0o700)
+    except OSError:
+        pass
+    USING_EPHEMERAL_TEMP_APPDIR = True
+    logging.getLogger("mersad").warning(
+        "Ephemeral storage fallback active (%s): Set MERSAD_DATA_DIR to a local disk folder for persistent storage.",
+        local_tmp_fallback,
+    )
     return local_tmp_fallback
 
 
@@ -1721,7 +1737,15 @@ _FORBIDDEN_PICKLE_MODULES = frozenset({
 })
 _FORBIDDEN_BUILTIN_ATTRS = frozenset({
     "eval", "exec", "compile", "__import__", "open", "input", "breakpoint",
-    "globals", "locals", "vars", "dir", "delattr", "setattr", "memoryview",
+    "globals", "locals", "vars", "dir", "delattr", "setattr", "getattr", "hasattr", "memoryview",
+})
+_ALLOWED_PICKLE_ROOT_MODULES = frozenset({
+    "torch", "collections", "numpy", "ultralytics", "copyreg", "copy_reg",
+    "_codecs", "codecs", "__builtin__", "builtins",
+})
+_ALLOWED_PICKLE_BUILTINS = frozenset({
+    "set", "frozenset", "slice", "bytearray", "complex", "range",
+    "tuple", "list", "dict", "int", "float", "str", "bytes", "bool", "object",
 })
 _FORBIDDEN_RAW_PICKLE_PATTERNS = (
     b"posix\nsystem", b"nt\nsystem", b"os\nsystem", b"os\npopen",
@@ -1768,6 +1792,10 @@ def _scan_pt_pickle_safety(zf):
                         return False, f"unsafe_pickle_global:{mod_name}.{attr_name}"
                     if root_mod in ("builtins", "__builtin__") and attr_name in _FORBIDDEN_BUILTIN_ATTRS:
                         return False, f"unsafe_pickle_builtin:{mod_name}.{attr_name}"
+                    if root_mod not in _ALLOWED_PICKLE_ROOT_MODULES:
+                        return False, f"unsafe_pickle_unallowed_module:{mod_name}.{attr_name}"
+                    if root_mod in ("builtins", "__builtin__") and attr_name not in _ALLOWED_PICKLE_BUILTINS:
+                        return False, f"unsafe_pickle_unallowed_builtin:{mod_name}.{attr_name}"
                 elif op_name == "STACK_GLOBAL":
                     if len(last_str_stack) >= 2:
                         mod_name = str(last_str_stack[-2]).strip()
@@ -1777,6 +1805,10 @@ def _scan_pt_pickle_safety(zf):
                             return False, f"unsafe_pickle_stack_global:{mod_name}.{attr_name}"
                         if root_mod in ("builtins", "__builtin__") and attr_name in _FORBIDDEN_BUILTIN_ATTRS:
                             return False, f"unsafe_pickle_builtin:{mod_name}.{attr_name}"
+                        if root_mod not in _ALLOWED_PICKLE_ROOT_MODULES:
+                            return False, f"unsafe_pickle_unallowed_module:{mod_name}.{attr_name}"
+                        if root_mod in ("builtins", "__builtin__") and attr_name not in _ALLOWED_PICKLE_BUILTINS:
+                            return False, f"unsafe_pickle_unallowed_builtin:{mod_name}.{attr_name}"
         except Exception as pkl_err:
             return False, f"malformed_pickle_bytecode:{pkl_err}"
     return True, "pickle_bytecode_safe"
@@ -1872,11 +1904,19 @@ def _inspect_manifest_state(m_dir):
                 if isinstance(k, str) and isinstance(v, str) and len(v.strip()) == 64
             }
             return "valid", clean_map
+        if len(sig) != 64 or any(c not in "0123456789abcdefABCDEF" for c in sig):
+            return "tampered", {}
         cur_kid = _current_hmac_key_id()
         if file_kid and file_kid != cur_kid:
-            return "foreign_key", {}
+            clean_foreign = {
+                k.strip(): v.strip().lower()
+                for k, v in models_map.items()
+                if isinstance(k, str) and isinstance(v, str) and len(v.strip()) == 64
+            }
+            return "foreign_key", clean_foreign
         return "tampered", {}
-    except Exception:
+    except Exception as e:
+        logger.debug("Manifest inspection failed in %s: %s", m_dir, e)
         return "tampered", {}
 
 
@@ -1924,8 +1964,10 @@ def get_trusted_model_sha256(model_path):
     in_tr, real_p = _is_path_in_trusted_model_dirs(model_path)
     if in_tr:
         m_dir = os.path.dirname(real_p)
-        m_state, _ = _inspect_manifest_state(m_dir)
+        m_state, foreign_map = _inspect_manifest_state(m_dir)
         if m_state == "tampered":
+            return None
+        if m_state == "foreign_key" and foreign_map and bname not in foreign_map:
             return None
         if m_state == "foreign_key" or (m_state == "missing" and bname.lower() == "yolov8n.pt"):
             sidecar = f"{real_p}.sha256"
@@ -1933,30 +1975,36 @@ def get_trusted_model_sha256(model_path):
                 try:
                     with open(sidecar, "r", encoding="utf-8") as sf:
                         sc_hash = sf.read().strip().split()[0].lower()
-                    if len(sc_hash) == 64:
+                    if len(sc_hash) == 64 and (not foreign_map or foreign_map.get(bname) == sc_hash):
                         ok_b, _ = verify_yolo_pt_file(real_p, expected_sha256=sc_hash, min_bytes=512)
                         if ok_b:
                             bootstrap_bundled_trusted_models(m_dir)
                             return sc_hash
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Portable sidecar check failed for %s: %s", real_p, e)
     return None
 
 
-def register_trusted_model(model_path, who="admin", min_bytes=1024):
+def register_trusted_model(model_path, who="admin", min_bytes=1024, allow_outside_copy=True):
     """Inspect a YOLO .pt model for ZIP & pickle bytecode safety, ensure it is in trusted models/ directory,
-    and record its SHA-256 in the HMAC-signed models/.trusted_models.json manifest (AUDIT-001)."""
+    and record its SHA-256 in the HMAC-signed models/.trusted_models.json manifest (AUDIT-001, STAGE15-GAP01)."""
     raw_s = str(model_path or "").strip()
-    if not raw_s or raw_s.startswith(("\\", "//")):
+    if not raw_s or raw_s.startswith(("\\", "//")) or ".." in re.split(r"[\\/]+", raw_s):
         return {"ok": False, "error": "مسار ملف النموذج غير صالح أو شبكي غير موثوق"}
     abs_p = os.path.abspath(raw_s)
     if not os.path.isfile(abs_p) or os.path.islink(abs_p) or not abs_p.lower().endswith(".pt"):
         return {"ok": False, "error": "ملف النموذج (.pt) غير موجود أو رابط رمزي غير مسموح"}
+    in_trusted, loc_or_err = _is_path_in_trusted_model_dirs(abs_p)
+    if not in_trusted and not allow_outside_copy:
+        return {
+            "ok": False,
+            "error": "لأسباب أمنية، يجب وضع ملف النموذج (.pt) داخل مجلد النماذج المعتمد (models/) قبل اعتماده عبر الواجهة",
+            "reason": "outside_trusted_models_dir_blocked",
+        }
     ok_pt, reason_pt = verify_yolo_pt_file(abs_p, min_bytes=min_bytes)
     if not ok_pt:
         return {"ok": False, "error": f"رفض اعتماد النموذج لفشله في الفحص الأمني/البنيوي: {reason_pt}", "reason": reason_pt}
     # Ensure model is located inside writable APPDIR/models or INSTALL_DIR/models
-    in_trusted, loc_or_err = _is_path_in_trusted_model_dirs(abs_p)
     target_models_dir = os.path.join(APPDIR, "models")
     os.makedirs(target_models_dir, exist_ok=True)
     if not in_trusted:
@@ -2040,14 +2088,16 @@ def bootstrap_bundled_trusted_models(models_dir=None):
     return bootstrapped
 
 
-def register_plate_model_api(data, who="operator"):
-    """Register and HMAC-sign a clean YOLO .pt plate model from the dashboard UI (STAGE14-02)."""
+def register_plate_model_api(data, who="operator", allow_outside_copy=True):
+    """Register and HMAC-sign a clean YOLO .pt plate model from the dashboard UI (STAGE14-02, STAGE15-GAP01).
+    When called from HTTP endpoint (allow_outside_copy=False), enforces that the model file resides inside models/."""
     if not isinstance(data, dict):
         return {"ok": False, "error": "بيانات الطلب غير صالحة"}
     p_str = str(data.get("plate_model") or "").strip()
     if not p_str:
         return {"ok": False, "error": "يرجى تحديد مسار ملف النموذج (.pt) لاعتماده"}
-    return register_trusted_model(p_str, who=f"ui:{who}", min_bytes=512)
+    eff_allow_copy = bool(data.get("allow_outside_copy", allow_outside_copy))
+    return register_trusted_model(p_str, who=f"ui:{who}", min_bytes=512, allow_outside_copy=eff_allow_copy)
 
 
 def verify_yolo_pt_file(path, expected_sha256=None, min_bytes=6_000_000):
@@ -2784,7 +2834,9 @@ def stats():
         pending=pending_cnt, fps=fps_val, cam=cam_val, cameras=cams_snap,
         uptime=int(now - t0_val), telegram=tg_cfg, telegram_connected=tg_conn,
         telegram_error=_notify_mod.TELEGRAM_STATUS.get("last_error", ""),
-        learning=learning_ready
+        learning=learning_ready,
+        ephemeral_storage_warning=bool(USING_EPHEMERAL_TEMP_APPDIR),
+        active_appdir=APPDIR
     )
     return d
 
@@ -2879,7 +2931,7 @@ def wire():
         "/api/field_calibrations/delete": (lambda d, ip: INS.delete_field_calibration(d, who=ip)) if INS and hasattr(INS, "delete_field_calibration") else (lambda d, ip: {"ok": False, "error": "غير متاح"}),
         "/api/plate_eval/inspect": lambda d, ip: inspect_plate_dataset(d.get("dataset_path", ""), plate_model_path=d.get("plate_model", ""), enforce_trusted_model=True),
         "/api/plate_eval/validate_model": lambda d, ip: validate_plate_model_path(d.get("plate_model", ""), enforce_trusted=True),
-        "/api/plate_eval/register_model": lambda d, ip: register_plate_model_api(d, who=ip),
+        "/api/plate_eval/register_model": lambda d, ip: register_plate_model_api(d, who=ip, allow_outside_copy=False),
         "/api/plate_eval/init_ground_truth": lambda d, ip: init_ground_truth_for_folder(d, who=ip),
         "/api/plate_eval/upload_dataset": lambda d, ip: stage_uploaded_eval_files(d, who=ip),
         "/api/plate_eval/start": lambda d, ip: start_plate_eval_job(d, who=ip),
@@ -4055,7 +4107,9 @@ def _parse_ground_truth_entries(gt_file):
             if not fn or not exp_p:
                 row_errors.append(f"السجل #{idx}: ينقصه اسم الصورة (filename) أو اللوحة المتوقعة (expected_plate)")
                 continue
-            entry = {"filename": fn, "expected_plate": exp_p}
+            hv_raw = str(x.get("human_verified", "1")).strip()
+            is_unv = (hv_raw == "0") or (exp_p in ("UNVERIFIED_PLATE", "عدن-00000"))
+            entry = {"filename": fn, "expected_plate": exp_p, "human_verified": "0" if is_unv else "1"}
             for bk in ("x", "y", "w", "h"):
                 if x.get(bk) not in (None, ""):
                     try:
@@ -4077,7 +4131,9 @@ def _parse_ground_truth_entries(gt_file):
                 if not fn or not exp_p:
                     row_errors.append(f"السطر #{idx}: ينقصه اسم الصورة (filename) أو اللوحة المتوقعة (expected_plate)")
                     continue
-                entry = {"filename": fn, "expected_plate": exp_p}
+                hv_raw = norm_row.get("human_verified", "1").strip()
+                is_unv = (hv_raw == "0") or (exp_p in ("UNVERIFIED_PLATE", "عدن-00000"))
+                entry = {"filename": fn, "expected_plate": exp_p, "human_verified": "0" if is_unv else "1"}
                 for bk in ("x", "y", "w", "h"):
                     if norm_row.get(bk, "") != "":
                         try:
@@ -4130,6 +4186,7 @@ def inspect_plate_dataset(dataset_path, plate_model_path=None, enforce_trusted_m
     valid_files = []
     invalid_files = []
     security_rejected_files = []
+    unverified_rows_count = sum(1 for item in entries if str(item.get("human_verified", "1")) == "0" or item.get("expected_plate") in ("UNVERIFIED_PLATE", "عدن-00000"))
     for item in entries:
         fn = item["filename"]
         ok_img, safe_img_p, safe_err = _resolve_safe_dataset_image(base_dir, fn)
@@ -4158,6 +4215,8 @@ def inspect_plate_dataset(dataset_path, plate_model_path=None, enforce_trusted_m
         "total_entries": len(entries) + len(row_errors),
         "valid_files_count": len(valid_files),
         "invalid_files_count": len(invalid_files) + len(row_errors),
+        "unverified_rows_count": unverified_rows_count,
+        "requires_human_review_warning": bool(unverified_rows_count > 0),
         "security_rejected_count": len(security_rejected_files),
         "valid_files": valid_files[:50],
         "invalid_files": invalid_files[:25],
@@ -5106,6 +5165,13 @@ def export_plate_eval_template(fmt="csv"):
     return csv_txt.encode("utf-8"), "ground_truth.csv", "text/csv; charset=utf-8"
 
 
+def _csv_safe_cell(val):
+    s = str(val if val is not None else "")
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
 def init_ground_truth_for_folder(data, who="operator", reader=None, yolo=None):
     """Scan a local folder of raw plate images and automatically initialize or append ground_truth.csv
     with optional OCR pre-filling for fast human review without overwriting existing labels (STAGE14-04)."""
@@ -5157,6 +5223,7 @@ def init_ground_truth_for_folder(data, who="operator", reader=None, yolo=None):
                 "y": int(ent["y"]) if ent.get("y") is not None else "",
                 "w": int(ent["w"]) if ent.get("w") is not None else "",
                 "h": int(ent["h"]) if ent.get("h") is not None else "",
+                "human_verified": str(ent.get("human_verified", "1")),
             })
             preserved_cnt += 1
             continue
@@ -5165,7 +5232,7 @@ def init_ground_truth_for_folder(data, who="operator", reader=None, yolo=None):
         if img is None or getattr(img, "size", 0) == 0:
             continue
         bx_s = by_s = bw_s = bh_s = ""
-        sug_plate = "عدن-00000"
+        sug_plate = "UNVERIFIED_PLATE"
         cands = find_plates(img, yolo=yolo)
         if cands:
             bx, by, bw, bh = cands[0]
@@ -5186,6 +5253,7 @@ def init_ground_truth_for_folder(data, who="operator", reader=None, yolo=None):
             "y": by_s,
             "w": bw_s,
             "h": bh_s,
+            "human_verified": "0",
         })
         added_cnt += 1
 
@@ -5194,9 +5262,17 @@ def init_ground_truth_for_folder(data, who="operator", reader=None, yolo=None):
 
     with open(gt_csv, "w", encoding="utf-8-sig", newline="") as cf:
         w = csv.writer(cf, lineterminator="\r\n")
-        w.writerow(["filename", "expected_plate", "x", "y", "w", "h"])
+        w.writerow(["filename", "expected_plate", "x", "y", "w", "h", "human_verified"])
         for r in rows_out:
-            w.writerow([r["filename"], r["expected_plate"], r["x"], r["y"], r["w"], r["h"]])
+            w.writerow([
+                _csv_safe_cell(r["filename"]),
+                _csv_safe_cell(r["expected_plate"]),
+                r["x"],
+                r["y"],
+                r["w"],
+                r["h"],
+                r.get("human_verified", "0"),
+            ])
 
     try:
         if _RUNTIME_INITIALIZED and db is not None:
@@ -5267,10 +5343,29 @@ def build_readiness_report():
     field_tooling_pct = round((sum(1 for v in field_tooling_checks.values() if v) / len(field_tooling_checks)) * 100.0, 1)
 
     overall_software_pct = round((code_sec_pct + build_pct + field_tooling_pct) / 3.0, 1)
+    models_present_cnt = sum(1 for it in model_items if it.get("status") == "PASS")
+    runtime_ai_pct = round((models_present_cnt / max(1, len(model_items))) * 100.0, 1)
+    field_checks_list = [
+        len(complete_links) > 0,
+        len(eval_runs) > 0,
+        not USING_EPHEMERAL_TEMP_APPDIR,
+    ]
+    field_data_pct = round((sum(1 for x in field_checks_list if x) / len(field_checks_list)) * 100.0, 1)
+    if overall_software_pct == 100.0 and runtime_ai_pct == 100.0 and field_data_pct == 100.0:
+        dep_class = "READY_FOR_PRODUCTION"
+    elif overall_software_pct == 100.0 and runtime_ai_pct == 100.0:
+        dep_class = "READY_FOR_CONTROLLED_PILOT"
+    else:
+        dep_class = "READY_FOR_LAPTOP_SETUP_AND_DEMO"
     return {
         "ok": True,
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
         "overall_engineering_readiness_pct": overall_software_pct,
+        "runtime_models_and_deps_readiness_pct": runtime_ai_pct,
+        "field_data_calibration_readiness_pct": field_data_pct,
+        "deployment_classification": dep_class,
+        "ephemeral_storage_warning": bool(USING_EPHEMERAL_TEMP_APPDIR),
+        "active_appdir": APPDIR,
         "pillars": {
             "code_and_security": {
                 "score_pct": code_sec_pct,

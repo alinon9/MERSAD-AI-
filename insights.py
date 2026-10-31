@@ -1920,10 +1920,10 @@ def import_field_calibrations(raw_data, filename="", who="operator"):
     }
 
 
-def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, apply_directly=False, who="operator"):
+def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, apply_directly=False, who="operator", overwrite_manual=False):
     """Analyze recorded multi-camera vehicle transitions in sightings and statistically derive calibrated
-    (min_sec, expected_sec, max_sec, observations_count) values for each observed camera pair (STAGE14-03).
-    When apply_directly=True, atomically persists all derived links into camera_links with measurement_source='computed_logs'."""
+    (min_sec, expected_sec, max_sec, observations_count) values for each observed camera pair (STAGE14-03, STAGE15-GAP08).
+    When apply_directly=True, persists derived links without overwriting complete manual/field_data links unless overwrite_manual=True."""
     if not D.get("db") or not D.get("lock"):
         return {"ok": False, "error": "قاعدة البيانات غير متصلة", "suggestions": []}
     import registry as R
@@ -1959,16 +1959,27 @@ def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, 
 
     existing_links = {}
     with D["lock"]:
-        for r in D["db"].execute("SELECT from_cam, to_cam, COALESCE(distance_m,0), COALESCE(via,''), COALESCE(notes,'') FROM camera_links").fetchall():
+        for r in D["db"].execute(
+            "SELECT from_cam, to_cam, COALESCE(distance_m,0), COALESCE(via,''), COALESCE(notes,''), "
+            "COALESCE(measurement_source,''), COALESCE(min_sec,0), COALESCE(expected_sec,0), "
+            "COALESCE(max_sec,0), COALESCE(observations_count,0), COALESCE(calibration_date,'') FROM camera_links"
+        ).fetchall():
+            ex_st, _ = _compute_calibration_completeness(
+                float(r[6] or 0.0), float(r[7] or 0.0), float(r[8] or 0.0),
+                float(r[2] or 0.0), int(r[9] or 0), str(r[10] or ""), is_cal=True
+            )
             existing_links[(str(r[0]), str(r[1]))] = {
                 "distance_m": float(r[2] or 0.0),
                 "via": str(r[3] or ""),
                 "notes": str(r[4] or ""),
+                "measurement_source": str(r[5] or ""),
+                "calibration_status": ex_st,
             }
 
     today_str = time.strftime("%Y-%m-%d", time.localtime())
     suggestions = []
     applied_links = []
+    skipped_manual_links = []
     for (c0, c1), dts in sorted(pair_dts.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         obs_n = len(dts)
         if obs_n < min_obs:
@@ -1981,12 +1992,18 @@ def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, 
         calc_exp = round(max(calc_min, med), 1)
         calc_max = round(max(calc_exp, p95 * 1.15), 1)
         ex_meta = existing_links.get((c0, c1), {})
-        dist_m = float(ex_meta.get("distance_m") or 0.0)
-        # Ensure existing distance_m does not violate physical bounds with new calc_min
+        ex_src = str(ex_meta.get("measurement_source") or "")
+        ex_status = str(ex_meta.get("calibration_status") or "")
+        is_protected_manual = (ex_src in ("field_data", "manual") and ex_status == "complete")
+        raw_dist_m = float(ex_meta.get("distance_m") or 0.0)
+        dist_m = raw_dist_m
+        dist_conflict = False
         if dist_m > 0 and ((dist_m / calc_min) * 3.6 > 260.0 or (dist_m / calc_exp) * 3.6 < 0.5):
-            dist_m = 0.0
+            dist_conflict = True
+            if not is_protected_manual:
+                dist_m = 0.0
         cal_st, cal_st_ar = _compute_calibration_completeness(
-            calc_min, calc_exp, calc_max, dist_m, obs_n, today_str, is_cal=True
+            calc_min, calc_exp, calc_max, dist_m if not dist_conflict else 0.0, obs_n, today_str, is_cal=True
         )
         sug = {
             "from_cam": c0,
@@ -1994,7 +2011,10 @@ def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, 
             "min_sec": calc_min,
             "expected_sec": calc_exp,
             "max_sec": calc_max,
-            "distance_m": dist_m,
+            "distance_m": dist_m if not dist_conflict else 0.0,
+            "previous_distance_m": raw_dist_m if dist_conflict else dist_m,
+            "distance_conflict_warning": dist_conflict,
+            "protected_manual_link": is_protected_manual,
             "observations_count": obs_n,
             "calibration_date": today_str,
             "traffic_condition": "normal",
@@ -2007,6 +2027,9 @@ def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, 
         }
         suggestions.append(sug)
         if apply_directly:
+            if is_protected_manual and not overwrite_manual:
+                skipped_manual_links.append({"from_cam": c0, "to_cam": c1, "reason": "protected_complete_manual_link"})
+                continue
             sv_res = save_camera_link({**sug, "mode": "upsert"}, who=who)
             if sv_res.get("ok"):
                 applied_links.append(sv_res["link"])
@@ -2017,6 +2040,8 @@ def suggest_camera_links_from_sightings(include_demo=False, min_observations=3, 
         "min_observations": min_obs,
         "suggestions_count": len(suggestions),
         "applied_count": len(applied_links),
+        "skipped_manual_count": len(skipped_manual_links),
+        "skipped_manual_links": skipped_manual_links,
         "suggestions": suggestions,
         "applied_links": applied_links,
     }
