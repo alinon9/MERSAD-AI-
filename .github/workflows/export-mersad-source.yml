@@ -1,0 +1,99 @@
+name: Export MERSAD AI V7.1 patched source
+
+on:
+  push:
+    branches:
+      - temp/export-mersad-source-20261031
+    paths:
+      - ".github/workflows/export-mersad-source.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact V7.1 source revision
+        uses: actions/checkout@v4
+
+      - name: Verify base archive and V7.1 patch parts
+        shell: pwsh
+        run: |
+          if (!(Test-Path "MERSAD_AI_FIXED_5.zip")) { throw "Base source archive is missing." }
+          $parts = @(Get-ChildItem "ci/v7patch/part*.b64" -File | Sort-Object Name)
+          if ($parts.Count -ne 11) { throw "Expected 11 V7.1 patch chunks, found $($parts.Count)." }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Extract base source archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "work" | Out-Null
+          Expand-Archive -LiteralPath "MERSAD_AI_FIXED_5.zip" -DestinationPath "work" -Force
+          if (!(Test-Path "work/MERSAD_AI/mersad_live.py")) { throw "Expected MERSAD_AI source tree was not found." }
+
+      - name: Apply the exact authenticated V7.1 source delta
+        shell: pwsh
+        run: |
+          $parts = @(Get-ChildItem "ci/v7patch/part*.b64" -File | Sort-Object Name)
+          $encoded = ($parts | ForEach-Object { [IO.File]::ReadAllText($_.FullName).Trim() }) -join ""
+          $xzBytes = [Convert]::FromBase64String($encoded)
+          [IO.File]::WriteAllBytes("v7.patch.xz", $xzBytes)
+          $xzHash = (Get-FileHash "v7.patch.xz" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($xzHash -ne "13e3cc7783c503812513c2826862fab398fc9e9736bad654a858473e62cba5a1") {
+            throw "V7.1 compressed patch checksum mismatch: $xzHash"
+          }
+          python -c "import lzma,pathlib; pathlib.Path('v7.patch').write_bytes(lzma.decompress(pathlib.Path('v7.patch.xz').read_bytes()))"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to decompress V7.1 source patch." }
+          $patchHash = (Get-FileHash "v7.patch" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($patchHash -ne "f5970b79226a5197ab0c33327bdb686622ef62bbeec854c3ef9784b57b2b120a") {
+            throw "V7.1 source patch checksum mismatch: $patchHash"
+          }
+          git apply --check --directory=work v7.patch
+          if ($LASTEXITCODE -ne 0) { throw "V7.1 patch does not apply cleanly." }
+          git apply --directory=work v7.patch
+          if ($LASTEXITCODE -ne 0) { throw "Unable to apply V7.1 patch." }
+          if (!(Test-Path "work/MERSAD_AI/analytics.py") -or !(Test-Path "work/MERSAD_AI/camera_history.py")) {
+            throw "Required V7.1 modules are missing."
+          }
+
+      - name: Apply the same Windows compatibility and ACL fixes as build #47
+        shell: pwsh
+        run: |
+          python ci/patch_windows_build.py work/MERSAD_AI
+          if ($LASTEXITCODE -ne 0) { throw "Windows compatibility/ACL patching failed." }
+
+      - name: Create patched source package and provenance manifest
+        shell: pwsh
+        run: |
+          $baseHash = (Get-FileHash "MERSAD_AI_FIXED_5.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $scriptHash = (Get-FileHash "ci/patch_windows_build.py" -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "MERSAD AI V7.1 patched source package"
+            "Repository: alinon9/MERSAD-AI-"
+            "Source commit: 220fefff8ad4441f52e54d6a2b4aa4b3ada25783"
+            "Base archive: MERSAD_AI_FIXED_5.zip"
+            "Base archive SHA256: $baseHash"
+            "V7.1 patch SHA256: f5970b79226a5197ab0c33327bdb686622ef62bbeec854c3ef9784b57b2b120a"
+            "Windows patch script: ci/patch_windows_build.py"
+            "Windows patch script SHA256: $scriptHash"
+            "This is the source tree after the same V7.1 delta and Windows-specific patching used by build #47."
+            "Python dependencies and downloaded model weights are not embedded in this source archive."
+          ) | Set-Content -Path "work/MERSAD_AI/SOURCE_PROVENANCE.txt" -Encoding UTF8
+          Compress-Archive -Path "work/MERSAD_AI" -DestinationPath "MERSAD_AI_V7_1_PATCHED_SOURCE.zip" -CompressionLevel Optimal
+          if (!(Test-Path "MERSAD_AI_V7_1_PATCHED_SOURCE.zip")) { throw "Source archive was not created." }
+          Get-Item "MERSAD_AI_V7_1_PATCHED_SOURCE.zip" | Format-List Name,Length
+
+      - name: Upload patched V7.1 source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_AI_V7_1_PATCHED_SOURCE
+          path: MERSAD_AI_V7_1_PATCHED_SOURCE.zip
+          if-no-files-found: error
+          retention-days: 14
