@@ -51,6 +51,30 @@ jobs:
         shell: pwsh
         run: python -m unittest discover -s MERSAD_LAB -p "test_lab.py" -v
 
+      - name: Fix UTF-8 console output for Arabic Windows locale
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path("MERSAD_LAB/lab_server.py")
+          source = p.read_text(encoding="utf-8")
+          marker = "def main():"
+          patch = """def main():
+              # PyInstaller inherits the Windows cp1252 console encoding on some hosts.
+              # Reconfigure output before printing Arabic startup/shutdown messages.
+              for stream in (sys.stdout, sys.stderr):
+                  try:
+                      stream.reconfigure(encoding="utf-8", errors="replace")
+                  except Exception:
+                      pass
+          """
+          if marker not in source:
+              raise SystemExit("Could not locate main() for UTF-8 console patch")
+          source = source.replace(marker, patch, 1)
+          p.write_text(source, encoding="utf-8", newline="\\n")
+          print("Applied UTF-8 console patch.")
+          '@ | python -
+
       - name: Build portable application
         shell: pwsh
         run: |
@@ -63,6 +87,8 @@ jobs:
         shell: pwsh
         run: |
           $env:MERSAD_LAB_PORT = "18766"
+          $env:PYTHONUTF8 = "1"
+          $env:PYTHONIOENCODING = "utf-8"
           $exe = (Resolve-Path "dist\MERSAD_LAB\MERSAD_LAB.exe").Path
           $stdout = "$PWD\lab-smoke.stdout.txt"
           $stderr = "$PWD\lab-smoke.stderr.txt"
