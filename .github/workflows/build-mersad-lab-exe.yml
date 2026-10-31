@@ -133,7 +133,7 @@ jobs:
           AppVersion={#MyAppVersion}
           DefaultDirName={autopf}\MERSAD LAB
           DefaultGroupName=MERSAD LAB
-          OutputDir=installer
+          OutputDir=.
           OutputBaseFilename=MERSAD_LAB_Setup_x64
           Compression=lzma2
           SolidCompression=yes
