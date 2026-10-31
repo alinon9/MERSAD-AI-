@@ -1,0 +1,145 @@
+name: Build MERSAD LAB Windows EXE
+
+on:
+  push:
+    branches:
+      - build/mersad-lab-exe-20261031
+    paths:
+      - ".github/workflows/build-mersad-lab-exe.yml"
+      - "ci/mersad_lab_source_part_*.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reassemble and extract LAB source
+        shell: pwsh
+        run: |
+          $parts = @()
+          for ($i = 1; $i -le 9; $i++) {
+            $name = "ci/mersad_lab_source_part_{0:D2}.txt" -f $i
+            $parts += (Get-Content -Raw $name).Trim()
+          }
+          $base64 = $parts -join ""
+          if (($base64.Length % 4) -ne 0) { throw "Invalid base64 length: $($base64.Length)" }
+          $zipBytes = [Convert]::FromBase64String($base64)
+          [IO.File]::WriteAllBytes("$PWD\ci\mersad_lab_source.zip", $zipBytes)
+          7z t ci\mersad_lab_source.zip
+          Expand-Archive -Path ci\mersad_lab_source.zip -DestinationPath . -Force
+          Get-FileHash ci\mersad_lab_source.zip -Algorithm SHA256 | Format-List
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy==1.26.4" "opencv-python==4.11.0.86" "psutil>=5.9,<8" pyinstaller
+
+      - name: Run LAB tests
+        shell: pwsh
+        run: python -m unittest discover -s MERSAD_LAB -p "test_lab.py" -v
+
+      - name: Build portable application
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --name MERSAD_LAB --collect-all cv2 --collect-all numpy --collect-all psutil --add-data "MERSAD_LAB/index.html;." MERSAD_LAB/lab_server.py
+          Copy-Item MERSAD_LAB/README_AR.md dist/MERSAD_LAB/README_AR.md
+          Copy-Item MERSAD_LAB/PHASE1_STATUS_AR.md dist/MERSAD_LAB/PHASE1_STATUS_AR.md
+          New-Item -ItemType Directory -Force dist/MERSAD_LAB/reports | Out-Null
+
+      - name: Smoke test the built EXE
+        shell: pwsh
+        run: |
+          $env:MERSAD_LAB_PORT = "18766"
+          $exe = (Resolve-Path "dist\MERSAD_LAB\MERSAD_LAB.exe").Path
+          $stdout = "$PWD\lab-smoke.stdout.txt"
+          $stderr = "$PWD\lab-smoke.stderr.txt"
+          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $health = Invoke-RestMethod "http://127.0.0.1:18766/api/health" -TimeoutSec 2
+                if ($health.ok -eq $true -and $health.lab -eq "MERSAD LAB") { $ok = $true; break }
+              } catch {}
+              if ($proc.HasExited) { break }
+            }
+            if (-not $ok) {
+              if (Test-Path $stdout) { Get-Content $stdout }
+              if (Test-Path $stderr) { Get-Content $stderr }
+              throw "Built EXE did not serve the expected local health endpoint."
+            }
+            Write-Host "MERSAD_LAB.exe health endpoint passed."
+          }
+          finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Create portable ZIP and installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force installer | Out-Null
+          Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "installer\MERSAD_LAB_WINDOWS_X64_PORTABLE.zip" -CompressionLevel Optimal
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not found." }
+          $iss = @'
+          #define MyAppName "MERSAD LAB"
+          #define MyAppVersion "1.0.0"
+          [Setup]
+          AppId={{B6A2E5AC-76A7-4F6C-9A38-C15E9BDE7110}}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          DefaultDirName={autopf}\MERSAD LAB
+          DefaultGroupName=MERSAD LAB
+          OutputDir=installer
+          OutputBaseFilename=MERSAD_LAB_Setup_x64
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesInstallIn64BitMode=x64
+          PrivilegesRequired=admin
+          UninstallDisplayIcon={app}\MERSAD_LAB.exe
+          [Dirs]
+          Name: "{localappdata}\MERSAD LAB\reports"
+          [Files]
+          Source: "dist\MERSAD_LAB\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+          [Icons]
+          Name: "{autoprograms}\MERSAD LAB"; Filename: "{app}\MERSAD_LAB.exe"
+          Name: "{autodesktop}\MERSAD LAB"; Filename: "{app}\MERSAD_LAB.exe"; Tasks: desktopicon
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+          [Run]
+          Filename: "{app}\MERSAD_LAB.exe"; Description: "Launch MERSAD LAB"; Flags: postinstall nowait skipifsilent
+          '@
+          $issPath = "$PWD\installer\MERSAD_LAB_Setup.iss"
+          [IO.File]::WriteAllText($issPath, $iss, [Text.UTF8Encoding]::new($true))
+          & $iscc $issPath
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed with exit code $LASTEXITCODE" }
+          Get-FileHash installer\MERSAD_LAB_Setup_x64.exe, installer\MERSAD_LAB_WINDOWS_X64_PORTABLE.zip -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: Upload finished Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_LAB_WINDOWS_X64_INSTALLER
+          path: |
+            installer/MERSAD_LAB_Setup_x64.exe
+            installer/MERSAD_LAB_WINDOWS_X64_PORTABLE.zip
+          if-no-files-found: error
+          retention-days: 14
