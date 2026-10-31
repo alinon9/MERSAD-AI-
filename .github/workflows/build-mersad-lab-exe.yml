@@ -32,7 +32,6 @@ jobs:
           if (($base64.Length % 4) -ne 0) { throw "Invalid base64 length: $($base64.Length)" }
           $zipBytes = [Convert]::FromBase64String($base64)
           [IO.File]::WriteAllBytes("$PWD\ci\mersad_lab_source.zip", $zipBytes)
-          7z t ci\mersad_lab_source.zip
           Expand-Archive -Path ci\mersad_lab_source.zip -DestinationPath . -Force
           Get-FileHash ci\mersad_lab_source.zip -Algorithm SHA256 | Format-List
 
