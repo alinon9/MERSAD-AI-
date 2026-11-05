@@ -6,7 +6,7 @@ Round 4 upgrades:
   status updates, deletion, and known-face loading, plus safe migration/quarantine of legacy ambiguous faces.
 - P1-D: Removal of static fallback HMAC key, atomic secret/key file writing with 0600 permissions from creation,
   and explicit refusal to silently overwrite corrupt/truncated HMAC keys."""
-import contextlib, csv, hashlib, hmac, io, os, re, secrets, shutil, sqlite3, stat, threading, time
+import contextlib, csv, hashlib, hmac, io, logging, os, re, secrets, shutil, sqlite3, stat, subprocess, threading, time
 
 try:
     import fcntl
@@ -32,6 +32,207 @@ _HMAC_KEY_CACHE = {}
 _IPC_RLOCK = threading.RLock()
 _IPC_STATE = {"depth": 0, "fd": None}
 
+# MERSAD_WINDOWS_PRIVATE_ACL_HELPERS
+def _ensure_lock_byte(fd):
+    """Windows CRT byte-range locks require a real byte in the file on some builds."""
+    fd.seek(0, os.SEEK_END)
+    if fd.tell() == 0:
+        fd.write(b"\0")
+        fd.flush()
+    fd.seek(0)
+
+
+def _ensure_windows_lock_byte(fd):
+    return _ensure_lock_byte(fd)
+
+
+def _is_network_filesystem_path(path):
+    """Recognize Windows UNC and mapped remote-drive paths before selecting SQLite journaling."""
+    raw = str(path or "")
+    normalized = raw.replace("/", "\\")
+    if normalized.startswith("\\\\") or normalized.lower().startswith("\\\\?\\unc\\"):
+        return True
+    if os.name == "nt" and raw:
+        try:
+            import ctypes
+            drive, _ = os.path.splitdrive(os.path.abspath(raw))
+            if drive:
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
+                kernel32.GetDriveTypeW.restype = ctypes.c_uint
+                return int(kernel32.GetDriveTypeW(drive + "\\")) == 4  # DRIVE_REMOTE
+        except Exception:
+            return False
+    return False
+
+
+def configure_sqlite_journal_mode(db, db_path=None):
+    """Prefer WAL, but fall back to DELETE if a filesystem cannot support WAL/shared-memory files."""
+    path = db_path or D.get("db_path")
+    if not path:
+        try:
+            rows = db.execute("PRAGMA database_list").fetchall()
+            path = next((str(row[2]) for row in rows if str(row[1]) == "main"), "")
+        except Exception:
+            path = ""
+    current = str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+    if not path or path == ":memory:" or "mode=memory" in str(path).lower():
+        return current
+
+    if _is_network_filesystem_path(path):
+        try:
+            row = db.execute("PRAGMA journal_mode=DELETE").fetchone()
+            mode = str(row[0]).lower() if row else ""
+            if mode != "delete":
+                raise sqlite3.OperationalError(f"SQLite refused DELETE journal mode on network path (returned {mode or 'unknown'})")
+            logging.getLogger("mersad.registry").warning(
+                "Network database path detected; using SQLite DELETE journal mode instead of WAL: %s", str(path)[:240]
+            )
+            return mode
+        except sqlite3.OperationalError as exc:
+            raise sqlite3.OperationalError(
+                f"SQLite cannot establish DELETE journal mode on network path {path!r}; "
+                "use a local disk for MERSAD_AI data. " + str(exc)
+            ) from exc
+
+    wal_error = None
+    try:
+        row = db.execute("PRAGMA journal_mode=WAL").fetchone()
+        mode = str(row[0]).lower() if row else ""
+        if mode == "wal":
+            return mode
+        wal_error = RuntimeError(f"SQLite returned journal mode {mode or 'unknown'} instead of WAL")
+    except sqlite3.OperationalError as exc:
+        wal_error = exc
+
+    try:
+        row = db.execute("PRAGMA journal_mode=DELETE").fetchone()
+        mode = str(row[0]).lower() if row else ""
+        if mode != "delete":
+            raise sqlite3.OperationalError(f"SQLite refused DELETE journal mode (returned {mode or 'unknown'})")
+        logging.getLogger("mersad.registry").warning(
+            "SQLite WAL is unavailable for database path; falling back to DELETE journal mode: %s",
+            str(wal_error)[:240],
+        )
+        return mode
+    except sqlite3.OperationalError as delete_error:
+        raise sqlite3.OperationalError(
+            "Unable to initialize SQLite journaling: WAL failed and DELETE fallback failed. "
+            f"WAL error={wal_error}; DELETE error={delete_error}"
+        ) from delete_error
+
+
+def _windows_current_user_sid():
+    if os.name != "nt":
+        return None
+    try:
+        proc = subprocess.run(
+            ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10, check=False,
+        )
+        if proc.returncode != 0:
+            raise OSError((proc.stderr or proc.stdout or "whoami failed").strip())
+        match = re.search(r"\bS-1-(?:\d+-){1,}\d+\b", proc.stdout)
+        if not match:
+            raise OSError("Could not determine current Windows user SID")
+        return match.group(0)
+    except Exception as exc:
+        raise OSError(f"Cannot determine Windows user SID: {exc}") from exc
+
+
+def _windows_acl_script(check_only=False, is_dir=False):
+    if check_only:
+        return r"""
+$ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+$p = $env:MERSAD_ACL_PATH
+$acl = Get-Acl -LiteralPath $p
+if (-not $acl.AreAccessRulesProtected) { exit 21 }
+$cur = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowed = @($cur, 'S-1-5-18', 'S-1-5-32-544')
+$rules = $acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier])
+$currentAllow = $false
+foreach ($r in $rules) {
+    $sid = $r.IdentityReference.Value
+    if ($sid -eq $cur -and $r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) { $currentAllow = $true }
+    if ($r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and $sid -notin $allowed) { exit 22 }
+}
+if (-not $currentAllow) { exit 23 }
+exit 0
+"""
+    dir_flag = "$true" if is_dir else "$false"
+    return r"""
+$ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+$p = $env:MERSAD_ACL_PATH
+$isDir = """ + dir_flag + r"""
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($null -eq $current) { throw 'Cannot resolve current user SID' }
+$acl = Get-Acl -LiteralPath $p
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleSpecific($rule) }
+$acl.SetOwner($current)
+$inheritance = [System.Security.AccessControl.InheritanceFlags]::None
+if ($isDir) { $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit }
+$propagation = [System.Security.AccessControl.PropagationFlags]::None
+$rights = [System.Security.AccessControl.FileSystemRights]::FullControl
+$allow = [System.Security.AccessControl.AccessControlType]::Allow
+$principals = @($current.Value, 'S-1-5-18', 'S-1-5-32-544')
+foreach ($sidText in $principals) {
+  $sid = [System.Security.Principal.SecurityIdentifier]::new($sidText)
+  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, $inheritance, $propagation, $allow)
+  [void]$acl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $p -AclObject $acl
+"""
+
+
+def _windows_acl_call(path, script):
+    env = dict(os.environ)
+    env["MERSAD_ACL_PATH"] = os.path.abspath(path)
+    powershell = shutil.which("pwsh.exe") or shutil.which("powershell.exe")
+    if not powershell:
+        raise OSError("PowerShell is required to secure Windows secret-file ACLs")
+    proc = subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
+         "-ExecutionPolicy", "Bypass", "-Command", script],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=20, check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or f"exit code {proc.returncode}").strip()
+        raise OSError(f"Windows ACL operation failed for {path}: {detail[-500:]}")
+    return True
+
+
+def _set_windows_private_acl(path, is_dir=False):
+    if os.name != "nt":
+        return True
+    path = os.path.abspath(path)
+    if not os.path.exists(path):
+        raise OSError(f"Cannot set ACL on missing path: {path}")
+    cache = globals().setdefault("_WINDOWS_PRIVATE_DIRS", set())
+    key = os.path.normcase(path)
+    if is_dir and key in cache:
+        return True
+    _windows_current_user_sid()
+    _windows_acl_call(path, _windows_acl_script(check_only=False, is_dir=is_dir))
+    if not _windows_acl_is_private(path):
+        raise OSError(f"Could not verify private Windows ACL on {path}")
+    if is_dir:
+        cache.add(key)
+    return True
+
+
+def _windows_acl_is_private(path):
+    if os.name != "nt":
+        return False
+    try:
+        return _windows_acl_call(path, _windows_acl_script(check_only=True))
+    except OSError:
+        return False
+
 
 def atomic_write_secret_bytes(target_path, data_bytes):
     """Atomically write secret bytes with restricted owner-only permissions (0600) from creation (P1-D).
@@ -45,12 +246,16 @@ def atomic_write_secret_bytes(target_path, data_bytes):
         raise OSError(f"Target directory does not exist: {parent_dir}")
     if os.path.lexists(target_path) and os.path.islink(target_path):
         raise OSError(f"Refusing to write secret to symlink path: {target_path}")
+    if os.name == "nt":
+        _set_windows_private_acl(parent_dir, is_dir=True)
 
     tmp_path = os.path.join(parent_dir, f".{os.path.basename(target_path)}.tmp.{os.getpid()}.{secrets.token_hex(6)}")
     fd = None
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp_path, flags, 0o600)
+        if os.name == "nt":
+            _set_windows_private_acl(tmp_path, is_dir=False)
         try:
             os.chmod(tmp_path, 0o600)
         except OSError:
@@ -109,6 +314,13 @@ def _get_hmac_key():
         if os.path.islink(key_path):
             _HMAC_KEY_CACHE.pop(key_path, None)
             raise RuntimeError(f"Security error: HMAC key file {key_path} cannot be a symbolic link")
+        if os.name == "nt":
+            try:
+                _set_windows_private_acl(base_dir, is_dir=True)
+                _set_windows_private_acl(key_path, is_dir=False)
+            except OSError as e:
+                _HMAC_KEY_CACHE.pop(key_path, None)
+                raise RuntimeError(f"Cannot securely protect Windows HMAC key at {key_path}: {e}") from e
         try:
             with open(key_path, "rb") as f:
                 k = f.read()
@@ -157,19 +369,27 @@ def interprocess_db_lock(db_path=None):
     _IPC_RLOCK.acquire()
     if t_lock is not None:
         t_lock.acquire()
+    depth_incremented = False
     try:
         if _IPC_STATE["depth"] == 0 and p and p != ":memory:":
             fd = open(lock_file, "a+b")
-            if fcntl is not None:
-                fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-            elif msvcrt is not None:
-                fd.seek(0)
-                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+                elif msvcrt is not None:
+                    _ensure_windows_lock_byte(fd)
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+            except Exception:
+                try: fd.close()
+                except Exception: pass
+                raise
             _IPC_STATE["fd"] = fd
         _IPC_STATE["depth"] += 1
+        depth_incremented = True
         yield
     finally:
-        _IPC_STATE["depth"] -= 1
+        if depth_incremented:
+            _IPC_STATE["depth"] -= 1
         if _IPC_STATE["depth"] == 0 and _IPC_STATE["fd"] is not None:
             fd = _IPC_STATE["fd"]
             _IPC_STATE["fd"] = None
@@ -1139,66 +1359,64 @@ def lookup_vehicle(plate):
             "vtype": vt or "car", "owner": own or "", "status": st or "normal", "notes": nt or ""
         })
 
-    if ocr_fixed:
-        c = candidates[0]
-        return {
-            **c,
-            "match_type": "approximate",
-            "match_note": "تطابق تقريبي (تصحيح التباس محارف OCR مثل O/0 أو I/1) — تحقق بصري",
-            "conf_factor": 0.80,
-            "ambiguous": len(candidates) > 1,
-            "contradictory_letters": False,
-            "visual_check_only": True
-        }
+    def _finalize_ocr_fixed(res_dict):
+        if not ocr_fixed or not res_dict:
+            return res_dict
+        out = dict(res_dict)
+        out["match_type"] = "approximate"
+        out["match_note"] = "تطابق تقريبي (تصحيح التباس محارف OCR مثل O/0 أو I/1) — تحقق بصري"
+        out["conf_factor"] = min(float(out.get("conf_factor", 0.80)), 0.80)
+        out["visual_check_only"] = True
+        return out
 
     if len(candidates) == 1:
         c = candidates[0]
         rec_lt = c["plate_letters"]
         if (not q_letters and not rec_lt) or (q_letters and rec_lt and q_letters == rec_lt):
-            return {
+            return _finalize_ocr_fixed({
                 **c, "match_type": "exact", "match_note": "مطابقة كاملة",
                 "conf_factor": 1.0, "ambiguous": False, "contradictory_letters": False, "visual_check_only": False
-            }
+            })
         if not q_letters or not rec_lt:
-            return {
+            return _finalize_ocr_fixed({
                 **c, "match_type": "digits_only",
                 "match_note": "تطابق بالأرقام فقط، الأحرف غير مؤكدة",
                 "conf_factor": 0.85, "ambiguous": False, "contradictory_letters": False, "visual_check_only": False
-            }
+            })
         sim = _letter_similarity(q_letters, rec_lt)
         if sim >= 0.5:
-            return {
+            return _finalize_ocr_fixed({
                 **c, "match_type": "digits_only",
                 "match_note": "تطابق بالأرقام فقط، الأحرف غير مؤكدة (تشابه جزئي للأحرف)",
                 "conf_factor": 0.85, "ambiguous": False, "contradictory_letters": False, "visual_check_only": False
-            }
-        return {
+            })
+        return _finalize_ocr_fixed({
             **c, "match_type": "digits_only",
             "match_note": f"تطابق محتمل — تحقق بصري (تطابق بالأرقام فقط مع تعارض الأحرف/المحافظة: المقروء «{q_letters}» مقابل المسجل «{rec_lt}»)",
             "conf_factor": 0.60, "ambiguous": False, "contradictory_letters": True, "visual_check_only": True
-        }
+        })
 
+    prio = {"wanted": 5, "stolen": 4, "watch": 3, "expired": 2, "normal": 1}
     if q_letters:
         scored = sorted(
-            ((_letter_similarity(q_letters, c["plate_letters"]), c) for c in candidates),
-            key=lambda x: x[0],
+            ((_letter_similarity(q_letters, c["plate_letters"]), prio.get(c["status"], 0), c) for c in candidates),
+            key=lambda x: (x[0], x[1]),
             reverse=True
         )
-        best_sim, best_c = scored[0]
+        best_sim, _, best_c = scored[0]
         second_sim = scored[1][0] if len(scored) > 1 else 0.0
         if best_sim == 1.0 and best_sim > second_sim:
-            return {
+            return _finalize_ocr_fixed({
                 **best_c, "match_type": "exact", "match_note": "مطابقة كاملة (أرقام + أحرف)",
                 "conf_factor": 1.0, "ambiguous": False, "contradictory_letters": False, "visual_check_only": False
-            }
+            })
         if best_sim >= 0.5 and best_sim > second_sim:
-            return {
+            return _finalize_ocr_fixed({
                 **best_c, "match_type": "digits_only",
                 "match_note": "تطابق بالأرقام فقط، الأحرف غير مؤكدة (تم اختيار الأقرب بالأحرف)",
                 "conf_factor": 0.85, "ambiguous": False, "contradictory_letters": False, "visual_check_only": False
-            }
+            })
 
-    prio = {"wanted": 5, "stolen": 4, "watch": 3, "expired": 2, "normal": 1}
     candidates.sort(key=lambda c: -prio.get(c["status"], 0))
     chosen = dict(candidates[0])
     all_plates = " / ".join(c["plate"] for c in candidates)
@@ -1211,7 +1429,7 @@ def lookup_vehicle(plate):
         match_note=f"تطابق محتمل — تحقق بصري (تطابق بالأرقام فقط مع تعدد سجلات بنفس الأرقام: {all_plates})",
         conf_factor=0.65
     )
-    return chosen
+    return _finalize_ocr_fixed(chosen)
 
 
 def get_person(name="", ref="", person_id=None):
@@ -1253,7 +1471,7 @@ def parse_file(fn, data):
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         try:
             ws = wb.active
-            return [[cell(c) for c in r] for r in ws.iter_rows(values_only=True)]
+            return [[cell(c) for c in r] for _, r in zip(range(10001), ws.iter_rows(values_only=True))]
         finally:
             try: wb.close()
             except Exception: pass

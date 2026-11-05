@@ -147,11 +147,13 @@ def build_report(db=None, current_cameras=None, period="24h", now=None):
     if db is None:
         return {"ok": True, "period": period, "from": start, "to": now, "cameras": [], "events": [], "note": "لا تتوفر قاعدة بيانات لسجل الكاميرات."}
 
+    eff_lock = _LOCK or threading.RLock()
     try:
-        rows = db.execute(
-            "SELECT ts, cam, prev_status, status, reason, session_id FROM camera_status_history WHERE ts<=? ORDER BY cam, ts, id",
-            (now,),
-        ).fetchall()
+        with eff_lock:
+            rows = db.execute(
+                "SELECT ts, cam, prev_status, status, reason, session_id FROM camera_status_history WHERE ts<=? ORDER BY cam, ts, id",
+                (now,),
+            ).fetchall()
     except sqlite3.Error:
         rows = []
 

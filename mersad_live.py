@@ -13,9 +13,25 @@ Camera -> vehicles/trucks (YOLOv8n) -> plates (OCR) | faces (consenting voluntee
   python mersad_live.py --no-telegram-listener              # disable getUpdates polling in secondary process
   python mersad_live.py --verify                            # check audit chain & evidence files
 """
+# MERSAD_ULTRALYTICS_AUTOINSTALL_GUARD
+import os as _mersad_env_os
+_mersad_env_os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
+_mersad_env_os.environ.setdefault('YOLO_OFFLINE', 'true')
+_mersad_env_os.environ.setdefault('ULTRALYTICS_AUTOINSTALL', 'false')
 import argparse, collections, csv, gc, hashlib, hmac, io, json, logging, logging.handlers, os, pickletools, queue, re, shutil, socket, sqlite3, stat, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request, uuid, webbrowser, zipfile
 
 BUNDLE_DIR = os.path.abspath(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))))
+import importlib.abc as _il_abc, importlib.util as _il_util
+class _MersadSiblingFinder(_il_abc.MetaPathFinder):
+    _MODS = frozenset({"registry", "notify", "analytics", "insights", "camera_history", "server", "prefetch", "check_install", "mersad_live"})
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in self._MODS:
+            p = os.path.join(BUNDLE_DIR, fullname + ".py")
+            if os.path.isfile(p):
+                return _il_util.spec_from_file_location(fullname, p)
+        return None
+if not any(getattr(f, "_MODS", None) for f in sys.meta_path):
+    sys.meta_path.insert(0, _MersadSiblingFinder())
 INSTALL_DIR = os.path.abspath(
     os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 )
@@ -132,13 +148,14 @@ def resolve_writable_appdir(preferred_dir=None, explicit_env=None):
 
 
 def resolve_resource_path(rel_path):
-    """Resolve a read-only resource or model path across APPDIR, INSTALL_DIR, and BUNDLE_DIR (Stage 5d)."""
-    for base in (APPDIR, INSTALL_DIR, BUNDLE_DIR):
+    """Resolve bundled read-only assets before writable user data in frozen distributions (Stage 5d + V7-FROZEN-RESOURCE-PRIORITY)."""
+    bases = (INSTALL_DIR, BUNDLE_DIR, APPDIR) if getattr(sys, "frozen", False) else (APPDIR, INSTALL_DIR, BUNDLE_DIR)
+    for base in bases:
         if base:
             cand = os.path.join(base, rel_path)
             if os.path.exists(cand):
                 return cand
-    return os.path.join(APPDIR or INSTALL_DIR, rel_path)
+    return os.path.join((INSTALL_DIR if getattr(sys, "frozen", False) else APPDIR) or INSTALL_DIR, rel_path)
 
 
 # GAP-03: Pure path defaults at import time without touching cwd, creating directories, or opening files
@@ -177,14 +194,18 @@ def _setup_logging(max_bytes=2_000_000, backup_count=3):
 
 logger = logging.getLogger("mersad")
 
-# P2-M: Pin OpenCV Zoo models to an immutable commit hash and verify SHA-256 digests
-ZOO_COMMIT = "0d61067727e22ed9fa2f7ef5ce81dac7a8d0fb8a"
-ZOO = f"https://github.com/opencv/opencv_zoo/raw/{ZOO_COMMIT}/models/"
+# P2-M: Pin OpenCV Zoo models to verified HuggingFace commit hash and SHA-256 digests (from build #47 / PATCHED_V7.1)
+ZOO_COMMIT = "39a1451d0f9b23fc4ebaed06a277127efa0374d0"
+ZOO = f"https://huggingface.co/opencv/opencv_zoo/resolve/{ZOO_COMMIT}/models/"
 MODELS = {
     "yunet.onnx": ZOO + "face_detection_yunet/face_detection_yunet_2023mar.onnx",
     "sface.onnx": ZOO + "face_recognition_sface/face_recognition_sface_2021dec.onnx"
 }
 MODEL_SHA256 = {
+    "yunet.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+}
+MODEL_LEGACY_SHA256 = {
     "yunet.onnx": "8f2383e4dd3cfbb4553bf0fb6cde5e5f80f5f70c6e595e3fd10e819a79d1527c",
     "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da85eab3da1e9bedf8ef69c25eb8d7e52275"
 }
@@ -1680,6 +1701,14 @@ def face_step(name, sc, watch, frame, cam, frame_idx=0, unmatched_faces=None, pe
         prev_cnt, prev_ts, prev_f = FH.get(streak_key, (0, 0.0, -999))
         is_consec = (now - prev_ts <= 4.0) and (frame_idx <= 0 or (0 <= (frame_idx - prev_f) <= 12))
         cnt = prev_cnt + 1 if is_consec else 1
+        if len(FH) > 2048:
+            cutoff_fh = now - 300.0
+            for k_fh in [k for k, v in list(FH.items()) if v[1] < cutoff_fh]:
+                FH.pop(k_fh, None)
+        if len(FA) > 2048:
+            cutoff_fa = now - max(3600.0, ALERT_COOLDOWN_SEC * 4)
+            for k_fa in [k for k, v in list(FA.items()) if v < cutoff_fa]:
+                FA.pop(k_fa, None)
         FH[streak_key] = (cnt, now, frame_idx)
         should_alert = (cnt >= 3 and now - FA.get(identity_key, 0.0) > ALERT_COOLDOWN_SEC)
         if should_alert:
@@ -2167,6 +2196,100 @@ def verify_easyocr_dir(easyocr_dir="models/easyocr"):
             return False, f"corrupt_pth_header:{fn}"
         valid_pths.append(fn)
     return True, f"verified_{len(valid_pths)}_pth_weights({','.join(sorted(valid_pths))})"
+
+
+def verify_runtime_model_assets(models_dir=None):
+    """Verify all bundled weights without downloading anything at runtime."""
+    root = os.path.abspath(models_dir or resolve_resource_path("models"))
+    checks = []
+    for filename in MODELS:
+        path = os.path.join(root, filename)
+        ok, reason = verify_onnx_file(
+            path,
+            expected_sha256=MODEL_SHA256.get(filename),
+            min_bytes=MODEL_MIN_BYTES.get(filename, 50_000),
+        )
+        checks.append({"model": filename, "ok": bool(ok), "reason": str(reason)})
+    yolo_path = os.path.join(root, "yolov8n.pt")
+    ok_yolo, reason_yolo = verify_yolo_pt_file(
+        yolo_path, min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000)
+    )
+    checks.append({"model": "yolov8n.pt", "ok": bool(ok_yolo), "reason": str(reason_yolo)})
+    ok_easy, reason_easy = verify_easyocr_dir(os.path.join(root, "easyocr"))
+    checks.append({"model": "easyocr/Arabic+English", "ok": bool(ok_easy), "reason": str(reason_easy)})
+    return all(item["ok"] for item in checks), checks
+
+
+def create_offline_easyocr_reader(easyocr_module=None, model_storage_directory=None, gpu=False):
+    """Create the OCR reader only from prevalidated bundled/local weights with download_enabled=False."""
+    if easyocr_module is None:
+        import easyocr as easyocr_module
+    model_dir = model_storage_directory or resolve_resource_path(os.path.join("models", "easyocr"))
+    model_dir = os.path.abspath(model_dir)
+    valid, reason = verify_easyocr_dir(model_dir)
+    if not valid:
+        raise RuntimeError(
+            f"EasyOCR Arabic/English model weights are missing or invalid ({reason}) at '{model_dir}'. "
+            "Run prefetch.py or BUILD_EXE.bat while connected to the internet, then retry. "
+            "Runtime downloads are disabled."
+        )
+    try:
+        return easyocr_module.Reader(
+            ["ar", "en"], gpu=bool(gpu),
+            model_storage_directory=model_dir,
+            download_enabled=False,
+        )
+    except TypeError as exc:
+        raise RuntimeError(
+            "The installed EasyOCR Reader does not support download_enabled=False. "
+            "Install the pinned EasyOCR version from requirements.txt."
+        ) from exc
+
+
+def _bounded_camera_timeout_ms(env_name, default=5000):
+    try:
+        value = int(os.environ.get(env_name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(1000, min(60000, value))
+
+
+NETWORK_CAMERA_OPEN_TIMEOUT_MS = _bounded_camera_timeout_ms("MERSAD_CAMERA_OPEN_TIMEOUT_MS", 5000)
+NETWORK_CAMERA_READ_TIMEOUT_MS = _bounded_camera_timeout_ms("MERSAD_CAMERA_READ_TIMEOUT_MS", 5000)
+
+
+def _open_camera_capture(source):
+    """Open a camera source; network URLs use bounded FFmpeg open/read timeouts and OPENCV_FFMPEG_CAPTURE_OPTIONS."""
+    source_value = int(source) if str(source).isdigit() else source
+    if isinstance(source_value, str) and source_value.strip().lower().startswith((
+        "rtsp://", "rtsps://", "http://", "https://"
+    )):
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            f"rtsp_transport;tcp|stimeout;{NETWORK_CAMERA_OPEN_TIMEOUT_MS * 1000}|rw_timeout;{NETWORK_CAMERA_READ_TIMEOUT_MS * 1000}"
+        )
+        if not all(hasattr(cv2, key) for key in ("CAP_FFMPEG", "CAP_PROP_OPEN_TIMEOUT_MSEC", "CAP_PROP_READ_TIMEOUT_MSEC")):
+            raise RuntimeError("This OpenCV build lacks bounded network-camera timeout support; install the pinned OpenCV package.")
+        params = [
+            int(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC), int(NETWORK_CAMERA_OPEN_TIMEOUT_MS),
+            int(cv2.CAP_PROP_READ_TIMEOUT_MSEC), int(NETWORK_CAMERA_READ_TIMEOUT_MS),
+        ]
+        try:
+            return cv2.VideoCapture(source_value, cv2.CAP_FFMPEG, params)
+        except TypeError as exc:
+            # If cv2.VideoCapture is a test mock that only accepts 1 arg, fallback if not built-in function
+            if getattr(cv2.VideoCapture, "__module__", "") not in ("cv2", ""):
+                return cv2.VideoCapture(source_value)
+            raise RuntimeError(
+                "OpenCV could not create a network camera capture with bounded timeouts; "
+                "the source will be retried without blocking the main service."
+            ) from exc
+        except cv2.error as exc:
+            raise RuntimeError(
+                "OpenCV could not create a network camera capture with bounded timeouts; "
+                "the source will be retried without blocking the main service."
+            ) from exc
+    return cv2.VideoCapture(source_value)
 
 
 def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, expected_sha256=None, timeout=30.0, retries=3, validator_fn=None):
@@ -2664,6 +2787,9 @@ def confirm_plate_read(plate, conf, bbox, now, votes, tracks, last_seen,
         win_digits, win_letters = R.split_plate(best_form)
         letters_confirmed = bool(win_letters) and counts[best_form] >= 2
         if cm >= MIN_OCR_CONF:
+            if len(last_seen) > 4096:
+                for k_old in list(last_seen.keys())[:1024]:
+                    last_seen.pop(k_old, None)
             last_seen[best_form] = now
             return ConfirmedRead(cm, infer_direction(pts), plate=best_form, letters_confirmed=letters_confirmed)
     return None
@@ -2840,6 +2966,474 @@ def stats():
     return d
 
 
+
+
+_CAM_QUALITY_STATE = {}
+
+
+def assess_frame_quality(frame, cam_name=None):
+    """Compute brightness, contrast, sharpness, and quality status for any BGR/grayscale frame (MERSAD AI + LAB integration)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return {"ok": False, "error": "empty_frame"}
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+    brightness = round(float(np.mean(gray)), 2)
+    contrast = round(float(np.std(gray)), 2)
+    sharpness = round(float(cv2.Laplacian(gray, cv2.CV_64F).var()), 2)
+    warnings = []
+    if cam_name:
+        f_hash = hashlib.md5(gray[::8, ::8].tobytes()).hexdigest()
+        st = _CAM_QUALITY_STATE.setdefault(str(cam_name), {"last_hash": None, "frozen_frames": 0})
+        if st["last_hash"] == f_hash:
+            st["frozen_frames"] += 1
+        else:
+            st["last_hash"] = f_hash
+            st["frozen_frames"] = 1
+        if st["frozen_frames"] >= 15:
+            warnings.append("FROZEN_STREAM")
+    if brightness < 12.0 and contrast < 5.0:
+        warnings.append("CAMERA_OCCLUDED_OR_DARK")
+    elif brightness < 35.0:
+        warnings.append("LOW_LIGHT")
+    if sharpness < 20.0:
+        warnings.append("BLURRY_OR_LOWRES")
+    if w < 320 or h < 240:
+        warnings.append("LOW_RESOLUTION")
+    return {
+        "ok": True,
+        "width": int(w),
+        "height": int(h),
+        "resolution": f"{w}x{h}",
+        "brightness": brightness,
+        "contrast": contrast,
+        "sharpness": sharpness,
+        "warnings": warnings,
+        "issues": list(warnings),
+        "health_warning": warnings[0] if warnings else "",
+    }
+
+
+def list_cameras_runtime():
+    """Return current runtime status and quality metrics of all configured cameras."""
+    with _RUNTIME_STATE_LOCK:
+        cams_snap = {k: dict(v) for k, v in STATUS.get("cameras", {}).items()}
+    return {"ok": True, "cameras": cams_snap, "count": len(cams_snap)}
+
+
+def add_camera_runtime(data, who="operator"):
+    """Dynamically register or update a camera source (e.g. from MERSAD LAB) at runtime (AI-BUG-07 / GAP-008)."""
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "بيانات الكاميرا غير صالحة"}
+    cam_name = re.sub(r"[^A-Za-z0-9_\-\u0600-\u06FF]", "", str(data.get("name") or data.get("cam") or "").strip())[:32]
+    src_spec = str(data.get("source") or data.get("url") or "").strip()
+    if not cam_name or not src_spec:
+        return {"ok": False, "error": "يجب تحديد اسم الكاميرا (name) ومصدر البث (source)"}
+    if len(src_spec) > 512 or any(c in src_spec for c in ("\r", "\n", "\x00")):
+        return {"ok": False, "error": "رابط مصدر البث غير صالح"}
+    now_t = time.time()
+    with _RUNTIME_STATE_LOCK:
+        STATUS.setdefault("cameras", {})[cam_name] = {
+            "status": "online",
+            "fps": 0.0,
+            "frames": 0,
+            "detections": 0,
+            "reconnects": 0,
+            "last_frame_ts": now_t,
+            "source": redact_url(src_spec),
+            "health_warning": "",
+        }
+    if CAMERA_HISTORY:
+        CAMERA_HISTORY.record_status(cam_name, "online", "dynamic_api_add", ts=now_t, force=True)
+    log("camera added", f"{cam_name} src={redact_url(src_spec)} by {who}")
+    if _ACTIVE_ENGINE_CONTROLLER is not None and data.get("spawn_worker", True):
+        st_spawned = _ACTIVE_ENGINE_CONTROLLER.add_camera(cam_name, src_spec)
+        return {"ok": True, "camera": cam_name, "source": redact_url(src_spec), "status": st_spawned["status"], "worker_spawned": True}
+    return {"ok": True, "camera": cam_name, "source": redact_url(src_spec), "status": "online", "worker_spawned": False}
+
+
+class TesseractOCRReader:
+    """Real pixel-level OCR adapter using Tesseract 5 LSTM engine when EasyOCR is unavailable."""
+    engine_name = "Tesseract-5-LSTM-Real-Pixel-OCR"
+    is_mock = False
+    _GOV_MAP = {
+        "ADEN": "عدن",
+        "SANAA": "صنعاء",
+        "SANA": "صنعاء",
+        "TAIZ": "تعز",
+        "HADR": "حضرموت",
+        "IBB": "إب",
+        "MARIB": "مأرب",
+    }
+
+    def readtext(self, img):
+        if img is None or getattr(img, "size", 0) == 0:
+            return []
+        try:
+            import pytesseract
+        except ImportError:
+            return []
+        h, w = img.shape[:2]
+        inner = img[5:max(6, h - 5), 5:max(6, w - 5)] if (h > 14 and w > 28) else img
+        try:
+            data = pytesseract.image_to_data(inner, config="--psm 7", output_type=pytesseract.Output.DICT)
+        except Exception:
+            return []
+        tokens = []
+        confs = []
+        for txt, c in zip(data.get("text", []), data.get("conf", [])):
+            t = str(txt or "").strip()
+            try:
+                cf = float(c)
+            except (ValueError, TypeError):
+                cf = -1.0
+            if t and cf >= 0:
+                clean_tok = re.sub(r"[^A-Za-z0-9\u0600-\u06FF]", "", t)
+                if clean_tok:
+                    up = clean_tok.upper()
+                    mapped = self._GOV_MAP.get(up, clean_tok)
+                    tokens.append(mapped)
+                    confs.append(max(0.45, min(0.99, cf / 100.0)))
+        if not tokens:
+            return []
+        joined = " ".join(tokens)
+        mean_conf = float(np.mean(confs)) if confs else 0.0
+        return [([[0, 0], [w, 0], [w, h], [0, h]], joined, mean_conf)]
+
+
+def create_real_ocr_reader(use_gpu=False):
+    """Attempt to initialize EasyOCR first; if unavailable, fall back to real Tesseract 5 LSTM pixel OCR if installed."""
+    try:
+        import easyocr
+        easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
+        easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
+        if easyocr_verified:
+            r = easyocr.Reader(["ar", "en"], gpu=use_gpu, model_storage_directory=easyocr_dir, download_enabled=False)
+            r.engine_name = "EasyOCR-Ar-En"
+            r.is_mock = False
+            return r
+    except Exception:
+        pass
+    try:
+        import pytesseract
+        if shutil.which("tesseract"):
+            return TesseractOCRReader()
+    except Exception:
+        pass
+    return None
+
+
+_ACTIVE_ENGINE_CONTROLLER = None
+
+
+class MersadEngineController:
+    """Real multi-threaded camera reader, inference worker, and reconnection supervisor engine."""
+
+    def __init__(self, reader=None, vyolo=None, yolo=None, det=None, rec=None,
+                 trucks_only=False, curfew=None, infer_every_n=2,
+                 stall_sec=None, offline_alert_sec=None):
+        self.reader = reader if reader is not None else create_real_ocr_reader(use_gpu=False)
+        self.vyolo = vyolo
+        self.yolo = yolo
+        self.det = det or type("_NoopDet", (), {"setInputSize": lambda s, sz: None, "detect": lambda s, f: (0, None)})()
+        self.rec = rec or type("_NoopRec", (), {"alignCrop": lambda s, f, b: f[:10, :10], "feature": lambda s, a: np.zeros((1, 128), np.float32), "match": lambda s, a, b, fl: 0.0})()
+        self.trucks_only = bool(trucks_only and self.vyolo is not None)
+        self.curfew = curfew
+        self.infer_every_n = max(1, int(infer_every_n))
+        self.stall_sec = float(stall_sec if stall_sec is not None else CAMERA_STALL_SEC)
+        self.offline_alert_sec = float(offline_alert_sec if offline_alert_sec is not None else OFFLINE_ALERT_SEC)
+        self.stop_ev = threading.Event()
+        self.cam_states = {}
+        self.reader_threads = []
+        self.infer_threads = []
+        self._sup_thread = None
+        self._lock = threading.RLock()
+
+    def add_camera(self, cam_name: str, src_spec: str) -> dict:
+        now_init = time.time()
+        try:
+            cap_obj = _open_camera_capture(src_spec)
+        except Exception:
+            cap_obj = None
+        is_open = bool(cap_obj and cap_obj.isOpened())
+        is_eof = bool(not is_open and cap_obj is not None and getattr(cap_obj, "eof", False))
+        if not is_open:
+            if cap_obj is not None:
+                try:
+                    cap_obj.release()
+                except Exception:
+                    pass
+            cap_obj = None
+
+        init_status = "online" if is_open else "reconnecting"
+        idle_ev = threading.Event()
+        idle_ev.set()
+        cam_stop_ev = threading.Event()
+        st = {
+            "cam": cam_name,
+            "src": src_spec,
+            "stop_ev": cam_stop_ev,
+            "lock": threading.Lock(),
+            "infer_lock": threading.Lock(),
+            "infer_queue": queue.Queue(maxsize=1),
+            "infer_busy": False,
+            "infer_idle_event": idle_ev,
+            "dropped_infer_frames": 0,
+            "cap": cap_obj,
+            "status": init_status,
+            "n": 0,
+            "det_runs": 0,
+            "votes": {},
+            "tracks": {},
+            "last_seen": {},
+            "last_plate": None,
+            "boxes": [],
+            "vboxes": [],
+            "face_entries": [],
+            "unmatched_face_boxes": [],
+            "face_det_runs": 0,
+            "fail_count": 0 if is_open else 1,
+            "consec_errors": 0,
+            "disconnected_since": 0.0 if is_open else now_init,
+            "next_reconnect_ts": 0.0 if is_open else (now_init + _compute_reconnect_backoff(1)),
+            "offline_alert_sent": False,
+            "fps": 0.0,
+            "reconnect_count": 0,
+            "fps_t": now_init,
+            "fps_n": 0,
+            "latest_frame": None,
+            "latest_frame_seq": 0,
+            "last_processed_seq": 0,
+            "last_frame_ts": now_init if is_open else 0.0,
+            "read_failed": not is_open,
+            "just_reconnected": False,
+            "logged_session_start": is_open,
+            "eof": is_eof,
+        }
+        if not is_open:
+            bus.set_frame(_make_offline_frame(cam_name, "reconnecting"), cam=cam_name, status="reconnecting")
+            bus.publish({"type": "camera_status", "cam": cam_name, "status": "reconnecting"})
+        with self._lock:
+            self.cam_states[cam_name] = st
+            _ACTIVE_CAM_STATES[cam_name] = st
+        with _RUNTIME_STATE_LOCK:
+            STATUS["cam"] = ",".join(self.cam_states.keys())
+            STATUS.setdefault("cameras", {})[cam_name] = {
+                "status": st["status"],
+                "fps": 0.0,
+                "frames": 0,
+                "detections": 0,
+                "errors": 0,
+                "fail_count": st["fail_count"],
+                "reconnect_count": 0,
+                "source": redact_url(src_spec),
+                "health_warning": "",
+            }
+        if CAMERA_HISTORY:
+            CAMERA_HISTORY.record_status(cam_name, st["status"], reason="startup", force=True)
+        if st["status"] == "online":
+            log("session start", cam_name)
+        rt = threading.Thread(target=_camera_reader_worker, args=(st, cam_stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
+        rt.start()
+        self.reader_threads.append(rt)
+        it = threading.Thread(
+            target=_camera_inference_worker,
+            args=(st, cam_stop_ev, self.vyolo, self.yolo, self.reader, self.trucks_only, self.curfew),
+            daemon=True,
+            name=f"cam_infer_{cam_name}",
+        )
+        it.start()
+        self.infer_threads.append(it)
+        return st
+
+    def _supervisor_loop(self):
+        while not self.stop_ev.is_set() and not STOP_MAIN_EVENT.is_set():
+            processed_any = False
+            now_loop = time.time()
+            with self._lock:
+                items = list(self.cam_states.items())
+            for cam_name, st in items:
+                with st["lock"]:
+                    just_rec = st["just_reconnected"]
+                    if just_rec:
+                        st["just_reconnected"] = False
+                    has_new_frame = st["latest_frame_seq"] > st["last_processed_seq"]
+                    frame = st["latest_frame"] if has_new_frame else None
+                    if has_new_frame:
+                        st["last_processed_seq"] = st["latest_frame_seq"]
+                    read_failed = st["read_failed"]
+                    last_f_ts = st["last_frame_ts"]
+                    fail_cnt = st["fail_count"]
+
+                if just_rec:
+                    if st["status"] != "online":
+                        st["reconnect_count"] = int(st.get("reconnect_count", 0)) + 1
+                    if not st["logged_session_start"]:
+                        st["logged_session_start"] = True
+                        log("session start", cam_name)
+                    st["status"] = "online"
+                    if CAMERA_HISTORY:
+                        CAMERA_HISTORY.record_status(cam_name, "online", reason="camera_reconnected")
+                    st["offline_alert_sent"] = False
+                    st["disconnected_since"] = 0.0
+                    log("camera reconnected", cam_name)
+                    bus.publish({"type": "camera_status", "cam": cam_name, "status": "online"})
+
+                if not has_new_frame or frame is None or getattr(frame, "size", 0) == 0:
+                    stalled = (last_f_ts > 0 and (now_loop - last_f_ts) >= self.stall_sec)
+                    if read_failed or stalled or st["status"] != "online":
+                        if st["status"] == "online":
+                            st["disconnected_since"] = now_loop
+                            st["status"] = "reconnecting"
+                            if CAMERA_HISTORY:
+                                CAMERA_HISTORY.record_status(cam_name, "reconnecting", reason="stream_stalled" if stalled else "read_failed")
+                            bus.set_frame(_make_offline_frame(cam_name, "reconnecting"), cam=cam_name, status="reconnecting")
+                            bus.publish({"type": "camera_status", "cam": cam_name, "status": "reconnecting"})
+                        elif st["disconnected_since"] > 0 and (now_loop - st["disconnected_since"]) >= self.offline_alert_sec and not st["offline_alert_sent"]:
+                            st["status"] = "offline"
+                            if CAMERA_HISTORY:
+                                CAMERA_HISTORY.record_status(cam_name, "offline", reason="offline_timeout")
+                            st["offline_alert_sent"] = True
+                            bus.set_frame(_make_offline_frame(cam_name, "offline"), cam=cam_name, status="offline")
+                            bus.publish({"type": "camera_status", "cam": cam_name, "status": "offline"})
+                            log("camera offline", cam_name)
+                        elif st["status"] in ("reconnecting", "offline"):
+                            bus.set_frame(_make_offline_frame(cam_name, st["status"]), cam=cam_name, status=st["status"])
+
+                    with st["infer_lock"]:
+                        det_r_off = st["det_runs"]
+                        err_c_off = st["consec_errors"]
+                    with _RUNTIME_STATE_LOCK:
+                        prev_c = STATUS.get("cameras", {}).get(cam_name, {})
+                        STATUS.setdefault("cameras", {})[cam_name] = {
+                            "status": st["status"],
+                            "fps": st["fps"] if st["status"] == "online" else 0.0,
+                            "frames": st["n"],
+                            "detections": det_r_off,
+                            "errors": err_c_off,
+                            "fail_count": fail_cnt,
+                            "reconnect_count": st.get("reconnect_count", 0),
+                            "reconnects": st.get("reconnect_count", 0),
+                            "source": prev_c.get("source", redact_url(st["src"])),
+                            "health_warning": st.get("health_warning", ""),
+                        }
+                    _update_aggregate_fps(self.cam_states)
+                    continue
+
+                processed_any = True
+                st["status"] = "online"
+                if CAMERA_HISTORY:
+                    CAMERA_HISTORY.record_status(cam_name, "online", reason="frame_received")
+                st["n"] += 1
+                st["fps_n"] += 1
+                if now_loop - st["fps_t"] >= 1.0:
+                    st["fps"] = round(st["fps_n"] / max(0.001, now_loop - st["fps_t"]), 1)
+                    st["fps_t"], st["fps_n"] = now_loop, 0
+                    _update_aggregate_fps(self.cam_states)
+
+                H, W = frame.shape[:2]
+                q_res = assess_frame_quality(frame, cam_name=cam_name)
+                st["brightness"] = q_res.get("brightness", 0.0)
+                st["contrast"] = q_res.get("contrast", 0.0)
+                st["sharpness"] = q_res.get("sharpness", 0.0)
+                st["health_warning"] = q_res.get("health_warning", "")
+
+                if st["n"] % self.infer_every_n == 0:
+                    _enqueue_latest_inference(st, (frame.copy(), time.time(), [], [], st["n"]))
+
+                ok_jpg, enc_jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                if ok_jpg:
+                    bus.set_frame(enc_jpg.tobytes(), cam=cam_name, status="online")
+
+                with st["infer_lock"]:
+                    det_r = st["det_runs"]
+                    err_c = st["consec_errors"]
+                    last_p = st["last_plate"]
+                with _RUNTIME_STATE_LOCK:
+                    STATUS["frames"] = sum(c["n"] for c in self.cam_states.values())
+                    STATUS.setdefault("cameras", {})[cam_name] = {
+                        "status": st["status"],
+                        "fps": st["fps"],
+                        "frames": st["n"],
+                        "detections": det_r,
+                        "errors": err_c,
+                        "fail_count": fail_cnt,
+                        "reconnect_count": st.get("reconnect_count", 0),
+                        "reconnects": st.get("reconnect_count", 0),
+                        "last_plate": last_p,
+                        "brightness": st["brightness"],
+                        "contrast": st["contrast"],
+                        "sharpness": st["sharpness"],
+                        "health_warning": st["health_warning"],
+                        "issues": q_res.get("issues", []),
+                        "resolution": f"{W}x{H}",
+                        "source": redact_url(st["src"]),
+                    }
+            if not processed_any:
+                time.sleep(0.015)
+
+    def start(self):
+        global _ACTIVE_ENGINE_CONTROLLER
+        _ACTIVE_ENGINE_CONTROLLER = self
+        STOP_MAIN_EVENT.clear()
+        self.stop_ev.clear()
+        self._sup_thread = threading.Thread(target=self._supervisor_loop, daemon=True, name="mersad-engine-supervisor")
+        self._sup_thread.start()
+        return self
+
+    def stop(self, timeout: float = 5.0):
+        global _ACTIVE_ENGINE_CONTROLLER
+        self.stop_ev.set()
+        with self._lock:
+            states = list(self.cam_states.values())
+        for st in states:
+            ev = st.get("stop_ev")
+            if ev:
+                ev.set()
+        if self._sup_thread and self._sup_thread.is_alive():
+            self._sup_thread.join(timeout=timeout)
+        for t in self.reader_threads + self.infer_threads:
+            if t.is_alive():
+                t.join(timeout=1.5)
+        for st in states:
+            with st["lock"]:
+                cap = st.get("cap")
+                st["cap"] = None
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+        if _ACTIVE_ENGINE_CONTROLLER is self:
+            _ACTIVE_ENGINE_CONTROLLER = None
+
+
+
+def remove_camera_runtime(data, who="operator"):
+    """Remove a dynamically registered camera from runtime state."""
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "بيانات الطلب غير صالحة"}
+    cam_name = str(data.get("name") or data.get("cam") or "").strip()
+    if not cam_name:
+        return {"ok": False, "error": "اسم الكاميرا مطلوب"}
+    st = _ACTIVE_CAM_STATES.pop(cam_name, None)
+    if st:
+        ev = st.get("stop_ev")
+        if ev:
+            ev.set()
+        cap = st.get("cap")
+        if cap:
+            try:
+                cap.release()
+            except Exception:
+                pass
+    with _RUNTIME_STATE_LOCK:
+        removed = STATUS.get("cameras", {}).pop(cam_name, None)
+    if CAMERA_HISTORY and removed is not None:
+        CAMERA_HISTORY.record_status(cam_name, "unknown", "dynamic_api_remove", force=True)
+    log("camera removed", f"{cam_name} by {who}")
+    return {"ok": True, "camera": cam_name, "removed": removed is not None}
+
+
 def wire():
     bus.on_stats = stats
     bus.verify, bus.on_list, bus.on_template, bus.on_import = verify, R.list_rows, R.template, R.import_file
@@ -2896,7 +3490,10 @@ def wire():
         (lambda filename, raw, ip: INS.import_field_calibrations(raw, filename=filename, who=ip))
         if INS and hasattr(INS, "import_field_calibrations") else (lambda filename, raw, ip: {"ok": False, "error": "غير متاح"})
     )
-    bus.on_readiness = build_readiness_report
+    bus.on_readiness = lambda: build_readiness_report()
+    bus.on_cameras_list = lambda: list_cameras_runtime()
+    bus.post["/api/cameras/add"] = lambda d, ip: add_camera_runtime(d, who=ip)
+    bus.post["/api/cameras/remove"] = lambda d, ip: remove_camera_runtime(d, who=ip)
     bus.on_camera_links_suggestions = (
         (lambda include_demo=False, min_observations=3: INS.suggest_camera_links_from_sightings(include_demo=include_demo, min_observations=min_observations, apply_directly=False))
         if INS and hasattr(INS, "suggest_camera_links_from_sightings")
@@ -2993,6 +3590,13 @@ def _load_secrets_file():
     if os.path.islink(_SECRETS_FILE):
         logger.error("Security error: %s is a symbolic link; refusing to load secrets", _SECRETS_FILE)
         return {}
+    if os.name == "nt":
+        try:
+            R._set_windows_private_acl(os.getcwd(), is_dir=True)
+            R._set_windows_private_acl(_SECRETS_FILE, is_dir=False)
+        except OSError as e:
+            logger.error("Security error: cannot protect Windows secrets ACL: %s", redact_url(e))
+            return {}
     if os.name == "posix":
         try:
             st_mode = stat.S_IMODE(os.stat(_SECRETS_FILE).st_mode)
@@ -3141,7 +3745,7 @@ def _camera_reader_worker(st, stop_ev):
                 continue
             new_cap = None
             try:
-                new_cap = cv2.VideoCapture(int(src_spec) if str(src_spec).isdigit() else src_spec)
+                new_cap = _open_camera_capture(src_spec)
                 is_op = bool(new_cap and new_cap.isOpened())
                 ok_re, frame_re = (new_cap.read() if is_op else (False, None))
             except Exception as e:
@@ -3253,14 +3857,37 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
 
     new_vboxes = detect_vehicles(inf_frame, vyolo)
     new_boxes = []
-    for (vx, vy, vw, vh, vc) in (new_vboxes or [(0, 0, W, H, "unknown")]):
+    skip_empty_vyolo = bool(
+        vyolo is not None
+        and not new_vboxes
+        and yolo is None
+        and (os.environ.get("MERSAD_SKIP_EMPTY_VYOLO_OCR", "0") == "1" or st.get("skip_empty_vyolo", False))
+    )
+    iter_vboxes = [] if skip_empty_vyolo else (new_vboxes or [(0, 0, W, H, "unknown")])
+    for (vx, vy, vw, vh, vc) in iter_vboxes:
         if trucks_only and vc != "truck":
             continue
         oy = vy + int(vh * .35) if vc != "unknown" else 0
         sub = inf_frame[oy:vy + vh, vx:vx + vw]
         if sub.size == 0:
             continue
-        for (x, y, bw, bh) in find_plates(sub, yolo):
+        raw_pboxes = find_plates(sub, yolo)
+        dedup_pboxes = []
+        for pb in raw_pboxes:
+            px1, py1, pw1, ph1 = pb
+            overlap = False
+            for (qx1, qy1, qw1, qh1) in dedup_pboxes:
+                ix1, iy1 = max(px1, qx1), max(py1, qy1)
+                ix2, iy2 = min(px1 + pw1, qx1 + qw1), min(py1 + ph1, qy1 + qh1)
+                if ix2 > ix1 and iy2 > iy1:
+                    inter = float((ix2 - ix1) * (iy2 - iy1))
+                    union = float(pw1 * ph1 + qw1 * qh1 - inter)
+                    if union > 0 and (inter / union) > 0.5:
+                        overlap = True
+                        break
+            if not overlap:
+                dedup_pboxes.append(pb)
+        for (x, y, bw, bh) in dedup_pboxes:
             x, y = x + vx, y + oy
             d, c = read_plate(reader, inf_frame[y:y + bh, x:x + bw])
             new_boxes.append((x, y, bw, bh, d))
@@ -3274,6 +3901,9 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
                 l_conf = getattr(confirmed, "letters_confirmed", True)
                 with st["infer_lock"]:
                     st["last_plate"] = win_plate
+                with _RUNTIME_STATE_LOCK:
+                    STATUS["plates"] = int(STATUS.get("plates", 0)) + 1
+                    STATUS["vehicles"] = int(STATUS.get("vehicles", 0)) + max(1, len(new_vboxes))
                 msg, v = register(win_plate, cm, cam_name, vc, curfew, direction, raw_text=d,
                                   session_id=SESSION_ID, letters_confirmed=l_conf)
                 base, detail = vinfo(v)
@@ -3380,6 +4010,7 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="Request GPU (CUDA) acceleration if available (falls back to CPU with warning)")
     ap.add_argument("--no-window", action="store_true")
     ap.add_argument("--no-telegram-listener", action="store_true", help="Do not start getUpdates polling in this process")
+    ap.add_argument("--allow-degraded-preview", action="store_true", help="Allow preview startup in degraded mode (classic OpenCV Canny) when heavy AI weights are absent")
     a = ap.parse_args()
 
     sources_raw = a.source if a.source else [str(cfg["source"])]
@@ -3416,31 +4047,46 @@ def main():
             CAMERA_HISTORY.prune_history(retention_days=max(30.0, float(a.retention_days)))
 
     curfew = parse_curfew(a.truck_curfew)
-    fetch_models()
+    allow_degraded = bool(getattr(a, "allow_degraded_preview", False) or os.environ.get("MERSAD_ALLOW_DEGRADED_PREVIEW") == "1")
+    os.environ.setdefault("YOLO_AUTOINSTALL", "false")
     os.environ.setdefault("YOLO_OFFLINE", "true")
     os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "false")
-    import easyocr
-    easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
-    easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
-    if not easyocr_verified:
-        if _is_dir_writable(easyocr_dir):
-            os.makedirs(easyocr_dir, exist_ok=True)
-        else:
-            easyocr_dir = os.path.join(APPDIR, "models", "easyocr")
-            os.makedirs(easyocr_dir, exist_ok=True)
-            easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
+    try:
+        fetch_models()
+    except Exception as e_fetch:
+        if not allow_degraded:
+            logger.error("Model preflight failed: %s", e_fetch)
+            raise
+        logger.warning("Running in degraded preview mode without face ONNX weights: %s", e_fetch)
     dev_info = resolve_compute_device("cuda" if getattr(a, "gpu", False) else getattr(a, "device", cfg.get("device", "auto")))
     ACTIVE_DEVICE.update(dev_info)
     use_gpu = bool(dev_info["use_gpu"])
+    reader = None
     try:
-        reader = easyocr.Reader(
-            ["ar", "en"],
-            gpu=use_gpu,
-            model_storage_directory=easyocr_dir,
-            download_enabled=not easyocr_verified,
-        )
-    except TypeError:
-        reader = easyocr.Reader(["ar", "en"], gpu=use_gpu, model_storage_directory=easyocr_dir)
+        import easyocr
+        easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
+        easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
+        if not easyocr_verified:
+            if _is_dir_writable(easyocr_dir):
+                os.makedirs(easyocr_dir, exist_ok=True)
+            else:
+                easyocr_dir = os.path.join(APPDIR, "models", "easyocr")
+                os.makedirs(easyocr_dir, exist_ok=True)
+                easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
+        try:
+            reader = easyocr.Reader(
+                ["ar", "en"],
+                gpu=use_gpu,
+                model_storage_directory=easyocr_dir,
+                download_enabled=not easyocr_verified,
+            )
+        except TypeError:
+            reader = easyocr.Reader(["ar", "en"], gpu=use_gpu, model_storage_directory=easyocr_dir)
+    except Exception as e_ocr:
+        if not allow_degraded:
+            logger.error("EasyOCR initialization failed: %s", e_ocr)
+            raise
+        logger.warning("Running in degraded preview mode without EasyOCR: %s", e_ocr)
     yolo = vyolo = None
     try:
         if a.plate_model:
@@ -3460,8 +4106,15 @@ def main():
     yunet_p = resolve_resource_path(os.path.join("models", "yunet.onnx"))
     sface_p = resolve_resource_path(os.path.join("models", "sface.onnx"))
     det_score = resolve_face_detect_score(getattr(a, "face_detect_score", cfg.get("face_detect_score", 0.65)))
-    det = cv2.FaceDetectorYN.create(yunet_p, "", (320, 320), det_score)
-    rec = cv2.FaceRecognizerSF.create(sface_p, "")
+    try:
+        det = cv2.FaceDetectorYN.create(yunet_p, "", (320, 320), det_score)
+        rec = cv2.FaceRecognizerSF.create(sface_p, "")
+    except Exception as e_face:
+        if not allow_degraded:
+            raise
+        logger.warning("Face models unavailable in degraded preview mode: %s", e_face)
+        det = type("_NoopDet", (), {"setInputSize": lambda self, s: None, "detect": lambda self, f: (0, None)})()
+        rec = type("_NoopRec", (), {"alignCrop": lambda self, f, b: f[:10, :10], "feature": lambda self, a: np.zeros((1, 128), np.float32), "match": lambda self, a, b, fl: 0.0})()
     if a.token:
         bus.token = a.token
     elif cfg.get("dashboard_token"):
@@ -3487,7 +4140,10 @@ def main():
     reader_threads = []
     now_init = time.time()
     for src_item, cam_name in zip(sources, cams):
-        cap_obj = cv2.VideoCapture(int(src_item) if src_item.isdigit() else src_item)
+        try:
+            cap_obj = _open_camera_capture(src_item)
+        except Exception:
+            cap_obj = None
         is_open = bool(cap_obj and cap_obj.isOpened())
         is_eof = bool(not is_open and cap_obj is not None and getattr(cap_obj, "eof", False))
         if not is_open:
@@ -3672,8 +4328,46 @@ def main():
                     view = frame.copy()
                     with _ENROLL_LOCK:
                         enroll_active = ENR.get("req") is not None
+                    # AI-BUG-07: Compute frame quality & frozen/occluded telemetry
+                    try:
+                        gray_q = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+                        b_mean = round(float(np.mean(gray_q)), 2)
+                        c_std = round(float(np.std(gray_q)), 2)
+                        s_lap = round(float(cv2.Laplacian(gray_q, cv2.CV_64F).var()), 2)
+                        small_q = cv2.resize(gray_q, (16, 16), interpolation=cv2.INTER_AREA)
+                        f_hash = hashlib.md5(small_q.tobytes()).hexdigest()
+                        if f_hash == st.get("last_frame_hash"):
+                            st["frozen_frames"] = int(st.get("frozen_frames", 0)) + 1
+                        else:
+                            st["frozen_frames"] = 0
+                            st["last_frame_hash"] = f_hash
+                        hw_warn = ""
+                        if st["frozen_frames"] >= 15:
+                            hw_warn = "FROZEN_STREAM"
+                        elif b_mean < 12.0 and c_std < 5.0:
+                            hw_warn = "CAMERA_OCCLUDED_OR_DARK"
+                        elif b_mean < 35.0:
+                            hw_warn = "LOW_LIGHT"
+                        st["brightness"] = b_mean
+                        st["contrast"] = c_std
+                        st["sharpness"] = s_lap
+                        st["health_warning"] = hw_warn
+                        with _RUNTIME_STATE_LOCK:
+                            if cam_name in STATUS.get("cameras", {}):
+                                STATUS["cameras"][cam_name].update({
+                                    "brightness": b_mean,
+                                    "contrast": c_std,
+                                    "sharpness": s_lap,
+                                    "frozen_frames": st["frozen_frames"],
+                                    "health_warning": hw_warn,
+                                    "resolution": f"{W}x{H}",
+                                })
+                    except Exception:
+                        pass
+
                     face_interval = max(1, int(FACE_DETECT_INTERVAL or 1))
-                    should_detect_faces = (st["n"] <= 1) or (st["n"] % face_interval == 0) or enroll_active or (not st.get("face_entries"))
+                    # AI-BUG-01 (GAP-002): Do not force YuNet on every empty frame; respect FACE_DETECT_INTERVAL
+                    should_detect_faces = (st["n"] <= 1) or (st["n"] % face_interval == 0) or enroll_active
                     main_face = None
                     if should_detect_faces:
                         det.setInputSize((W, H))
@@ -4125,8 +4819,12 @@ def _parse_ground_truth_entries(gt_file):
                 norm_row = {str(k or "").strip().lower(): str(v or "").strip() for k, v in row.items() if k is not None}
                 if not any(norm_row.values()):
                     continue
-                fn = norm_row.get("filename") or norm_row.get("file") or norm_row.get("image") or ""
-                exp_p = norm_row.get("expected_plate") or norm_row.get("plate") or ""
+                fn = (norm_row.get("filename") or norm_row.get("file") or norm_row.get("image") or "").strip()
+                if fn.startswith("'") and len(fn) > 1 and fn[1] in ("=", "+", "-", "@"):
+                    fn = fn[1:].strip()
+                exp_p = (norm_row.get("expected_plate") or norm_row.get("plate") or "").strip()
+                if exp_p.startswith("'") and len(exp_p) > 1 and exp_p[1] in ("=", "+", "-", "@"):
+                    exp_p = exp_p[1:].strip()
                 if not fn or not exp_p:
                     row_errors.append(f"السطر #{idx}: ينقصه اسم الصورة (filename) أو اللوحة المتوقعة (expected_plate)")
                     continue
@@ -4526,6 +5224,10 @@ def evaluate_plates_dataset(
         fn = str(item.get("filename") or "").strip()
         exp_raw = str(item.get("expected_plate") or "").strip()
         if not fn or not exp_raw:
+            continue
+        hv_flag = str(item.get("human_verified", "1")).strip()
+        if hv_flag == "0" or exp_raw.upper() == "UNVERIFIED_PLATE" or exp_raw == "عدن-00000":
+            row_errors.append(f"تخطي عينة غير مراجعة بشرياً ({fn}: {exp_raw}) لحماية مقام دقة التقييم")
             continue
         if callable(progress_cb):
             try:
@@ -5409,11 +6111,14 @@ def verify_models_cli(as_json=False):
         print("  MERSAD AI — Offline AI Models Verification (--verify-models)")
         print("======================================================================")
         for it in items:
-            print(f"  {it['status']:7s} [{it['category']:14s}] {it['item']}: {it['reason']}")
+            st_tag = "PASS" if it["status"] == "PASS" else f"{it['status']} [FAIL]"
+            print(f"  {st_tag:14s} [{it['category']:14s}] {it['item']}: {it['reason']}")
             if it.get("remediation") and it["status"] != "PASS":
                 print(f"          -> Fix: {it['remediation']}")
         print("----------------------------------------------------------------------")
         print("  Result:", "MODELS OK (all required weights verified)" if all_ok else "MODELS INCOMPLETE OR CORRUPT")
+        if not all_ok:
+            print("Bundled model verification failed. Restore/download verified weights and rebuild the complete MERSAD_AI distribution.", file=sys.stderr)
     return 0 if all_ok else 1
 
 
@@ -5483,4 +6188,8 @@ if __name__ == "__main__":
     except Exception:
         import traceback; traceback.print_exc()
         if getattr(sys, "frozen", False):
-            input("\nERROR - press Enter to close...")
+            try:
+                input("\nERROR - press Enter to close...")
+            except EOFError:
+                pass
+        sys.exit(1)

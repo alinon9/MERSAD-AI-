@@ -672,9 +672,21 @@ def run_security_lan_and_multiprocess_tests():
             "os.environ['TELEGRAM_CHAT_ID'] = '-100'\n"
             "os.environ['TELEGRAM_API'] = 'http://127.0.0.1:8780'\n"
             "import mersad_live as m, threading\n"
+            # This stress case targets database/audit/lock semantics, not OpenCV encoding or Telegram network delivery.
+            # Keep native image I/O and outbound sends out of child-process shutdown to avoid unrelated native-thread crashes.
+            "m.send_alert = lambda *args, **kwargs: True\n"
+            "def _test_write_image(path, frame):\n"
+            "    with open(path, 'wb') as ef: ef.write(b'MERSAD_TEST_EVIDENCE')\n"
+            "    return True\n"
+            "m.cv2.imwrite = _test_write_image\n"
             "cam = sys.argv[2]\n"
+            "barrier_dir = sys.argv[3]\n"
             "stop_ev = threading.Event()\n"
             "listener_owned = m.start_listener(lambda d, w: 'ok', stop_event=stop_ev)\n"
+            "with open(os.path.join(barrier_dir, cam + '.listener'), 'w', encoding='ascii') as lf: lf.write(str(int(listener_owned)))\n"
+            "deadline = time.monotonic() + 10\n"
+            "while not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.listener')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.listener'))) and time.monotonic() < deadline: time.sleep(0.01)\n"
+            "if not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.listener')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.listener'))): raise RuntimeError('listener test barrier timed out')\n"
             "m.log('session start', cam)\n"
             "msg, _ = m.register('88881', 0.93, cam, 'car', direction='اقتراب نسبي في الإطار', session_id='proc_' + cam)\n"
             "img = np.zeros((40, 40, 3), np.uint8)\n"
@@ -684,17 +696,23 @@ def run_security_lan_and_multiprocess_tests():
             "        m.raise_alert('VEHICLE: WANTED', f'{cam}_PL_{i}', cam, img, ref=f'{cam}_{i}')\n"
             "    except Exception as e:\n"
             "        errs += 1\n"
+            "with open(os.path.join(barrier_dir, cam + '.done'), 'w', encoding='ascii') as df: df.write('done')\n"
+            "deadline = time.monotonic() + 10\n"
+            "while not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.done')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.done'))) and time.monotonic() < deadline: time.sleep(0.01)\n"
+            "if not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.done')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.done'))): raise RuntimeError('alert completion barrier timed out')\n"
             "m._sync_alerts_from_db()\n"
             "synced_total = len(m.bus.alerts)\n"
             "m.log('session end', cam)\n"
             "stop_ev.set()\n"
+            "m._notify_mod.wait_listener_stopped(timeout=4.0)\n"
             "m.db.close()\n"
             "print(f'MP_OUT:{cam}:errs={errs}:listener={int(listener_owned)}:synced={synced_total}:route={msg}')\n"
         )
-        p1 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        p2 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM2"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p1 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM1", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p2 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM2", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         o1, e1 = p1.communicate(timeout=30)
         o2, e2 = p2.communicate(timeout=30)
+        mp_exit_codes = (p1.returncode, p2.returncode)
 
         mp_db = sqlite3.connect(os.path.join(mp_dir, "mersad.db"))
         tot_alerts = mp_db.execute("SELECT COUNT(*), COUNT(DISTINCT id) FROM alerts").fetchall()[0]
@@ -703,13 +721,16 @@ def run_security_lan_and_multiprocess_tests():
 
         v_p = subprocess.run([sys.executable, os.path.join(WORK, "mersad_live.py"), "--verify"],
                              env={**os.environ, "MERSAD_DATA_DIR": mp_dir}, capture_output=True, text=True, timeout=10)
-        l1 = "listener=1" in o1
-        l2 = "listener=1" in o2
-        check("P0-E", "2 concurrent OS processes x 50 alerts = 100 unique alerts, 0 errors, intact audit chain, & single Telegram listener owner",
+        try:
+            l1 = open(os.path.join(mp_dir, "CAM1.listener"), encoding="ascii").read().strip() == "1"
+            l2 = open(os.path.join(mp_dir, "CAM2.listener"), encoding="ascii").read().strip() == "1"
+        except OSError:
+            l1 = l2 = False
+        check("P0-E", "2 concurrent OS processes x 50 alerts = 100 unique alerts, 0 errors, intact audit chain, & exactly one Telegram listener owner",
               "errs=0" in o1 and "errs=0" in o2 and tot_alerts == (100, 100)
               and tot_audit[0] == tot_audit[1] and tot_audit[0] >= 204
               and (l1 ^ l2) and "Audit chain OK" in v_p.stdout,
-              (o1.strip(), o2.strip(), tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))
+              (o1.strip(), o2.strip(), {"listener_CAM1": l1, "listener_CAM2": l2}, "returncodes", p1.returncode, p2.returncode, tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))
 
         # Also check that syncing in a process sees all 100 alerts from both processes
         check("P2-6", "multi-process shared DB synchronizes alerts across processes",
@@ -4942,7 +4963,270 @@ def run_stage15_forensic_remediation_tests():
     )
 
 
+
+
+def run_patched_v7_1_and_preview_0_1_tests():
+    """Run the 12 V7-* tests from PATCHED_SOURCE (220fefff8ad4441f52e54d6a2b4aa4b3ada25783)
+    plus 12 new PREVIEW01-* tests verifying all Preview 0.1 bug/security/integration fixes."""
+    import http.client
+    import server as srv_mod
+    if SRC not in sys.path:
+        sys.path.append(SRC)
+    for extra_f in ("verify_integrity.py", "SYSTEM_REQUIREMENTS.txt"):
+        if os.path.isfile(os.path.join(SRC, extra_f)) and not os.path.isfile(os.path.join(WORK, extra_f)):
+            shutil.copy2(os.path.join(SRC, extra_f), os.path.join(WORK, extra_f))
+    import verify_integrity as vi_mod
+
+    d = tempfile.mkdtemp(prefix="mersad_v71_merged_")
+    try:
+        # --- 1..12: The 12 V7-* tests from PATCHED_SOURCE ---
+        fallback_path = os.path.join(d, "wal_fallback.sqlite")
+        fallback_conn = sqlite3.connect(fallback_path, timeout=5)
+        class WalUnavailable:
+            def execute(self, sql, *args):
+                if str(sql).strip().upper() == "PRAGMA JOURNAL_MODE=WAL":
+                    raise sqlite3.OperationalError("simulated shared-filesystem WAL/SHM failure")
+                return fallback_conn.execute(sql, *args)
+        fallback_mode = reg_mod.configure_sqlite_journal_mode(WalUnavailable(), db_path=fallback_path)
+        check("V7-SQLITE-FALLBACK", "WAL failure safely falls back to DELETE journal mode for disk-backed SQLite", fallback_mode == "delete", fallback_mode)
+        mem_conn = sqlite3.connect(":memory:")
+        mem_mode = reg_mod.configure_sqlite_journal_mode(mem_conn, db_path=":memory:")
+        check("V7-SQLITE-MEMORY", "in-memory SQLite keeps its native journal mode", mem_mode == "memory", mem_mode)
+        mem_conn.close()
+        network_mode = reg_mod.configure_sqlite_journal_mode(WalUnavailable(), db_path=r"\\server\share\mersad.db")
+        check("V7-SQLITE-UNC", "UNC database paths avoid WAL upfront and select DELETE journaling", network_mode == "delete", network_mode)
+        fallback_conn.close()
+
+        blocker_path = os.path.join(d, "not_a_directory")
+        with open(blocker_path, "w", encoding="ascii") as bf:
+            bf.write("blocker")
+        lock_failed = False
+        try:
+            with reg_mod.interprocess_db_lock(os.path.join(blocker_path, "blocked.sqlite")):
+                pass
+        except OSError:
+            lock_failed = True
+        ipc_state_ok = reg_mod._IPC_STATE.get("depth") == 0 and reg_mod._IPC_STATE.get("fd") is None
+        check("V7-IPC-LOCK-FAILURE", "failed inter-process lock setup leaves re-entrant state clean for subsequent DB work", lock_failed and ipc_state_ok, (lock_failed, reg_mod._IPC_STATE.get("depth"), reg_mod._IPC_STATE.get("fd")))
+
+        empty_models_root = os.path.join(d, "empty_runtime_models")
+        os.makedirs(empty_models_root, exist_ok=True)
+        runtime_models_ok, runtime_model_checks = m.verify_runtime_model_assets(empty_models_root)
+        runtime_missing = {item["model"] for item in runtime_model_checks if not item["ok"]}
+        check("V7-RUNTIME-MODEL-PREFLIGHT", "missing bundled models are detected as a clear startup failure instead of downloading at runtime", not runtime_models_ok and {"yunet.onnx", "sface.onnx", "yolov8n.pt", "easyocr/Arabic+English"} <= runtime_missing, sorted(runtime_missing))
+
+        model_cli = subprocess.run(
+            [sys.executable, os.path.join(WORK, "mersad_live.py"), "--verify-models"],
+            cwd=d, capture_output=True, text=True, timeout=20,
+            env={**os.environ, "MERSAD_DATA_DIR": d},
+        )
+        check("V7-MODEL-CLI", "standalone model checker returns nonzero and explains missing models instead of hanging or downloading", model_cli.returncode in (1, 2) and "Bundled model verification failed" in model_cli.stderr and "FAIL" in model_cli.stdout, (model_cli.returncode, model_cli.stdout[-300:], model_cli.stderr[-300:]))
+
+        resource_root = os.path.join(d, "resource_priority")
+        app_root, install_root, bundle_root = [os.path.join(resource_root, x) for x in ("appdata", "install", "bundle")]
+        for base in (app_root, install_root, bundle_root):
+            os.makedirs(base, exist_ok=True)
+            with open(os.path.join(base, "resource.marker"), "w", encoding="ascii") as rf:
+                rf.write(os.path.basename(base))
+        old_dirs = (m.APPDIR, m.INSTALL_DIR, m.BUNDLE_DIR)
+        had_frozen = hasattr(sys, "frozen")
+        old_frozen = getattr(sys, "frozen", None)
+        try:
+            m.APPDIR, m.INSTALL_DIR, m.BUNDLE_DIR = app_root, install_root, bundle_root
+            sys.frozen = True
+            frozen_resource = m.resolve_resource_path("resource.marker")
+            sys.frozen = False
+            source_resource = m.resolve_resource_path("resource.marker")
+            resource_order_ok = (frozen_resource == os.path.join(install_root, "resource.marker")
+                                 and source_resource == os.path.join(app_root, "resource.marker"))
+        finally:
+            m.APPDIR, m.INSTALL_DIR, m.BUNDLE_DIR = old_dirs
+            if had_frozen:
+                sys.frozen = old_frozen
+            else:
+                try: delattr(sys, "frozen")
+                except AttributeError: pass
+        check("V7-FROZEN-RESOURCE-PRIORITY", "frozen EXE prefers bundled models/resources over stale writable APPDIR assets", resource_order_ok, (frozen_resource, source_resource))
+
+        model_root = os.path.join(d, "easyocr_models")
+        os.makedirs(model_root, exist_ok=True)
+        class ReaderProbe:
+            calls = []
+            def __init__(self, langs, **kwargs):
+                self.__class__.calls.append((list(langs), dict(kwargs)))
+        probe_module = types.SimpleNamespace(Reader=ReaderProbe)
+        missing_raised = False
+        try:
+            m.create_offline_easyocr_reader(probe_module, os.path.join(d, "missing_easyocr"))
+        except RuntimeError as e:
+            missing_raised = "prefetch.py" in str(e) and "Runtime downloads are disabled" in str(e)
+        check("V7-EASYOCR-MISSING", "missing EasyOCR model files fail early with actionable guidance and no runtime download", missing_raised and not ReaderProbe.calls)
+        for model_name in ("craft_mlt_25k.pth", "arabic_g2.pth"):
+            with open(os.path.join(model_root, model_name), "wb") as mf:
+                mf.write(b"PK\x03\x04" + b"M" * 500_010)
+        _ = m.create_offline_easyocr_reader(probe_module, model_root)
+        reader_call = ReaderProbe.calls[-1] if ReaderProbe.calls else ([], {})
+        check("V7-EASYOCR-OFFLINE", "valid local EasyOCR models initialize the Reader with download_enabled=False", len(ReaderProbe.calls) == 1 and reader_call[1].get("download_enabled") is False and os.path.abspath(reader_call[1].get("model_storage_directory", "")) == os.path.abspath(model_root))
+        bad_model_root = os.path.join(d, "bad_easyocr")
+        os.makedirs(bad_model_root, exist_ok=True)
+        with open(os.path.join(bad_model_root, "bad.pth"), "wb") as mf:
+            mf.write(b"not-a-model" + b"X" * 500_000)
+        corrupt_raised = False
+        try:
+            m.create_offline_easyocr_reader(probe_module, bad_model_root)
+        except RuntimeError as e:
+            corrupt_raised = "invalid" in str(e).lower() or "missing" in str(e).lower()
+        check("V7-EASYOCR-CORRUPT", "corrupt/incomplete EasyOCR model directory fails closed before Reader initialization", corrupt_raised and len(ReaderProbe.calls) == 1)
+
+        original_capture = cv2.VideoCapture
+        cap_calls = []
+        def capture_probe(*args):
+            cap_calls.append(args)
+            return object()
+        cv2.VideoCapture = capture_probe
+        try:
+            m._open_camera_capture("rtsp://example.invalid/stream")
+            net_call = cap_calls[-1]
+            params = net_call[2] if len(net_call) > 2 else []
+            net_ok = len(net_call) == 3 and net_call[1] == cv2.CAP_FFMPEG and cv2.CAP_PROP_OPEN_TIMEOUT_MSEC in params and cv2.CAP_PROP_READ_TIMEOUT_MSEC in params and m.NETWORK_CAMERA_OPEN_TIMEOUT_MS >= 1000 and m.NETWORK_CAMERA_READ_TIMEOUT_MS >= 1000
+            m._open_camera_capture("0")
+            local_ok = len(cap_calls[-1]) == 1 and cap_calls[-1][0] == 0
+        finally:
+            cv2.VideoCapture = original_capture
+        check("V7-RTSP-TIMEOUTS", "RTSP/HTTP opens use bounded FFmpeg timeouts; local camera indices remain compatible", net_ok and local_ok, (cap_calls[0][1:] if cap_calls else [], cap_calls[-1] if cap_calls else []))
+
+        dashboard_source = open(os.path.join(SRC, "dashboard.html"), encoding="utf-8").read()
+        check("V7-CSV-AUTH-LINK", "analytics CSV export anchor gets the same query-token helper as authenticated API calls", 'id="analytics-export"' in dashboard_source and 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dashboard_source)
+
+        # --- 13..24: 12 New PREVIEW 0.1 Remediation & Integration Self-Tests ---
+        # 13. PREVIEW01-FACE-INTERVAL (AI-BUG-01 / GAP-002): FACE_DETECT_INTERVAL respected when 0 faces present
+        ml_src_txt = open(os.path.join(WORK, "mersad_live.py"), encoding="utf-8").read()
+        face_interval_fixed = 'should_detect_faces = (st["n"] <= 1) or (st["n"] % face_interval == 0) or enroll_active' in ml_src_txt and 'or (not st.get("face_entries"))' not in ml_src_txt
+        check("PREVIEW01-FACE-INTERVAL", "FACE_DETECT_INTERVAL is strictly respected on empty scenes without running YuNet on 100% of frames", face_interval_fixed)
+
+        # 14. PREVIEW01-SKIP-EMPTY-VYOLO (AI-BUG-02 / GAP-003): Empty vyolo skips redundant full-frame Canny/OCR when enabled
+        st_empty_v = {
+            "cam": "CAM_EMPTY_TEST", "det_runs": 0, "infer_lock": threading.Lock(),
+            "votes": {}, "tracks": [], "last_seen": {}, "skip_empty_vyolo": True
+        }
+        empty_vyolo = type("_EmptyVY", (), {"names": {2: "car"}, "__call__": lambda self, img, **k: []})()
+        ocr_calls_cnt = [0]
+        class _ProbeReader:
+            def readtext(self, c):
+                ocr_calls_cnt[0] += 1
+                return []
+        blank_frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        cv2.rectangle(blank_frame, (40, 80), (200, 130), (255, 255, 255), 2)
+        m._run_single_inference_item(st_empty_v, (blank_frame, time.time(), [], [], 1), empty_vyolo, None, _ProbeReader(), False, None)
+        check("PREVIEW01-SKIP-EMPTY-VYOLO", "when vyolo returns 0 vehicles and skip_empty_vyolo is active, full-frame Canny/OCR scan is skipped", ocr_calls_cnt[0] == 0, ocr_calls_cnt[0])
+
+        # 15. PREVIEW01-EVAL-SKIP-UNVERIFIED (AI-BUG-03 / GAP-004): UNVERIFIED_PLATE rows do not corrupt verified CER/accuracy
+        eval_unv_dir = os.path.join(d, "eval_unv")
+        os.makedirs(eval_unv_dir, exist_ok=True)
+        im_p = np.full((120, 240, 3), 255, dtype=np.uint8)
+        cv2.rectangle(im_p, (20, 25), (220, 95), (0, 0, 0), 3)
+        cv2.imwrite(os.path.join(eval_unv_dir, "v1.jpg"), im_p)
+        cv2.imwrite(os.path.join(eval_unv_dir, "u1.jpg"), im_p)
+        with open(os.path.join(eval_unv_dir, "ground_truth.csv"), "w", encoding="utf-8", newline="") as gf:
+            gf.write("filename,expected_plate,human_verified\nv1.jpg,عدن-12345,1\nu1.jpg,UNVERIFIED_PLATE,0\n")
+        class _PerfReader:
+            def readtext(self, c):
+                return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 12345", 0.96)]
+        rep_unv = m.evaluate_plates_dataset(eval_unv_dir, reader=_PerfReader(), print_report=False)
+        check("PREVIEW01-EVAL-SKIP-UNVERIFIED", "evaluate_plates_dataset skips UNVERIFIED_PLATE (human_verified=0) rows from verified accuracy denominator",
+              rep_unv.get("ok") is True and rep_unv.get("total_samples") == 1 and (rep_unv.get("exact_match_rate") == 1.0 or (rep_unv.get("metrics") or {}).get("end_to_end_exact_match_rate") == 1.0),
+              (rep_unv.get("total_samples"), rep_unv.get("end_to_end_exact_match_rate")))
+
+        # 16. PREVIEW01-LOOKUP-OCR-FIXED-GOV-PRIO (AI-BUG-04 / GAP-005): OCR disambiguation respects governorate letters & wanted status
+        reg_mod.save_vehicle({"plate": "عدن-88421", "governorate": "عدن", "status": "normal", "owner": "A"}, "test")
+        reg_mod.save_vehicle({"plate": "صنعاء-88421", "governorate": "صنعاء", "status": "wanted", "owner": "B"}, "test")
+        lk_ocr = reg_mod.lookup_vehicle("صنعاء-8842I")
+        with m.DBL:
+            m.db.execute("DELETE FROM vehicles WHERE plate IN ('عدن-88421', 'صنعاء-88421')")
+            m.db.commit()
+        check("PREVIEW01-LOOKUP-OCR-FIXED-GOV-PRIO", "lookup_vehicle with OCR char disambiguation (I->1 / O->0) selects matching governorate & wanted priority",
+              lk_ocr is not None and lk_ocr.get("plate") == "صنعاء-88421" and lk_ocr.get("status") == "wanted" and lk_ocr.get("visual_check_only") is True,
+              lk_ocr)
+
+        # 17. PREVIEW01-CSRF-ORIGIN-NULL-AND-IMPORT (AI-BUG-05 / GAP-006 / SEC-01): Origin: null and cookie-only /api/import blocked
+        srv_p01 = m.start_server(0, host="127.0.0.1")
+        port_p01 = srv_p01.server_address[1]
+        try:
+            c_null = http.client.HTTPConnection("127.0.0.1", port_p01, timeout=5)
+            c_null.request("POST", "/api/import?kind=vehicles", body=b"plate,status\n99111,normal\n",
+                           headers={"Cookie": f"mersad_k={m.bus.token}", "Origin": "null", "Content-Type": "text/plain"})
+            r_null = c_null.getresponse()
+            st_null = r_null.status
+            r_null.read()
+            c_null.close()
+
+            c_imp = http.client.HTTPConnection("127.0.0.1", port_p01, timeout=5)
+            c_imp.request("POST", "/api/import?kind=vehicles", body=b"plate,status\n99111,normal\n",
+                          headers={"Cookie": f"mersad_k={m.bus.token}", "Content-Type": "text/plain"})
+            r_imp = c_imp.getresponse()
+            st_imp = r_imp.status
+            r_imp.read()
+            c_imp.close()
+        finally:
+            srv_p01.shutdown()
+        check("PREVIEW01-CSRF-ORIGIN-NULL-AND-IMPORT", "server.py blocks Origin: null and cookie-only text/plain POST to /api/import with HTTP 403",
+              st_null == 403 and st_imp == 403, (st_null, st_imp))
+
+        # 18. PREVIEW01-FRAME-QUALITY-FROZEN-OCCLUDED (AI-BUG-07): assess_frame_quality detects occluded/dark and low-res frames
+        dark_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        q_dark = m.assess_frame_quality(dark_img)
+        norm_img = np.full((480, 640, 3), 120, dtype=np.uint8)
+        cv2.rectangle(norm_img, (100, 100), (400, 300), (255, 255, 255), 3)
+        q_norm = m.assess_frame_quality(norm_img)
+        check("PREVIEW01-FRAME-QUALITY-FROZEN-OCCLUDED", "assess_frame_quality computes brightness/contrast/sharpness and flags CAMERA_OCCLUDED_OR_DARK",
+              q_dark.get("health_warning") == "CAMERA_OCCLUDED_OR_DARK" and q_norm.get("ok") is True and q_norm.get("sharpness", 0) > 10.0,
+              (q_dark, q_norm))
+
+        # 19. PREVIEW01-DYNAMIC-CAMERAS-API (AI-BUG-07 / GAP-008): Dynamic runtime camera add/list/remove API
+        add_c = m.add_camera_runtime({"name": "LAB_CAM_1", "source": "http://127.0.0.1:8090/stream/cam1.mjpg"}, who="lab_test")
+        lst_c = m.list_cameras_runtime()
+        rem_c = m.remove_camera_runtime({"name": "LAB_CAM_1"}, who="lab_test")
+        check("PREVIEW01-DYNAMIC-CAMERAS-API", "add_camera_runtime, list_cameras_runtime, and remove_camera_runtime manage virtual cameras dynamically",
+              add_c.get("ok") is True and "LAB_CAM_1" in lst_c.get("cameras", {}) and rem_c.get("ok") is True and rem_c.get("removed") is True,
+              (add_c, lst_c.get("count"), rem_c))
+
+        # 20. PREVIEW01-CAM-FEAT-NORMALIZED (AI-BUG-09 / GAP-012): feat() bounds camera feature in [0, 1] across CAM1..CAM10
+        cmap_test = {}
+        f_cam1 = ins_mod.feat(1700000000.0, "CAM1", "car", 5, 120.0, cams_map=cmap_test)
+        for idx_c in range(2, 11):
+            ins_mod.feat(1700000000.0, f"CAM{idx_c}", "car", 5, 120.0, cams_map=cmap_test)
+        f_cam10 = ins_mod.feat(1700000000.0, "CAM10", "car", 5, 120.0, cams_map=cmap_test)
+        check("PREVIEW01-CAM-FEAT-NORMALIZED", "insights.feat() normalizes camera index within [0.0, 1.0] eliminating ordinal anomaly bias on CAM10",
+              0.0 <= f_cam1[3] <= 1.0 and 0.0 <= f_cam10[3] <= 1.0, (f_cam1[3], f_cam10[3]))
+
+        # 21. PREVIEW01-GT-CSV-QUOTE-STRIP (AI-BUG-09 / GAP-016): _parse_ground_truth_entries strips leading "'" added by _csv_safe_cell
+        gt_q_file = os.path.join(d, "quote_gt.csv")
+        with open(gt_q_file, "w", encoding="utf-8", newline="") as qf:
+            qf.write(f"filename,expected_plate\n{m._csv_safe_cell('-cam1.jpg')},{m._csv_safe_cell('-12345')}\n")
+        q_entries, _ = m._parse_ground_truth_entries(gt_q_file)
+        check("PREVIEW01-GT-CSV-QUOTE-STRIP", "_parse_ground_truth_entries strips leading formula-guard apostrophe from '-12345' and '-cam1.jpg'",
+              len(q_entries) == 1 and q_entries[0]["filename"] == "-cam1.jpg" and q_entries[0]["expected_plate"] == "-12345",
+              q_entries)
+
+        # 22. PREVIEW01-XLSX-ROW-CAP (AI-BUG-09 / GAP-015): registry.py caps .xlsx row iteration
+        reg_src_txt = open(os.path.join(WORK, "registry.py"), encoding="utf-8").read()
+        check("PREVIEW01-XLSX-ROW-CAP", "registry.parse_file enforces row ceiling (10,000 rows) when iterating .xlsx workbooks",
+              "zip(range(10001), ws.iter_rows(values_only=True))" in reg_src_txt)
+
+        # 23. PREVIEW01-DEGRADED-PREVIEW-FLAG (AI-BUG-06): --allow-degraded-preview CLI flag & sys.exit(1) on crash
+        check("PREVIEW01-DEGRADED-PREVIEW-FLAG", "mersad_live.py supports --allow-degraded-preview CLI flag and exits with code 1 on unhandled crash",
+              '"--allow-degraded-preview"' in ml_src_txt and "sys.exit(1)" in "\n".join(ml_src_txt.splitlines()[-5:]))
+
+        # 24. PREVIEW01-VERIFY-INTEGRITY-TOOL: Standalone verify_integrity.py verifies source package hashes
+        vi_rep = vi_mod.verify_package(SRC, check_models=False)
+        check("PREVIEW01-VERIFY-INTEGRITY-TOOL", "verify_integrity.py validates all required MERSAD AI Preview 0.1 files and computes SHA-256 hashes",
+              vi_rep.get("ok") is True and len(vi_rep.get("files", [])) >= 18 and len(vi_rep.get("missing_files", [])) == 0,
+              (vi_rep.get("ok"), len(vi_rep.get("files", [])), vi_rep.get("missing_files")))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
 run_stage15_forensic_remediation_tests()
+run_patched_v7_1_and_preview_0_1_tests()
 m.db.close()
 n_pass = sum(1 for _, _, st, _ in RESULTS if st == "PASS")
 n_skip = sum(1 for _, _, st, _ in RESULTS if st == "SKIP")

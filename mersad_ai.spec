@@ -20,6 +20,7 @@ hiddenimports = [
 ]
 
 import os as _os
+_os.environ["YOLO_AUTOINSTALL"] = "false"
 _os.environ["YOLO_OFFLINE"] = "true"
 _os.environ["ULTRALYTICS_AUTOINSTALL"] = "false"
 

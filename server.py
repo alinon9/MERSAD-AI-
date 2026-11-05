@@ -44,6 +44,9 @@ class Bus:
         self.on_field_calibrations = self.on_field_calibrations_export = self.on_field_calibrations_import = None
         self.on_plate_eval_status = self.on_plate_eval_history = self.on_plate_eval_export = self.on_plate_eval_template = None
         self.on_camera_links_suggestions = self.on_readiness = None
+        self.on_cameras_list = None
+        self.active_mjpeg_clients = 0
+        self.max_mjpeg_clients = 16
         self.on_analytics = self.on_analytics_export = None
         self.on_camera_health = self.on_camera_health_export = None
         self.auth_failures = {}                          # ip -> [count, window_start_ts, blocked_until_ts]
@@ -274,6 +277,8 @@ class H(BaseHTTPRequestHandler):
                     self._json({"ok": True, "links": [], "inferred_links": [], "calibrated_cameras": []})
             elif p == "/api/readiness":
                 self._json(bus.on_readiness() if bus.on_readiness else {"ok": True})
+            elif p == "/api/cameras":
+                self._json(bus.on_cameras_list() if bus.on_cameras_list else {"ok": True, "cameras": {}})
             elif p == "/api/camera_links/suggestions":
                 inc_demo = self.arg("demo").strip().lower() in ("1", "true", "yes")
                 min_obs = int(self.arg("min_obs")) if self.arg("min_obs").strip().isdigit() else 3
@@ -322,10 +327,13 @@ class H(BaseHTTPRequestHandler):
         try:
             origin_hdr = self.headers.get("Origin", "").strip()
             host_hdr = self.headers.get("Host", "").strip()
-            if origin_hdr and host_hdr:
-                orig_netloc = urlparse(origin_hdr).netloc.strip().lower()
-                if orig_netloc and orig_netloc != host_hdr.lower():
-                    return self._json({"ok": False, "error": "رفض الطلب بسبب تعارض المصدر (CSRF Origin Mismatch)"}, code=403)
+            if origin_hdr:
+                if origin_hdr.lower() == "null":
+                    return self._json({"ok": False, "error": "رفض الطلب بسبب مصدر غير موثوق (Origin: null CSRF Blocked)"}, code=403)
+                if host_hdr:
+                    orig_netloc = urlparse(origin_hdr).netloc.strip().lower()
+                    if not orig_netloc or orig_netloc != host_hdr.lower():
+                        return self._json({"ok": False, "error": "رفض الطلب بسبب تعارض المصدر (CSRF Origin Mismatch)"}, code=403)
             try:
                 n = int(self.headers.get("Content-Length", 0))
             except ValueError:
@@ -338,6 +346,10 @@ class H(BaseHTTPRequestHandler):
             try:
                 with bus._lock:
                     post_fn = bus.post.get(p)
+                has_import_guard = bool(self.arg("k") or self.headers.get("X-Mersad-Token") or self.headers.get("X-Filename"))
+                ctype_low = (self.headers.get("Content-Type") or "").strip().lower()
+                if p in ("/api/import", "/api/camera_links/import", "/api/field_calibrations/import") and (not has_import_guard or ctype_low.startswith("text/plain")):
+                    return self._json({"ok": False, "error": "رفض طلب الاستيراد لحماية الجلسة (يتطلب ترويسة X-Filename أو رمز X-Mersad-Token)"}, code=403)
                 if p == "/api/import" and self.arg("kind") in ("vehicles", "persons"):
                     res = bus.on_import(self.arg("kind"), unquote(self.headers.get("X-Filename", "")), raw, ip)
                 elif p == "/api/camera_links/import" and bus.on_camera_links_import:
@@ -371,20 +383,34 @@ class H(BaseHTTPRequestHandler):
             pass
 
     def stream(self, cam=""):
+        with bus._lock:
+            if bus.active_mjpeg_clients >= bus.max_mjpeg_clients:
+                return self._json({"ok": False, "error": "تم تجاوز الحد الأقصى لاتصالات البث المتزامنة"}, code=429)
+            bus.active_mjpeg_clients += 1
         try:
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             last = -1
+            idle_ticks = 0
             while True:
                 cur_fid, b = bus.get_stream_frame(cam)
                 if b is not None and cur_fid != last:
                     last = cur_fid
+                    idle_ticks = 0
                     self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(b) + b + b"\r\n")
+                else:
+                    idle_ticks += 1
+                    if idle_ticks >= 125 and b is not None:
+                        idle_ticks = 0
+                        self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(b) + b + b"\r\n")
                 time.sleep(0.04)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             return
+        finally:
+            with bus._lock:
+                bus.active_mjpeg_clients = max(0, bus.active_mjpeg_clients - 1)
 
     def events(self):
         q = queue.Queue(maxsize=200)

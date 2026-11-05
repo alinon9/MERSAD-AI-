@@ -700,17 +700,20 @@ def feat(ts, cam, vc, n, gap, cams_map=None):
     gap_norm = math.log1p(max(0.0, min(float(gap or 0.0), 30 * 86400)))
     cam_key = cam or "UNKNOWN"
     if cams_map is not None:
-        cam_idx = float(cams_map.setdefault(cam_key, len(cams_map)))
+        raw_idx = float(cams_map.setdefault(cam_key, len(cams_map)))
     else:
         with _STATE_LOCK:
             cmap = M["cams"]
-            cam_idx = float(cmap.get(cam_key, len(cmap)))
+            raw_idx = float(cmap.get(cam_key, len(cmap)))
+    # GAP-012: Bound camera index to [0.0, 1.0] via sinusoidal projection so CAM10 does not get artificial Z-score penalty vs CAM1
+    cam_norm = 0.5 * (1.0 + math.sin(raw_idx * 1.6180339887))
+    vc_map = {"truck": 1.0, "bus": 0.6, "motorcycle": 0.3}
     return [
         math.sin(2 * math.pi * h / 24.0),
         math.cos(2 * math.pi * h / 24.0),
         float(t.tm_wday in OFF),
-        cam_idx,
-        float(vc == "truck"),
+        cam_norm,
+        float(vc_map.get(str(vc or "").lower(), 0.0)),
         math.log1p(max(0, int(n))),
         gap_norm
     ]

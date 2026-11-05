@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مختبر مرصاد — MERSAD LAB 1.0 (PREVIEW 0.1)</title>
+<style>
+:root {
+  --bg: #0d131a;
+  --panel: #16202b;
+  --border: #263648;
+  --text: #eaf1f8;
+  --muted: #93a6bc;
+  --accent: #00d4aa;
+  --warn: #f5a623;
+  --err: #ff5252;
+}
+* { box-sizing: border-box; font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--text); padding: 18px; }
+header { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border: 1px solid var(--border); padding: 14px 20px; border-radius: 10px; margin-bottom: 18px; }
+h1 { margin: 0; font-size: 1.3rem; color: var(--accent); }
+.badge { background: #1e3346; color: var(--accent); padding: 4px 10px; border-radius: 99px; font-size: 0.85rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 16px; margin-bottom: 18px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 15px; }
+.card h2 { margin-top: 0; font-size: 1.05rem; color: var(--text); }
+.cam-preview { width: 100%; height: 210px; object-fit: contain; background: #06090d; border-radius: 6px; border: 1px solid var(--border); display: block; margin-bottom: 10px; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; }
+button, select, input { background: #1e2d3d; color: var(--text); border: 1px solid var(--border); padding: 7px 11px; border-radius: 6px; cursor: pointer; font-size: 0.86rem; }
+button:hover { border-color: var(--accent); }
+button.active-mode { background: var(--accent); color: #051410; font-weight: 700; }
+.status-line { font-size: 0.84rem; color: var(--muted); margin: 6px 0; }
+.result-box { margin-top: 10px; padding: 10px; background: #0e161f; border-radius: 6px; border: 1px solid var(--border); font-size: 0.86rem; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>مختبر محاكاة الكاميرات — MERSAD LAB 1.0 (PREVIEW 0.1)</h1>
+    <div class="status-line" id="health-summary">جارٍ الاتصال بخادم المختبر المحلي (127.0.0.1)...</div>
+  </div>
+  <span class="badge" id="bind-badge">ربط محلي آمن 127.0.0.1</span>
+</header>
+
+<div class="grid" id="cameras-container"></div>
+
+<div class="grid">
+  <div class="card">
+    <h2>فحص جودة الصورة (Image Quality Analyzer)</h2>
+    <p class="status-line">ارفع صورة كاميرا (JPEG/PNG) لقياس الدقة والسطوع والتباين والحدة ومستوى التشويش:</p>
+    <input type="file" id="img-input" accept="image/jpeg,image/png,image/webp">
+    <button id="btn-analyze-img">تحليل الصورة</button>
+    <div class="result-box" id="img-result">بانتظار اختيار صورة...</div>
+  </div>
+
+  <div class="card">
+    <h2>فحص جودة الفيديو (Video Quality Analyzer)</h2>
+    <p class="status-line">ارفع ملف فيديو (MP4/AVI) لقياس معدل الإطارات الفعلي وجودة الإطارات مع حماية المهلة:</p>
+    <input type="file" id="vid-input" accept="video/mp4,video/x-msvideo,video/avi">
+    <button id="btn-analyze-vid">تحليل الفيديو</button>
+    <div class="result-box" id="vid-result">بانتظار اختيار فيديو...</div>
+  </div>
+
+  <div class="card">
+    <h2>ربط البث المباشر مع MERSAD AI V7.1</h2>
+    <p class="status-line">إرسال رابط تدفق MJPEG للكاميرا الافتراضية إلى نظام مرصاد الذكي المحلي:</p>
+    <div class="controls" style="margin-bottom:8px">
+      <input type="text" id="ai-url" value="http://127.0.0.1:8765" placeholder="عنوان خادم مرصاد">
+      <input type="password" id="ai-token" placeholder="رمز الجلسة (Token)">
+      <select id="ai-cam-select">
+        <option value="cam1">cam1</option>
+        <option value="cam2">cam2</option>
+        <option value="cam3">cam3</option>
+        <option value="cam4">cam4</option>
+      </select>
+      <button id="btn-connect-ai">ربط الكاميرا بمرصاد</button>
+    </div>
+    <div class="result-box" id="ai-connect-result">جاهز للربط المباشر.</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const MODES = [
+  ["normal", "طبيعي (Normal)"],
+  ["lowlight", "إضاءة منخفضة (Lowlight)"],
+  ["lowres", "دقة منخفضة (Lowres)"],
+  ["noise", "تشويش (Noise)"],
+  ["occluded", "حجب العدسة (Occluded)"],
+  ["frozen", "تجميد الإطار (Frozen)"],
+  ["delay", "تأخير البث (Delay)"],
+  ["offline", "منقطع 503 (Offline)"]
+];
+
+async function setCameraMode(camId, mode) {
+  try {
+    const res = await fetch("/api/cameras/" + encodeURIComponent(camId) + "/mode", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mode: mode})
+    });
+    const data = await res.json();
+    await refreshState();
+    return data;
+  } catch (err) {
+    console.error("Failed to set mode:", err);
+  }
+}
+
+function buildCameraCard(cam) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const title = document.createElement("h2");
+  title.textContent = cam.title_ar + " [" + cam.cam_id.toUpperCase() + "]";
+  card.appendChild(title);
+
+  const meta = document.createElement("div");
+  meta.className = "status-line";
+  meta.textContent = "الوضع: " + cam.mode + " | اللوحة الاصطناعية: " + cam.synthetic_plate + " | الدقة: " + cam.width + "x" + cam.height + " | FPS: " + cam.fps;
+  card.appendChild(meta);
+
+  const img = document.createElement("img");
+  img.className = "cam-preview";
+  img.alt = cam.cam_id;
+  if (cam.mode === "offline") {
+    img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='480'><rect width='100%' height='100%' fill='%23120808'/><text x='50%' y='50%' fill='%23ff5252' font-size='22' text-anchor='middle'>OFFLINE (HTTP 503)</text></svg>";
+  } else {
+    img.src = cam.frame_url + "?t=" + Date.now();
+  }
+  card.appendChild(img);
+
+  const ctrls = document.createElement("div");
+  ctrls.className = "controls";
+  for (const [mKey, mLabel] of MODES) {
+    const btn = document.createElement("button");
+    btn.textContent = mLabel;
+    if (cam.mode === mKey) {
+      btn.className = "active-mode";
+    }
+    btn.addEventListener("click", () => setCameraMode(cam.cam_id, mKey));
+    ctrls.appendChild(btn);
+  }
+  card.appendChild(ctrls);
+  return card;
+}
+
+async function refreshState() {
+  try {
+    const res = await fetch("/api/health", {cache: "no-store"});
+    const d = await res.json();
+    const summaryEl = document.getElementById("health-summary");
+    if (d && d.ok) {
+      const t = d.telemetry || {};
+      summaryEl.textContent = "الحالة: متصل | الذاكرة: " + (t.rss_mb || 0) + " MB | زمن المعالج: " + (t.cpu_time_sec || 0) + "s | الخيوط النشطة: " + (t.active_threads || 0);
+      const container = document.getElementById("cameras-container");
+      container.replaceChildren();
+      const cams = Object.values(d.cameras || {});
+      for (const cam of cams) {
+        container.appendChild(buildCameraCard(cam));
+      }
+    }
+  } catch (err) {
+    document.getElementById("health-summary").textContent = "تعذّر الاتصال بخادم المختبر.";
+  }
+}
+
+document.getElementById("btn-analyze-img").addEventListener("click", async () => {
+  const input = document.getElementById("img-input");
+  const out = document.getElementById("img-result");
+  if (!input.files || !input.files[0]) {
+    out.textContent = "يرجى اختيار ملف صورة أولاً.";
+    return;
+  }
+  out.textContent = "جارٍ تحليل الصورة...";
+  const fd = new FormData();
+  fd.append("file", input.files[0]);
+  try {
+    const r = await fetch("/api/analyze/image", {method: "POST", body: fd});
+    const d = await r.json();
+    out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    out.textContent = "خطأ أثناء رفع الصورة.";
+  }
+});
+
+document.getElementById("btn-analyze-vid").addEventListener("click", async () => {
+  const input = document.getElementById("vid-input");
+  const out = document.getElementById("vid-result");
+  if (!input.files || !input.files[0]) {
+    out.textContent = "يرجى اختيار ملف فيديو أولاً.";
+    return;
+  }
+  out.textContent = "جارٍ تحليل الفيديو...";
+  const fd = new FormData();
+  fd.append("file", input.files[0]);
+  try {
+    const r = await fetch("/api/analyze/video", {method: "POST", body: fd});
+    const d = await r.json();
+    out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    out.textContent = "خطأ أثناء رفع الفيديو.";
+  }
+});
+
+document.getElementById("btn-connect-ai").addEventListener("click", async () => {
+  const aiUrl = document.getElementById("ai-url").value.trim();
+  const aiToken = document.getElementById("ai-token").value.trim();
+  const camId = document.getElementById("ai-cam-select").value;
+  const out = document.getElementById("ai-connect-result");
+  out.textContent = "جارٍ الاتصال بمرصاد الذكي...";
+  try {
+    const r = await fetch("/api/integration/connect_ai", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ai_url: aiUrl, ai_token: aiToken, cam_id: camId})
+    });
+    const d = await r.json();
+    out.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    out.textContent = "تعذّر إرسال الطلب.";
+  }
+});
+
+refreshState();
+setInterval(refreshState, 3000);
+</script>
+</body>
+</html>

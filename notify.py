@@ -21,6 +21,9 @@ _SENT_KEYS = set()                                   # in-process idempotency ca
 LAST_SEND_OUTCOMES = {}                              # key -> {"ok": bool, "uncertain": bool, "error": str, "ts": float}
 TELEGRAM_STATUS = {"connected": True, "last_ok_ts": 0.0, "last_error": "", "consecutive_failures": 0}
 _LISTENER_LOCK_FD = None
+_LISTENER_THREAD = None
+_LISTENER_DONE = threading.Event()
+_LISTENER_DONE.set()
 
 
 def _redact(msg):
@@ -181,29 +184,76 @@ def send_alert(text, photo=None, chat_env="TELEGRAM_CHAT_ID", buttons=None, sync
 
 
 def _acquire_listener_lock():
-    """Acquire non-blocking exclusive OS file lock so only ONE process polls Telegram getUpdates for a bot token (P0-E)."""
+    # Acquire one process-wide Telegram polling owner lock.
     global _LISTENER_LOCK_FD
+    tok_hash = hashlib.sha256((os.getenv("TELEGRAM_TOKEN") or "").encode("utf-8")).hexdigest()[:16]
+    if os.name == "nt":
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateSemaphoreW.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_long, ctypes.c_wchar_p]
+        kernel32.CreateSemaphoreW.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+        kernel32.ReleaseSemaphore.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
+        kernel32.ReleaseSemaphore.restype = ctypes.c_int
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        name = "Local\\MERSAD_TG_LISTENER_" + tok_hash
+        handle = kernel32.CreateSemaphoreW(None, 1, 1, name)
+        if not handle:
+            log.warning("Unable to create Telegram listener semaphore (WinError %s)", ctypes.get_last_error())
+            return None
+        wait_result = kernel32.WaitForSingleObject(handle, 0)
+        if wait_result != 0:  # WAIT_OBJECT_0: exclusive ownership acquired
+            kernel32.CloseHandle(handle)
+            return None
+        lock = ("windows_semaphore", handle, kernel32)
+        _LISTENER_LOCK_FD = lock
+        return lock
+
     base_dir = os.environ.get("MERSAD_DATA_DIR") or os.getcwd()
-    tok_hash = hashlib.sha256((os.getenv("TELEGRAM_TOKEN") or "").encode("utf-8")).hexdigest()[:8]
-    lock_path = os.path.join(base_dir, f".tg_listener_{tok_hash}.lock")
+    lock_path = os.path.join(base_dir, f".tg_listener_{tok_hash[:8]}.lock")
+    fd = None
     try:
         fd = open(lock_path, "a+b")
         if fcntl is not None:
             fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         elif msvcrt is not None:
+            fd.seek(0, os.SEEK_END)
+            if fd.tell() == 0:
+                fd.write(bytes([0]))
+                fd.flush()
             fd.seek(0)
             msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
         _LISTENER_LOCK_FD = fd
         return fd
     except (OSError, IOError):
-        try: fd.close()
-        except Exception: pass
+        try:
+            if fd is not None:
+                fd.close()
+        except Exception:
+            pass
         return None
 
 
 def _release_listener_lock(fd):
+    # Release the named mutex or POSIX/CRT file lock.
     global _LISTENER_LOCK_FD
     if fd is None:
+        return
+    if isinstance(fd, tuple) and len(fd) == 3 and fd[0] == "windows_semaphore":
+        _, handle, kernel32 = fd
+        try:
+            import ctypes
+            kernel32.ReleaseSemaphore(handle, 1, None)
+        except Exception:
+            pass
+        try:
+            kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+        if _LISTENER_LOCK_FD is fd:
+            _LISTENER_LOCK_FD = None
         return
     try:
         if fcntl is not None:
@@ -213,14 +263,17 @@ def _release_listener_lock(fd):
             msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
     except Exception:
         pass
-    try: fd.close()
-    except Exception: pass
+    try:
+        fd.close()
+    except Exception:
+        pass
     if _LISTENER_LOCK_FD is fd:
         _LISTENER_LOCK_FD = None
 
 
 def start_listener(on_press, stop_event=None):
-    """Listens for button presses. Enforces single-process ownership via OS lock so two processes never conflict on getUpdates."""
+    """Listen for button presses; only the lock owner polls getUpdates."""
+    global _LISTENER_THREAD
     chat = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
     tok = (os.getenv("TELEGRAM_TOKEN") or "").strip()
     if not (tok and chat):
@@ -276,6 +329,18 @@ def start_listener(on_press, stop_event=None):
                     time.sleep(2)
         finally:
             _release_listener_lock(lock_fd)
+            _LISTENER_DONE.set()
 
-    threading.Thread(target=loop, daemon=True).start()
+    _LISTENER_DONE.clear()
+    _LISTENER_THREAD = threading.Thread(target=loop, daemon=True, name="mersad_telegram_listener")
+    _LISTENER_THREAD.start()
     return True
+
+
+def wait_listener_stopped(timeout=3.0):
+    """Wait for the Telegram polling worker to observe shutdown and release its OS lock."""
+    thread = _LISTENER_THREAD
+    if thread is None or thread is threading.current_thread():
+        return True
+    thread.join(timeout=max(0.0, float(timeout)))
+    return not thread.is_alive()
