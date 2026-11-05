@@ -588,9 +588,10 @@ REQUIRED_LOCAL_HIDDENIMPORTS = (
 
 
 def verify_build_config_consistency(root_dir=ROOT_DIR):
-    """Verify that mersad_ai.spec, BUILD_EXE.bat, and .github/workflows/windows-build.yml are aligned (GAP-18)."""
+    """Verify that mersad_ai.spec, BUILD_EXE.bat, PUSH_TO_GITHUB_AND_BUILD.bat, and .github/workflows/windows-build.yml are aligned (GAP-18, Stage 15)."""
     spec_p = os.path.join(root_dir, "mersad_ai.spec")
     bat_p = os.path.join(root_dir, "BUILD_EXE.bat")
+    push_p = os.path.join(root_dir, "PUSH_TO_GITHUB_AND_BUILD.bat")
     yml_p = os.path.join(root_dir, ".github", "workflows", "windows-build.yml")
 
     def _read_txt(p):
@@ -601,6 +602,7 @@ def verify_build_config_consistency(root_dir=ROOT_DIR):
 
     spec_s = _read_txt(spec_p)
     bat_s = _read_txt(bat_p)
+    push_s = _read_txt(push_p)
     yml_s = _read_txt(yml_p)
 
     spec_hi = set(re.findall(r'"([A-Za-z0-9_]+)"', spec_s.partition("hiddenimports = [")[2].partition("]")[0]))
@@ -618,7 +620,38 @@ def verify_build_config_consistency(root_dir=ROOT_DIR):
         and "--verify" in yml_s
     )
     uses_spec_file = ("pyinstaller.exe --noconfirm --clean mersad_ai.spec" in bat_s)
-    ok = bool(hi_match and uses_spec_file and no_hardcoded_user and uses_pwsh_env and uses_runner_temp_isolation)
+    artifact_name_ok = (
+        "name: MERSAD_AI_Windows_x64_Distribution" in yml_s
+        and "artifact_staging\MERSAD_AI" in yml_s
+        and "concurrency:" in yml_s
+    )
+    push_script_ok = (
+        (not push_s)
+        or (
+            "git clone" in push_s
+            and "git fetch origin --prune" in push_s
+            and "git merge --ff-only" in push_s
+            and "git cat-file -e" in push_s
+            and "LOCAL_HEAD_SHA" in push_s
+            and "select(.headSha ==" in push_s
+            and "VERIFY_MODELS_RC" in push_s
+            and "if !VERIFY_MODELS_RC! NEQ 0" in push_s
+            and "gh workflow run" in push_s
+            and "gh run watch" in push_s
+            and "gh run download" in push_s
+            and "MERSAD_AI_Windows_x64_Distribution" in push_s
+            and "--force" not in push_s.lower()
+        )
+    )
+    ok = bool(
+        hi_match
+        and uses_spec_file
+        and no_hardcoded_user
+        and uses_pwsh_env
+        and uses_runner_temp_isolation
+        and artifact_name_ok
+        and push_script_ok
+    )
     return ok, {
         "ok": ok,
         "spec_hiddenimports": sorted(spec_hi),
@@ -628,6 +661,8 @@ def verify_build_config_consistency(root_dir=ROOT_DIR):
         "no_hardcoded_user": no_hardcoded_user,
         "uses_pwsh_env": uses_pwsh_env,
         "uses_runner_temp_isolation": uses_runner_temp_isolation,
+        "artifact_name_ok": artifact_name_ok,
+        "push_script_ok": push_script_ok,
     }
 
 

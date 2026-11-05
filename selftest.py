@@ -4676,6 +4676,7 @@ run_stage14_100pct_readiness_tests()
 def run_stage15_forensic_remediation_tests():
     import http.client, io, pickle, zipfile
     import server as srv_mod
+    import check_install as chk_mod
 
     # 1. STAGE15-GAP01-MODEL-TRUST-BOUNDARY: Web register_model blocks outside-models copy, and foreign manifest with populated map rejects unlisted model
     s15_dir = tempfile.mkdtemp(prefix="mersad_s15_01_")
@@ -4862,6 +4863,82 @@ def run_stage15_forensic_remediation_tests():
         and float(man_link_after.get("distance_m") or 0) == 1500.0
         and float(man_link_after.get("min_sec") or 0) == 60.0,
         (auto_15.get("skipped_manual_links"), man_link_after),
+    )
+
+    # 8. STAGE15-GAP08-GITHUB-CLOUD-AND-LOCAL-EXE-BUILD-SUITE: Verify PUSH_TO_GITHUB_AND_BUILD.bat, VERIFY_AUDIT.bat, setup.bat Python 3.10-3.12 selector, and MERSAD_AI_Windows_x64_Distribution artifact
+    push_bat_p = os.path.join(WORK, "PUSH_TO_GITHUB_AND_BUILD.bat")
+    if not os.path.isfile(push_bat_p):
+        push_bat_p = os.path.join(SRC, "PUSH_TO_GITHUB_AND_BUILD.bat")
+    verify_bat_p = os.path.join(WORK, "VERIFY_AUDIT.bat")
+    if not os.path.isfile(verify_bat_p):
+        verify_bat_p = os.path.join(SRC, "VERIFY_AUDIT.bat")
+    setup_bat_15 = open(os.path.join(WORK, "setup.bat"), encoding="utf-8").read()
+    build_bat_15 = open(os.path.join(WORK, "BUILD_EXE.bat"), encoding="utf-8").read()
+    yml_15 = open(os.path.join(WORK, ".github", "workflows", "windows-build.yml"), encoding="utf-8").read()
+    push_bat_txt = open(push_bat_p, encoding="utf-8").read() if os.path.isfile(push_bat_p) else ""
+    verify_bat_txt = open(verify_bat_p, encoding="utf-8").read() if os.path.isfile(verify_bat_p) else ""
+    ok_bld_15, bld_info_15 = chk_mod.verify_build_config_consistency(WORK)
+
+    build_rep_15 = open(os.path.join(WORK, "BUILD_REPORT.md"), encoding="utf-8").read()
+    has_all_12_steps = all(f"[{step_i}/12]" in push_bat_txt for step_i in range(1, 13))
+    has_gh_commands = all(
+        kw in push_bat_txt
+        for kw in (
+            "where git",
+            "where gh",
+            "gh auth status",
+            "gh auth login",
+            "alinon9/MERSAD-AI-",
+            ".github\\workflows\\windows-build.yml",
+            "git clone",
+            "git fetch origin --prune",
+            "git merge --ff-only",
+            "git cat-file -e",
+            "LOCAL_HEAD_SHA",
+            "select(.headSha ==",
+            "VERIFY_MODELS_RC",
+            "if !VERIFY_MODELS_RC! NEQ 0",
+            "PTH_COUNT",
+            "DLL_COUNT",
+            "gh workflow run",
+            "gh run watch",
+            "gh run download",
+            "MERSAD_AI_Windows_x64_Distribution",
+            "MERSAD_AI.exe",
+        )
+    )
+    no_hardcoded_pat = (
+        ("ghp_" not in push_bat_txt)
+        and ("github_pat_" not in push_bat_txt)
+        and ("--force" not in push_bat_txt.lower())
+        and ("git init" not in push_bat_txt.lower())
+    )
+    setup_py_selector = ("3.11-64" in setup_bat_15) and ("((3,10),(3,11),(3,12))" in setup_bat_15)
+    verify_bat_ok = ("--verify" in verify_bat_txt) and ("--verify-models" in verify_bat_txt) and ("--readiness-report" in verify_bat_txt)
+    yml_artifact_ok = (
+        ("name: MERSAD_AI_Windows_x64_Distribution" in yml_15)
+        and ("runs-on: windows-latest" in yml_15)
+        and ("artifact_staging\MERSAD_AI" in yml_15)
+        and ("concurrency:" in yml_15)
+    )
+    model_trust_documented = (
+        ("Pinned Immutable SHA-256" in build_rep_15)
+        and ("TOFU" in build_rep_15)
+        and ("Structural & Header Integrity Check" in build_rep_15)
+    )
+
+    check(
+        "STAGE15-GAP08-GITHUB-CLOUD-AND-LOCAL-EXE-BUILD-SUITE",
+        "PUSH_TO_GITHUB_AND_BUILD.bat (clone/fetch worktree, default-branch workflow registration, headSha run binding, strict exit-code checks), windows-build.yml artifact staging, and model trust documentation are verified",
+        ok_bld_15 is True
+        and has_all_12_steps
+        and has_gh_commands
+        and no_hardcoded_pat
+        and setup_py_selector
+        and verify_bat_ok
+        and yml_artifact_ok
+        and model_trust_documented,
+        (ok_bld_15, has_all_12_steps, has_gh_commands, no_hardcoded_pat, setup_py_selector, verify_bat_ok, yml_artifact_ok, model_trust_documented),
     )
 
 

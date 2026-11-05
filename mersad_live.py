@@ -2173,7 +2173,6 @@ def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, ex
     """Download a model file safely to a temporary .part file with socket timeout, bounded retries, disk-space check,
     size/Content-Length check, SHA-256 verification, and structural validation before atomically replacing target (Stage 4c).
     Guarantees an existing valid model file is NEVER deleted or overwritten if a download fails."""
-    os.makedirs(target_dir, exist_ok=True)
     target = os.path.join(target_dir, filename)
 
     def _validate_candidate(p):
@@ -2211,6 +2210,7 @@ def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, ex
 
     if not _is_dir_writable(target_dir):
         raise PermissionError(f"Model directory '{target_dir}' is not writable")
+    os.makedirs(target_dir, exist_ok=True)
     try:
         free_b = shutil.disk_usage(target_dir).free
         if free_b < max(min_bytes * 2, 10_000_000):
@@ -2260,7 +2260,6 @@ def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, ex
 
 def fetch_models(verify_hash=True, timeout=30.0, retries=3):
     """Ensure OpenCV Zoo ONNX models exist and pass SHA-256 & ONNX verification (Stage 4)."""
-    os.makedirs("models", exist_ok=True)
     for f, u in MODELS.items():
         exp_sha = MODEL_SHA256.get(f) if verify_hash else None
         min_b = MODEL_MIN_BYTES.get(f, 10_000)

@@ -2,9 +2,13 @@ name: MERSAD AI Windows x64 Build & Verification CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, "feat/**", "fix/**", "release/**", "build/**" ]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: mersad-win-x64-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -97,13 +101,35 @@ jobs:
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
-          Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify`r`nMERSAD_AI.exe --verify-models`r`nMERSAD_AI.exe --readiness-report`r`npause"
-          foreach ($reqDistFile in @("dist\MERSAD_AI\MERSAD_AI.exe", "dist\MERSAD_AI\RUN.bat", "dist\MERSAD_AI\RUN_LAN.bat", "dist\MERSAD_AI\VERIFY_AUDIT.bat")) {
+          Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
+          foreach ($reqDistFile in @(
+            "dist\MERSAD_AI\MERSAD_AI.exe",
+            "dist\MERSAD_AI\models\yunet.onnx",
+            "dist\MERSAD_AI\models\sface.onnx",
+            "dist\MERSAD_AI\models\yolov8n.pt",
+            "dist\MERSAD_AI\models\yolov8n.pt.sha256",
+            "dist\MERSAD_AI\models\.trusted_models.json",
+            "dist\MERSAD_AI\RUN.bat",
+            "dist\MERSAD_AI\RUN_LAN.bat",
+            "dist\MERSAD_AI\VERIFY_AUDIT.bat"
+          )) {
             if (-not (Test-Path -LiteralPath $reqDistFile)) {
               Write-Error "Required distribution file was not generated: $reqDistFile"
               exit 1
             }
           }
+          $easyPths = Get-ChildItem -Path "dist\MERSAD_AI\models\easyocr" -Filter "*.pth" -ErrorAction SilentlyContinue
+          if (-not $easyPths -or $easyPths.Count -lt 2) {
+            Write-Error "EasyOCR detector/recognizer .pth weights missing in dist\MERSAD_AI\models\easyocr"
+            exit 1
+          }
+          $dllFiles = Get-ChildItem -Path "dist\MERSAD_AI" -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue
+          $pydFiles = Get-ChildItem -Path "dist\MERSAD_AI" -Recurse -Filter "*.pyd" -ErrorAction SilentlyContinue
+          if (-not $dllFiles -or $dllFiles.Count -lt 5 -or -not $pydFiles -or $pydFiles.Count -lt 5) {
+            Write-Error "Bundled DLL/PYD native extensions missing in dist\MERSAD_AI"
+            exit 1
+          }
+          Write-Host "Verified $($dllFiles.Count) DLLs, $($pydFiles.Count) PYDs, and $($easyPths.Count) EasyOCR weights in dist\MERSAD_AI"
 
       - name: Test standalone distribution in isolated temp data dir with spaces and Arabic characters (without venv)
         run: |
@@ -135,6 +161,14 @@ jobs:
               exit 1
             }
 
+            & $exePath --readiness-report --json *> exe_readiness_output.json
+            $rcReady = $LASTEXITCODE
+            Get-Content exe_readiness_output.json
+            if ($rcReady -ne 0 -or -not (Select-String -Path exe_readiness_output.json -SimpleMatch '"overall_engineering_readiness_pct": 100.0' -Quiet)) {
+              Write-Error "MERSAD_AI.exe --readiness-report --json failed"
+              exit 1
+            }
+
             foreach ($forbidden in @("mersad.db", ".mersad_hmac.key", "mersad.log")) {
               $distPollution = Join-Path "dist\MERSAD_AI" $forbidden
               if (Test-Path -LiteralPath $distPollution) {
@@ -148,15 +182,39 @@ jobs:
             Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Upload build logs and distribution artifact
-        if: always()
+      - name: Stage deterministic artifact root (artifact_staging/MERSAD_AI/MERSAD_AI.exe)
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Test-Path -LiteralPath "artifact_staging") {
+            Remove-Item -LiteralPath "artifact_staging" -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path "artifact_staging\MERSAD_AI" -Force | Out-Null
+          New-Item -ItemType Directory -Path "artifact_staging\build_logs" -Force | Out-Null
+          Copy-Item -Path "dist\MERSAD_AI\*" -Destination "artifact_staging\MERSAD_AI" -Recurse -Force
+          foreach ($logFile in @(
+            "pip_installed_versions.txt",
+            "selftest_normal.log",
+            "selftest_nosklearn.log",
+            "check_install_report.log",
+            "build_pyinstaller.log",
+            "exe_verify_models_output.txt",
+            "exe_verify_output.txt",
+            "exe_readiness_output.json"
+          )) {
+            if (Test-Path -LiteralPath $logFile) {
+              Copy-Item -LiteralPath $logFile -Destination "artifact_staging\build_logs\$logFile" -Force
+            }
+          }
+          if (-not (Test-Path -LiteralPath "artifact_staging\MERSAD_AI\MERSAD_AI.exe")) {
+            Write-Error "Staging failed: artifact_staging\MERSAD_AI\MERSAD_AI.exe missing!"
+            exit 1
+          }
+
+      - name: Upload Windows x64 distribution artifact (MERSAD_AI_Windows_x64_Distribution)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: MERSAD_AI_Windows_x64_Distribution_and_Logs
-          path: |
-            pip_installed_versions.txt
-            selftest_normal.log
-            selftest_nosklearn.log
-            check_install_report.log
-            build_pyinstaller.log
-            dist/MERSAD_AI/
+          name: MERSAD_AI_Windows_x64_Distribution
+          path: artifact_staging/
+          if-no-files-found: error
+          retention-days: 30
