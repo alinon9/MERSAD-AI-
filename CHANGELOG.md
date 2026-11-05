@@ -1,20 +1,4 @@
-# سجل التغييرات — MERSAD AI V7.1 (المراحل 1–10 الموحدة)
-
-- **الحصيلة النهائية لاختبارات `selftest.py`**: **`175 PASS, 0 SKIP, 0 FAIL`** (في الوضع القياسي ومع `MERSAD_BLOCK_SKLEARN=1`).
-- **المرحلة 1 (`GAP-01, GAP-02, GAP-03, GAP-06`)**: إضافة `--verify-pip-deps`، واسترجاع `WAL -> DELETE` الآمن، وعزل `init_runtime_env()` عن الاستيراد، وحماية `insights.py` بـ `run_atomic_tx`.
-- **المرحلة 2 (`GAP-04, GAP-05, GAP-07`)**: عزل `src='demo'` عن الرصد الحي افتراضياً، وترحيل `camera_links` رقم 6 مع عمود `via` وواجهة `/api/camera_links`، وتفعيل `--camera` في `check_install.py`.
-- **المرحلة 3 (`GAP-09, GAP-10, GAP-11, GAP-15`)**: طمس 100% من الوجوه في تنبيهات المركبات، وضوابط `enroll_step`، وسلسلة التدقيق `HMAC-SHA256` (`h1:`)، ودالة `parse_curfew()`.
-- **المرحلة 4 (`GAP-08, GAP-12, GAP-13, GAP-14, GAP-16`)**: الاستدلال غير الحاجب (`maxsize=1`)، وتأمين `Bus._lock`، وفهرسة `lookup_vehicle` (`idx_vehicles_status`)، وكشف `401/403` في `dashboard.html`، ودعم `--device` و`--gpu`.
-- **المرحلة 5 (`GAP-17, GAP-18`)**: أداة التقييم المعيارية للوحات `--evaluate-plates`، وتوحيد `mersad_ai.spec` و`BUILD_EXE.bat` و`.github/workflows/windows-build.yml` (`pwsh` + `$env:RUNNER_TEMP`).
-- **المرحلة 6 (`POST-GAP-01..05`)**: جدولة كشف الوجوه `FACE_DETECT_INTERVAL`، وإغلاق جميع قراءات `bus.alerts` تحت `bus._lock`، وتمرير `CUR_CAM` وعرض `m.error`/`m.warning` في `dashboard.html`، وقفل `_ENROLL_LOCK` واستبدال العينات القديمة، وعزل `FH` لكل كاميرا وتقليم `camera_status_history`.
-- **المرحلة 7 (`POST-GAP-06..08`)**: دعم قص المركبة أولاً (`vyolo -> find_plates`) في `evaluate_plates_dataset()` (`--evaluate-plates`)، وتوحيد `RUN_LAN.bat` و`CHECK.bat`، وتوحيد جميع ملفات التوثيق والتقارير السبعة.
-- **المرحلة 8 (`FINAL-OBS-01..05`)**: إغلاق مصنف `openpyxl` في `parse_file()`، وإضافة `_STATE_LOCK`/`_TRAIN_LOCK` في `insights.py` و`_FACE_STATE_LOCK` في `mersad_live.py`، وإرجاع JSON مهيكل لرموز HTTP 400/413 وتغليف دوال `dashboard.html` بـ `try/catch`.
-- **المرحلة 9 (`POST8-OBS-01..05`)**: استرجاع `source_with_credentials` من `.mersad_secrets.json` في `check_camera_source()`، وإضافة `_RUNTIME_STATE_LOCK` في `mersad_live.py`، وإغلاق جميع مقابض الملفات والمقابس بـ `with` وإرجاع JSON 404 لمسارات `/api/*`، وربط `CAMERA_HISTORY.prune_history` تلقائياً.
-- **المرحلة 10 (`REL-OBS-01..03`)**: توليد سكربتات تشغيل التوزيعة (`RUN.bat`, `RUN_LAN.bat`, `VERIFY_AUDIT.bat`) في `.github/workflows/windows-build.yml` بالتطابق مع `BUILD_EXE.bat`، وتوحيد مفتاح `vehicle_stage_enabled` في `--evaluate-plates`، وتوحيد سجل المراحل 1–10 على `175 PASS, 0 SKIP, 0 FAIL`.
-- **المرحلة 11 (`STAGE11-CAL/PE/MANUAL`)**: إضافة واجهة ومحرك «معايرة روابط الكاميرات — Camera Link Calibration» الكامل (مع التحويل للثواني، والحد الأعلى، والمسافة، وعدد القياسات، وظروف المرور، ومصدر القياس، والتصدير/الاستيراد JSON/CSV، والربط بمحرك تتبع المسارات)، وإضافة قسم «تقييم ومعايرة اللوحات اليمنية — Yemeni Plate Evaluation» من داخل الواجهة (فحص المسار، رفع الملفات، اختيار `--plate-model`، تفعيل `--use-vehicle-detector`، الإلغاء الآمن، وفصل مقاييس الاكتشاف عن المحارف والمطابقة الكاملة)، وإضافة «تسجيل نتائج المعايرة اليدوية» المفصول تماماً بوسم `مدخلة يدوياً — غير متحقق منها` (`175 PASS, 0 SKIP, 0 FAIL`).
-
----
-
+# سجل التغييرات — MERSAD AI
 
 ## حزمة التحسين التشغيلي V7 (2026-10-26)
 

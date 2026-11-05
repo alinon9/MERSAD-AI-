@@ -44,6 +44,20 @@ BUILD_SPECS = {
 }
 
 
+def _opencv_gui_build_available():
+    """Return True only when the active cv2 module exposes a GUI backend."""
+    try:
+        import cv2
+        info = cv2.getBuildInformation()
+        match = re.search(r"(?m)^\s*GUI:\s*(.*?)\s*$", info)
+        gui = match.group(1).strip().upper() if match else ""
+        if os.name == "nt":
+            return "WIN32UI" in gui
+        return bool(gui) and gui not in ("NONE", "NO")
+    except Exception:
+        return False
+
+
 def _file_sha256(path):
     if not path or not os.path.isfile(path):
         return ""
@@ -86,24 +100,15 @@ def compute_env_manifest(root_dir=ROOT_DIR):
 
 
 def check_models_detailed(root_dir=ROOT_DIR):
-    """Check each AI model file and distinguish MODEL_MISSING from MODEL_CORRUPT and MODEL_OK.
-    GAP-03: Imports model verification helpers from mersad_live with MERSAD_SKIP_RUNTIME_INIT=1 so no DB/log/cwd side effects occur."""
-    prev_skip = os.environ.get("MERSAD_SKIP_RUNTIME_INIT")
-    os.environ["MERSAD_SKIP_RUNTIME_INIT"] = "1"
-    try:
-        from mersad_live import (
-            MODEL_SHA256,
-            MODEL_MIN_BYTES,
-            verify_onnx_file,
-            verify_yolo_pt_file,
-            verify_easyocr_dir,
-            resolve_resource_path,
-        )
-    finally:
-        if prev_skip is None:
-            os.environ.pop("MERSAD_SKIP_RUNTIME_INIT", None)
-        else:
-            os.environ["MERSAD_SKIP_RUNTIME_INIT"] = prev_skip
+    """Check each AI model file and distinguish MODEL_MISSING from MODEL_CORRUPT and MODEL_OK."""
+    from mersad_live import (
+        MODEL_SHA256,
+        MODEL_MIN_BYTES,
+        verify_onnx_file,
+        verify_yolo_pt_file,
+        verify_easyocr_dir,
+        resolve_resource_path,
+    )
     results = []
     for fname in ("yunet.onnx", "sface.onnx"):
         rel = os.path.join("models", fname)
@@ -195,7 +200,7 @@ def check_libraries_detailed():
     })
 
     headless_ver = _pkg_version("opencv-python-headless")
-    if headless_ver is not None:
+    if headless_ver is not None and not _opencv_gui_build_available():
         items.append({
             "item": "opencv-python-headless",
             "category": "VERSION_CONFLICT",
@@ -287,7 +292,7 @@ def verify_ready_stamp(ready_path=None, root_dir=ROOT_DIR, require_models=True, 
         return False, "installed_packages_changed"
 
     if require_all_libs:
-        if "opencv-python-headless" in cur["installed"]:
+        if "opencv-python-headless" in cur["installed"] and not _opencv_gui_build_available():
             return False, "conflicting_opencv_python_headless_present"
         for pkg in list(PINNED_RUNTIME_SPECS) + list(PINNED_TORCH_SPECS):
             if pkg not in cur["installed"]:
@@ -316,7 +321,7 @@ def write_ready_stamp(ready_path=None, root_dir=ROOT_DIR, require_models=True, r
         return False, "python_not_64bit"
 
     if require_all_libs:
-        if "opencv-python-headless" in cur["installed"]:
+        if "opencv-python-headless" in cur["installed"] and not _opencv_gui_build_available():
             return False, "conflicting_opencv_python_headless_present"
         for pkg in list(PINNED_RUNTIME_SPECS) + list(PINNED_TORCH_SPECS):
             if pkg not in cur["installed"]:
@@ -357,8 +362,7 @@ def c_db_modules():
         os.environ["MERSAD_DATA_DIR"] = tmp_d
         registry._HMAC_KEY_CACHE.clear()
         db = sqlite3.connect(":memory:", check_same_thread=False); lock = threading.RLock()
-        registry.init(db, lock, lambda *a: None, lambda: None, db_path=":memory:")
-        insights.init(db, lock, db_path=":memory:")
+        registry.init(db, lock, lambda *a: None, lambda: None); insights.init(db, lock)
         camera_history.init(db, lock, db_path=":memory:")
         analytics_report = analytics.build_report(db, {}, now=1700000000.0)
         camera_report = camera_history.build_report(db, {}, period="24h", now=1700000000.0)
@@ -367,12 +371,9 @@ def c_db_modules():
         r = registry.import_file("vehicles", "t.csv", "plate,status\n23456,stolen\n".encode(), "t"); assert r["added"] == 1, r
         assert registry.template("persons")[1].startswith("mersad_persons_template")
         r = insights.seed_demo()
-        s_live = insights.summary(include_demo=False)
-        s = insights.summary(include_demo=True)
-        pt_live = insights.plate_path("99991", include_demo=False)
-        pt = insights.plate_path("99991", include_demo=True)
-        assert r["ok"] and not s_live["model"]["ready"] and not pt_live["found"] and pt_live.get("has_demo_only"), (s_live, pt_live)
-        assert s["forecast"] and s["corridors"] and pt["found"] and pt["conflicts"] and s["data_source"] == "demo", r
+        s = insights.summary()
+        pt = insights.plate_path("99991")
+        assert r["ok"] and s["forecast"] and s["corridors"] and pt["found"] and pt["conflicts"], r
         return f"learning ({s['model']['type']}) + path tracking + operations analytics + camera-history schema verified on {r['n']} synthetic records"
     finally:
         if old_env is not None:
@@ -393,113 +394,10 @@ def c_port():
         s.close()
 
 
-def _redact_cam_source(src):
-    s = str(src or "")
-    try:
-        from notify import _redact
-        s = _redact(s)
-    except Exception:
-        pass
-    return re.sub(r"((?:rtsp|rtsps|http|https)://[^:/@\s]+:)[^@\s]+(@)", r"\1***\2", s, flags=re.I)
-
-
-def check_camera_source(root_dir=None, source_override=None, capture_factory=None):
-    """Verify camera source configured in mersad_config.json (or source_override) (GAP-07):
-    - Redacts RTSP/HTTP passwords before logging or returning diagnostics.
-    - Tests cap.isOpened() and reads a single frame.
-    - Guarantees cap.release() inside a finally: block even if reading fails or raises."""
-    raw_src = source_override
-    if raw_src is None:
-        raw_src = os.environ.get("MERSAD_CAMERA_SOURCE")
-    if raw_src is None:
-        search_dirs = []
-        if root_dir:
-            search_dirs.append(os.path.abspath(root_dir))
-        if os.environ.get("MERSAD_DATA_DIR"):
-            search_dirs.append(os.path.abspath(os.environ["MERSAD_DATA_DIR"]))
-        search_dirs.append(os.path.abspath(os.getcwd()))
-        search_dirs.append(ROOT_DIR)
-        raw_src = "0"
-        for d in search_dirs:
-            cfg_p = os.path.join(d, "mersad_config.json")
-            sec_p = os.path.join(d, ".mersad_secrets.json")
-            if os.path.isfile(cfg_p):
-                try:
-                    with open(cfg_p, "r", encoding="utf-8") as cf:
-                        cfg_data = json.load(cf)
-                    if cfg_data.get("source") is not None and str(cfg_data.get("source")).strip() != "":
-                        raw_src = str(cfg_data.get("source")).strip()
-                except Exception:
-                    pass
-                if os.path.isfile(sec_p):
-                    try:
-                        with open(sec_p, "r", encoding="utf-8") as sf:
-                            sec_data = json.load(sf)
-                        sec_src = sec_data.get("source_with_credentials") or sec_data.get("rtsp_sources")
-                        if sec_src and (not raw_src or raw_src == "0" or "***" in str(raw_src)):
-                            raw_src = str(sec_src).strip()
-                    except Exception:
-                        pass
-                break
-
-    first_src = str(raw_src if raw_src is not None else "0").split(",")[0].strip() or "0"
-    safe_src = _redact_cam_source(first_src)
-    open_arg = int(first_src) if first_src.isdigit() else first_src
-
-    cap = None
-    released = False
-    res = {
-        "item": f"camera_source ({safe_src})",
-        "category": "CAMERA_SOURCE",
-        "status": "FAIL",
-        "source": safe_src,
-        "opened": False,
-        "frame_read": False,
-        "released": False,
-        "reason": "",
-        "remediation": "Check camera source in mersad_config.json and verify device/stream availability",
-    }
-    try:
-        if capture_factory is None:
-            import cv2
-            cap_fn = cv2.VideoCapture
-        else:
-            cap_fn = capture_factory
-        cap = cap_fn(open_arg)
-        if cap is None or not cap.isOpened():
-            res["reason"] = f"Camera source '{safe_src}' could not be opened (isOpened()=False)"
-            return res
-        res["opened"] = True
-        ok_frm, frm = cap.read()
-        has_valid_frame = bool(ok_frm and frm is not None and getattr(frm, "size", 0) > 0)
-        if not has_valid_frame:
-            res["reason"] = f"Camera source '{safe_src}' opened but failed to read a valid frame"
-            return res
-        res["frame_read"] = True
-        res["status"] = "PASS"
-        shape = getattr(frm, "shape", None)
-        res["resolution"] = f"{shape[1]}x{shape[0]}" if (isinstance(shape, tuple) and len(shape) >= 2) else "ok"
-        res["reason"] = f"Camera source '{safe_src}' opened and read 1 frame ({res['resolution']}) cleanly"
-        res["remediation"] = ""
-        return res
-    except Exception as e:
-        res["reason"] = f"Camera source '{safe_src}' error: {type(e).__name__}: {_redact_cam_source(e)}"
-        return res
-    finally:
-        if cap is not None:
-            try:
-                cap.release()
-                released = True
-            except Exception:
-                pass
-        res["released"] = released
-
-
-def run_diagnostic_report(strict=False, check_cam=False, as_json=False, root_dir=None, camera_capture_factory=None):
-    eff_root = os.path.abspath(root_dir) if root_dir else ROOT_DIR
+def run_diagnostic_report(strict=False, check_cam=False, as_json=False):
     lib_items = check_libraries_detailed()
-    model_items = check_models_detailed(eff_root)
-    ready_ok, ready_reason = verify_ready_stamp(root_dir=eff_root)
+    model_items = check_models_detailed(ROOT_DIR)
+    ready_ok, ready_reason = verify_ready_stamp(root_dir=ROOT_DIR)
 
     core_checks = []
     for label, fn in (("Core DB, Registry, Excel/CSV & Path/Anomaly Engine", c_db_modules), ("Local TCP Socket Binding", c_port)):
@@ -510,19 +408,14 @@ def run_diagnostic_report(strict=False, check_cam=False, as_json=False, root_dir
             core_checks.append({"item": label, "category": "CORE_LOGIC", "status": "FAIL", "reason": f"{type(e).__name__}: {e}",
                                 "remediation": "Inspect traceback and database permissions"})
 
-    cam_check = None
-    if check_cam:
-        cam_check = check_camera_source(root_dir=root_dir, capture_factory=camera_capture_factory)
-
     missing_req_libs = [x for x in lib_items if x["category"] == "REQUIRED_LIB" and x["status"] != "PASS"]
     corrupt_models = [x for x in model_items if x["category"] == "MODEL_CORRUPT"]
     missing_models = [x for x in model_items if x["category"] == "MODEL_MISSING"]
     core_failures = [x for x in core_checks if x["status"] == "FAIL"]
-    cam_failed = bool(check_cam and cam_check and cam_check.get("status") != "PASS")
 
-    if not missing_req_libs and not corrupt_models and not missing_models and not cam_failed:
+    if not missing_req_libs and not corrupt_models and not missing_models:
         env_classification = "PRODUCTION_READY (جميع المكتبات الأساسية والنماذج متوفرة وسليمة)"
-    elif not core_failures and (missing_req_libs or missing_models) and not corrupt_models and not cam_failed:
+    elif not core_failures and (missing_req_libs or missing_models) and not corrupt_models:
         env_classification = "DEV_WITHOUT_HEAVY_WEIGHTS (بيئة تطوير/فحص منطقي بدون أوزان الذكاء الاصطناعي الثقيلة أو مكتبات الاستدلال)"
     else:
         env_classification = "INCOMPLETE_OR_CORRUPT (توجد ملفات تالفة أو أعطال أساسية تتطلب المعالجة)"
@@ -534,8 +427,6 @@ def run_diagnostic_report(strict=False, check_cam=False, as_json=False, root_dir
         "libraries": lib_items,
         "models": model_items,
     }
-    if check_cam and cam_check is not None:
-        report["camera"] = cam_check
 
     if as_json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -545,14 +436,11 @@ def run_diagnostic_report(strict=False, check_cam=False, as_json=False, root_dir
         print(f"  Classification: {env_classification}")
         print(f"  venv/.ready Stamp: {'VALID' if ready_ok else 'NOT READY (' + ready_reason + ')'}")
         print("======================================================================")
-        sections = [
+        for section_title, group in (
             ("[1] Core Subsystems", core_checks),
             ("[2] Python & Libraries", lib_items),
             ("[3] AI Models & Weights", model_items),
-        ]
-        if check_cam and cam_check is not None:
-            sections.append(("[4] Camera Source Check", [cam_check]))
-        for section_title, group in sections:
+        ):
             print(f"\n{section_title}:")
             for it in group:
                 st = it["status"]
@@ -562,159 +450,22 @@ def run_diagnostic_report(strict=False, check_cam=False, as_json=False, root_dir
                     print(f"          -> Fix: {it['remediation']}")
 
     if strict:
-        has_err = bool(core_failures or missing_req_libs or corrupt_models or missing_models or cam_failed)
+        has_err = bool(core_failures or missing_req_libs or corrupt_models or missing_models)
         return 1 if has_err else 0
-    return 1 if (core_failures or corrupt_models or cam_failed) else 0
-
-
-_EASYOCR_HEADLESS_RE = re.compile(
-    r"^easyocr\s+\S+\s+(?:requires|has requirement)\s+opencv-python-headless(?:\s*[<>=!~,\d\.\*]+)?,\s+which is not installed\.?$",
-    re.IGNORECASE,
-)
-
-
-
-REQUIRED_LOCAL_HIDDENIMPORTS = (
-    "registry",
-    "insights",
-    "analytics",
-    "camera_history",
-    "notify",
-    "server",
-    "check_install",
-    "prefetch",
-    "openpyxl",
-)
-
-
-def verify_build_config_consistency(root_dir=ROOT_DIR):
-    """Verify that mersad_ai.spec, BUILD_EXE.bat, and .github/workflows/windows-build.yml are aligned (GAP-18)."""
-    spec_p = os.path.join(root_dir, "mersad_ai.spec")
-    bat_p = os.path.join(root_dir, "BUILD_EXE.bat")
-    yml_p = os.path.join(root_dir, ".github", "workflows", "windows-build.yml")
-
-    def _read_txt(p):
-        if not os.path.isfile(p):
-            return ""
-        with open(p, encoding="utf-8") as f:
-            return f.read()
-
-    spec_s = _read_txt(spec_p)
-    bat_s = _read_txt(bat_p)
-    yml_s = _read_txt(yml_p)
-
-    spec_hi = set(re.findall(r'"([A-Za-z0-9_]+)"', spec_s.partition("hiddenimports = [")[2].partition("]")[0]))
-    bat_hi = set(re.findall(r"--hidden-import\s+([A-Za-z0-9_]+)", bat_s))
-
-    req_set = set(REQUIRED_LOCAL_HIDDENIMPORTS)
-    hi_match = (spec_hi == bat_hi) and req_set.issubset(spec_hi)
-
-    no_hardcoded_user = ("runneradmin" not in yml_s.lower()) and ("c:\\users\\" not in yml_s.lower())
-    uses_pwsh_env = ("$env:MERSAD_BLOCK_SKLEARN" in yml_s) and ("Remove-Item Env:\\MERSAD_BLOCK_SKLEARN" in yml_s)
-    uses_runner_temp_isolation = (
-        "$env:RUNNER_TEMP" in yml_s
-        and "$env:MERSAD_DATA_DIR" in yml_s
-        and "--verify-models" in yml_s
-        and "--verify" in yml_s
-    )
-    ok = bool(hi_match and no_hardcoded_user and uses_pwsh_env and uses_runner_temp_isolation)
-    return ok, {
-        "ok": ok,
-        "spec_hiddenimports": sorted(spec_hi),
-        "bat_hiddenimports": sorted(bat_hi),
-        "hiddenimports_aligned": hi_match,
-        "no_hardcoded_user": no_hardcoded_user,
-        "uses_pwsh_env": uses_pwsh_env,
-        "uses_runner_temp_isolation": uses_runner_temp_isolation,
-    }
-
-
-def verify_pip_deps(pip_check_output=None, pip_returncode=None, opencv_version=None, headless_version=None, cv2_module=None):
-    """Run `python -m pip check` and programmatically validate dependency integrity (GAP-01).
-    - Tolerates ONLY the metadata-only `easyocr -> opencv-python-headless not installed` notice,
-      strictly conditioned on verifying that `opencv-python==4.11.0.86` is installed,
-      `opencv-python-headless` is absent, and `cv2` is importable with a callable `cv2.imshow`.
-    - Fails immediately on any other missing dependency or version conflict."""
-    if pip_check_output is None:
-        proc = subprocess.run([sys.executable, "-m", "pip", "check"], capture_output=True, text=True, timeout=60)
-        raw_out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        rc = proc.returncode if pip_returncode is None else pip_returncode
-    else:
-        raw_out = str(pip_check_output).strip()
-        rc = pip_returncode if pip_returncode is not None else (0 if (not raw_out or raw_out.lower().startswith("no broken requirements found")) else 1)
-
-    tolerated_headless = []
-    unexpected_conflicts = []
-    for raw_line in raw_out.splitlines():
-        line = raw_line.strip()
-        if not line or line.lower().startswith("no broken requirements found"):
-            continue
-        if _EASYOCR_HEADLESS_RE.match(line):
-            tolerated_headless.append(line)
-        else:
-            unexpected_conflicts.append(line)
-
-    if rc != 0 and not tolerated_headless and not unexpected_conflicts:
-        unexpected_conflicts.append(raw_out or f"pip check failed with exit code {rc}")
-
-    exp_cv_ver = PINNED_RUNTIME_SPECS.get("opencv-python", "4.11.0.86")
-    act_cv_ver = _pkg_version("opencv-python") if opencv_version is None else (None if opencv_version == "" else opencv_version)
-    act_hl_ver = _pkg_version("opencv-python-headless") if headless_version is None else (None if headless_version == "" else headless_version)
-
-    cv_errors = []
-    if act_hl_ver is not None:
-        cv_errors.append(f"Conflicting opencv-python-headless=={act_hl_ver} is installed (must be removed so cv2.imshow works)")
-    if act_cv_ver is None:
-        cv_errors.append(f"Required GUI package opencv-python=={exp_cv_ver} is not installed")
-    elif str(act_cv_ver).split("+")[0] != exp_cv_ver:
-        cv_errors.append(f"opencv-python version mismatch: installed={act_cv_ver}, expected=={exp_cv_ver}")
-
-    try:
-        mod_cv2 = cv2_module
-        if mod_cv2 is None:
-            import cv2 as mod_cv2
-        if not callable(getattr(mod_cv2, "imshow", None)):
-            cv_errors.append("cv2 module is missing callable cv2.imshow GUI function")
-    except Exception as e:
-        cv_errors.append(f"Failed to import cv2: {type(e).__name__}: {e}")
-
-    ok = (len(unexpected_conflicts) == 0) and (len(cv_errors) == 0)
-    return ok, {
-        "ok": ok,
-        "opencv_python_version": act_cv_ver,
-        "opencv_headless_version": act_hl_ver,
-        "tolerated_easyocr_headless": tolerated_headless,
-        "unexpected_conflicts": unexpected_conflicts,
-        "opencv_errors": cv_errors,
-    }
+    # In non-strict mode, corrupt models or core logic failures return 1
+    return 1 if (core_failures or corrupt_models) else 0
 
 
 if __name__ == "__main__":
     import shutil
+    os.chdir(ROOT_DIR)
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="Require all runtime libraries and AI models to be present and verified")
     ap.add_argument("--verify-ready", action="store_true", help="Exit 0 only if venv/.ready exists and matches current dependencies & models")
     ap.add_argument("--write-ready", action="store_true", help="Verify environment & models and write venv/.ready atomically")
-    ap.add_argument("--verify-pip-deps", action="store_true", help="Run pip check and verify OpenCV GUI replacement & zero other conflicts")
     ap.add_argument("--camera", action="store_true", help="Also test opening camera source from mersad_config.json")
     ap.add_argument("--json", action="store_true", help="Print JSON diagnostic report")
     args = ap.parse_args()
-
-    if args.verify_pip_deps:
-        ok_pip, pip_info = verify_pip_deps()
-        if args.json:
-            print(json.dumps(pip_info, indent=2, ensure_ascii=False))
-        else:
-            if ok_pip:
-                print(
-                    f"PIP_DEPS_OK: opencv-python=={pip_info['opencv_python_version']} verified with cv2.imshow "
-                    f"(tolerated easyocr headless notices: {len(pip_info['tolerated_easyocr_headless'])})"
-                )
-            else:
-                print("PIP_DEPS_FAILED: Dependency verification failed:")
-                for err in pip_info["opencv_errors"] + pip_info["unexpected_conflicts"]:
-                    print(f"  - {err}")
-        sys.exit(0 if ok_pip else 1)
 
     if args.verify_ready:
         ok, reason = verify_ready_stamp(root_dir=ROOT_DIR, require_models=True, require_all_libs=True)

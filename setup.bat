@@ -30,13 +30,12 @@ if not exist "venv\Scripts\python.exe" (
 )
 
 echo [2/6] Upgrading pip and verifying 64-bit Python...
-venv\Scripts\python.exe -c "import struct,sys; assert struct.calcsize('P')*8==64, '64-bit Python required'; print('Python', sys.version)" || (
-    echo [ERROR] 64-bit Python 3.10-3.12 is required ^(recommended: Python 3.11 64-bit^).
+venv\Scripts\python.exe -c "import struct,sys; assert sys.version_info[:2]==(3,11), 'Python 3.11 required'; assert struct.calcsize('P')*8==64, '64-bit Python required'; print('Python', sys.version)" || (
+    echo [ERROR] Python 3.11 64-bit is required for the pinned PyTorch/EasyOCR/PyInstaller build.
     exit /b 1
 )
 venv\Scripts\python.exe -m pip install --upgrade pip || exit /b 1
 
-REM Default to CPU PyTorch wheels for universal Windows x64 compatibility; if a CUDA wheel is installed, mersad_live.py (--device auto / --gpu) enables GPU automatically (GAP-16)
 echo [3/6] Installing pinned PyTorch CPU wheels ^(torch==2.5.1, torchvision==0.20.1^)...
 venv\Scripts\pip.exe install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu || exit /b 1
 
@@ -46,8 +45,8 @@ venv\Scripts\pip.exe install -r requirements.txt -c constraints-win-x64.txt || e
 echo [5/6] Enforcing full OpenCV GUI support ^(removing headless wheel pulled by easyocr^)...
 venv\Scripts\pip.exe uninstall -y opencv-python-headless >nul 2>nul
 venv\Scripts\pip.exe install --force-reinstall --no-deps opencv-python==4.11.0.86 || exit /b 1
-venv\Scripts\python.exe check_install.py --verify-pip-deps || (
-    echo [ERROR] Dependency conflict detected by check_install.py --verify-pip-deps.
+venv\Scripts\python.exe -m pip check || (
+    echo [ERROR] Dependency conflict detected by pip check.
     exit /b 1
 )
 

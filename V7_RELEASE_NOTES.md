@@ -1,48 +1,46 @@
-# MERSAD AI — V7 Operational Enhanced
+# MERSAD AI — V7.1 Hardened Operational Build
 
 **Date:** 2026-10-26
 
-## What's new
+## Operational hardening
 
-### 1. Operations Command Center
-- Added an authenticated `مركز القيادة` dashboard tab.
-- Compares live (non-demo) sightings in the last 24 hours with the preceding 24-hour period.
-- Displays a 24-slot hourly trend, vehicle-class distribution, confidence bands, camera health counters, and alert/dispatch summaries.
-- Generates transparent rule-based recommendations for offline/reconnecting cameras, low FPS, low OCR confidence, unresolved dispatches, and small sample sizes.
+### P0-E — Cross-process database and listener stability
+- Hardened the re-entrant inter-process SQLite lock so lock depth changes only after successful acquisition and is restored safely if sidecar setup fails.
+- Initializes a byte before Windows CRT byte-range locking and scopes Telegram listener lock names to a hash of the configured bot token.
+- Added bounded listener shutdown waiting so the process can release its single-owner polling lock cleanly.
+- Reworked the multiprocessing stress fixture to synchronize both workers, verify exactly one listener owner, keep the database/audit workload separate from unrelated native image encoding and outbound network threads, and report ownership/child exit diagnostics. The assertions still require 100 unique alerts, intact audit chain, no worker errors, and exactly one listener owner.
 
-### 2. Persistent camera reliability history
-- Added `camera_status_history` SQLite table, created idempotently and serialized across multiple processes.
-- Records startup and changes between `online`, `reconnecting`, `offline`, and `unknown`.
-- Shows observed online/downtime, approximate uptime, coverage, outage count, recovery count, and recent transitions for 24 hours, 7 days, or 30 days.
-- Does not infer uptime during periods when the app was stopped or when no camera status was observed.
+### P1-C — Camera fault isolation and fair progress
+- Camera open/read/reconnect work remains in a separate worker per camera; RTSP/HTTP capture uses bounded FFmpeg open/read timeouts.
+- Main startup no longer synchronously opens each camera, reducing the risk that one unreachable stream blocks server startup or other cameras.
+- Improved shutdown ordering by signalling workers, releasing captures, and joining readers with a bounded timeout.
+- Added a watchdog to the finite-camera self-test so a deadlocked test case is reported as a failure instead of hanging the whole CI job.
+- Improved the slow-vs-fast camera test fixture to give the live latest-frame pipeline input headroom while still requiring at least 18 frames from the fast stream and verifying it makes progress substantially faster than the deliberately slow stream.
 
-### 3. Privacy-conscious exports and authenticated API
-- `/api/analytics`
-- `/api/analytics/export.csv`
-- `/api/camera-health?period=24h|7d|30d`
-- `/api/camera-health/export.csv?period=24h|7d|30d`
-- CSV output is UTF-8 with BOM and neutralizes values that spreadsheet applications might interpret as formulas.
-- Analytics CSV contains aggregated metrics only. It intentionally excludes plate values, person names, biometric embeddings, and evidence paths.
+### Storage, model integrity, and export
+- Added SQLite journaling selection: use WAL on local paths, choose DELETE journaling for detected UNC/mapped remote Windows paths, and fall back to DELETE if a local filesystem rejects WAL. An explicit error recommends a local data path if DELETE cannot be established.
+- EasyOCR now validates local detector/recognizer weights before initialization and calls `Reader(..., download_enabled=False)`; missing/corrupt weights fail with actionable setup guidance instead of triggering runtime downloads.
+- Frozen distributions prefer packaged resources over stale writable app-data resources, verify YuNet, SFace, YOLOv8n, and EasyOCR assets, and fail clearly if the complete `models/` folder is absent or damaged.
+- Added `MERSAD_AI.exe --verify-models` / `python mersad_live.py --verify-models` for an explicit post-build check of every required model. The command exits nonzero and does not download missing files; the check prefers the distribution folder rather than stale models in writable app data.
+- Fixed the Command Center analytics CSV link to pass through the same query-token helper as other authenticated export links.
 
-### 4. Reliability and build integration
-- Added analytics and camera-history modules to `mersad_ai.spec` and `BUILD_EXE.bat` hidden imports.
-- Added health/analytics smoke checks to `check_install.py` and 10 V7-related self-tests/integration checks.
-- Made camera-history schema creation use the existing interprocess SQLite transaction lock to avoid simultaneous-startup schema races.
-- Improved POSIX read-only install-directory detection, including tests running as root.
-- Tightened Windows CI to stop when dependency checks, self-tests, model preparation, PyInstaller, or standalone verification fails.
+### Release/build guardrails
+- `setup.bat` now requires Python 3.11 64-bit, matching the pinned Windows build environment.
+- `BUILD_EXE.bat` runs three standard self-test passes and a fourth pass with scikit-learn disabled before PyInstaller, then verifies both the audit chain and bundled AI models after build.
+- Windows CI is configured for three standard and two no-scikit-learn test passes, strict dependency/model checks, a `--onedir` EXE build, post-build audit/model verification, and a relocated distribution path containing Arabic characters and spaces.
 
-## Test status
+## Verification completed in the available Linux environment
 
-- Python compilation: PASS.
-- Dashboard JavaScript syntax (`node --check`): PASS.
-- `python selftest.py`: **175 PASS / 0 SKIP / 0 FAIL** in final successful run.
-- `MERSAD_BLOCK_SKLEARN=1 python selftest.py`: **175 PASS / 0 SKIP / 0 FAIL** in final successful run.
-- `python check_install.py --json`: exit code 0; environment is classified as development without heavy AI weights, because this Linux container does not contain EasyOCR/Ultralytics weights and the target runtime is Windows Python 3.11 x64.
+- `python -m compileall -q .`: PASS.
+- `node --check` on the extracted inline dashboard JavaScript: PASS.
+- Exact final ZIP was extracted and checked: Python compilation and dashboard `node --check` passed. The extracted archive passed `python -u selftest.py` and `MERSAD_BLOCK_SKLEARN=1 python -u selftest.py`, each **136 PASS / 0 SKIP / 0 FAIL**. An additional final working-tree full-suite run also passed 136/136.
+- P0-E and P1-C passed in every final full-suite run, including the exact-archive runs.
+- `python mersad_live.py --verify-models` correctly exited with code 2 and explicitly listed missing models in this model-free environment (negative-path test).
+- `check_install.py --json`: exit code 0, classified as `DEV_WITHOUT_HEAVY_WEIGHTS`.
+- `check_install.py --strict`: exit code 1 as expected here because this is Linux/Python 3.13.5, not the pinned Windows/Python 3.11 build environment, and EasyOCR/Ultralytics plus model weights are absent.
 
-## Source archive and release limitation
+## Release limitations — must remain visible
 
-The supplied attachments included the V6 test report and V6 release notes, but **not the V6 source archive**. This enhancement package therefore starts from the available `MERSAD_AI_FIXED_5.zip` source, reconstructs the documented V6 analytics design, and adds the new V7 camera-reliability feature. It cannot preserve unprovided code changes that might exist only in a separate V6 source tree.
+This package was not built as a Windows `.exe` in this Linux environment. Windows CI and a real Windows 10/11 smoke test are still required before describing the EXE as built or production-ready. No physical RTSP/USB camera or real Telegram bot was available; actual camera throughput, field Arabic OCR accuracy, and real Telegram delivery are not claimed as verified. The Windows workflow is prepared to exercise these gates when run on a Windows runner.
 
-The Windows EXE was **not** built or run in this Linux environment. Real camera throughput, field Arabic OCR accuracy, actual Telegram delivery, and Windows CI remain release gates.
-
-- V7.1 Stages 1–10 engineering remediation completed (**175 PASS / 0 SKIP / 0 FAIL**), including `--evaluate-plates` two-stage vehicle/plate evaluation.
+The supplied V6 report and release notes did not include the V6 source archive. This lineage remains a hardened enhancement of the available `MERSAD_AI_FIXED_5.zip` plus the documented V6 analytics and V7 camera-history features; it cannot guarantee preservation of source-only changes from an unavailable independent V6 source tree.

@@ -10,93 +10,35 @@ MAX_UPLOAD = 5_000_000
 log = logging.getLogger("mersad.server")
 
 
-def resolve_dashboard_path(filename="dashboard.html"):
-    """Resolve static UI asset path reliably across source tree, PyInstaller _MEIPASS, and frozen .exe directory (GAP-12)."""
-    candidates = []
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        candidates.append(os.path.join(meipass, filename))
-    if getattr(sys, "frozen", False):
-        candidates.append(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), filename))
-    candidates.append(os.path.join(BASE, filename))
-    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), filename))
-    data_dir = os.environ.get("MERSAD_DATA_DIR")
-    if data_dir:
-        candidates.append(os.path.join(data_dir, filename))
-    candidates.append(os.path.abspath(filename))
-    for c in candidates:
-        if c and os.path.isfile(c):
-            return c
-    return os.path.join(BASE, filename)
-
-
 class Bus:
     def __init__(self):
-        self._lock = threading.RLock()
         self.frame, self.fid, self.subs, self.alerts, self.failed_dispatches = None, 0, [], [], []
         self.cam_frames = {}                             # cam_id -> {"jpg": bytes, "fid": int, "status": str, "ts": float}
-        self.cam_status = {}                             # cam_id -> str ("online" | "reconnecting" | "offline")
         self.token = secrets.token_urlsafe(12)
         self.post = {}                                   # path -> fn(data: dict, ip) -> dict
         self.verify = lambda: "Audit chain OK (0 records)"
         self.on_list = self.on_template = self.on_import = self.on_insights = self.on_stats = self.on_path = None
-        self.on_camera_links = self.on_camera_links_export = self.on_camera_links_import = None
-        self.on_field_calibrations = self.on_field_calibrations_export = self.on_field_calibrations_import = None
-        self.on_plate_eval_status = self.on_plate_eval_history = None
         self.on_analytics = self.on_analytics_export = None
         self.on_camera_health = self.on_camera_health_export = None
         self.evidence_dir = "evidence"
         self.archive_dir = "evidence_archive"
 
     def set_frame(self, jpg, cam=None, status="online"):
-        now_ts = time.time()
-        with self._lock:
-            self.frame, self.fid = jpg, self.fid + 1
-            if cam:
-                prev = self.cam_frames.get(cam, {})
-                self.cam_frames[cam] = {
-                    "jpg": jpg,
-                    "fid": prev.get("fid", 0) + 1,
-                    "status": status,
-                    "ts": now_ts
-                }
-                self.cam_status[cam] = status
-
-    def get_stream_frame(self, cam=""):
-        with self._lock:
-            if cam and cam in self.cam_frames:
-                cf = self.cam_frames[cam]
-                return cf.get("fid", 0), cf.get("jpg")
-            return self.fid, self.frame
-
-    def get_init_payload(self):
-        with self._lock:
-            alerts_copy = list(self.alerts)
-            fdisp_copy = list(self.failed_dispatches)
-        return json.dumps({"type": "init", "alerts": alerts_copy, "failed_dispatches": fdisp_copy}, ensure_ascii=False)
-
-    def add_sub(self, q):
-        with self._lock:
-            if q not in self.subs:
-                self.subs.append(q)
-
-    def remove_sub(self, q):
-        with self._lock:
-            while q in self.subs:
-                self.subs.remove(q)
+        self.frame, self.fid = jpg, self.fid + 1
+        if cam:
+            prev = self.cam_frames.get(cam, {})
+            self.cam_frames[cam] = {
+                "jpg": jpg,
+                "fid": prev.get("fid", 0) + 1,
+                "status": status,
+                "ts": time.time()
+            }
 
     def publish(self, ev):
-        if isinstance(ev, dict) and ev.get("type") == "camera_status" and ev.get("cam"):
-            with self._lock:
-                self.cam_status[ev["cam"]] = ev.get("status", "unknown")
         s = json.dumps(ev, ensure_ascii=False)
-        with self._lock:
-            subs_snapshot = list(self.subs)
-        for q in subs_snapshot:
-            try:
-                q.put_nowait(s)
-            except Exception:
-                pass
+        for q in list(self.subs):
+            try: q.put_nowait(s)
+            except Exception: pass
 
 
 bus = Bus()
@@ -123,27 +65,20 @@ class H(BaseHTTPRequestHandler):
     def _auth(self):
         provided = self.arg("k") or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
         if not provided or not bus.token or not secrets.compare_digest(str(provided), str(bus.token)):
-            try:
-                self.send_error(403, "Forbidden")
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                pass
-            return None
+            self.send_error(403, "Forbidden"); return None
         return urlparse(self.path).path
 
     def _send(self, body, ctype="text/html; charset=utf-8", headers=None, code=200):
-        try:
-            self.send_response(code)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Cache-Control", "no-store")
-            for k, v in (headers or {}).items():
-                self.send_header(k, v)
-            self.end_headers()
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
 
     def _json(self, o, code=200):
         self._send(json.dumps(o, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", code=code)
@@ -179,7 +114,7 @@ class H(BaseHTTPRequestHandler):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                with open(resolve_dashboard_path("dashboard.html"), "rb") as f:
+                with open(os.path.join(BASE, "dashboard.html"), "rb") as f:
                     self._send(f.read())
             elif p == "/stream.mjpg": self.stream(self.arg("cam"))
             elif p == "/events": self.events()
@@ -194,38 +129,8 @@ class H(BaseHTTPRequestHandler):
             elif p == "/api/camera-health/export.csv":
                 body = bus.on_camera_health_export(self.arg("period") or "24h") if bus.on_camera_health_export else b"\xef\xbb\xbf"
                 self._send(body, "text/csv; charset=utf-8", {"Content-Disposition": 'attachment; filename="mersad_camera_health.csv"'})
-            elif p == "/api/insights":
-                inc_demo = self.arg("demo").strip().lower() in ("1", "true", "yes")
-                try:
-                    self._json(bus.on_insights(include_demo=inc_demo))
-                except TypeError:
-                    self._json(bus.on_insights())
-            elif p == "/api/path" and bus.on_path:
-                inc_demo = self.arg("demo").strip().lower() in ("1", "true", "yes")
-                try:
-                    self._json(bus.on_path(self.arg("plate"), include_demo=inc_demo))
-                except TypeError:
-                    self._json(bus.on_path(self.arg("plate")))
-            elif p == "/api/camera_links":
-                if bus.on_camera_links:
-                    try:
-                        self._json(bus.on_camera_links(q=self.arg("q")[:80], status=self.arg("status")[:40]))
-                    except TypeError:
-                        self._json(bus.on_camera_links())
-                else:
-                    self._json({"ok": True, "links": [], "inferred_links": [], "calibrated_cameras": []})
-            elif p == "/api/camera_links/export" and bus.on_camera_links_export:
-                body, name, mime = bus.on_camera_links_export(self.arg("fmt") or "json")
-                self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
-            elif p == "/api/field_calibrations":
-                self._json(bus.on_field_calibrations() if bus.on_field_calibrations else {"ok": True, "items": []})
-            elif p == "/api/field_calibrations/export" and bus.on_field_calibrations_export:
-                body, name, mime = bus.on_field_calibrations_export(self.arg("fmt") or "json")
-                self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
-            elif p == "/api/plate_eval/status":
-                self._json(bus.on_plate_eval_status() if bus.on_plate_eval_status else {"ok": True, "running": False, "status": "idle"})
-            elif p == "/api/plate_eval/history":
-                self._json(bus.on_plate_eval_history() if bus.on_plate_eval_history else {"ok": True, "runs": []})
+            elif p == "/api/insights": self._json(bus.on_insights())
+            elif p == "/api/path" and bus.on_path: self._json(bus.on_path(self.arg("plate")))
             elif p == "/api/list" and self.arg("kind") in ("vehicles", "persons"):
                 self._json(bus.on_list(self.arg("kind"), self.arg("q")[:80]))
             elif p == "/api/template" and self.arg("kind") in ("vehicles", "persons"):
@@ -233,13 +138,10 @@ class H(BaseHTTPRequestHandler):
                 self._send(body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
             elif p.startswith("/evidence/"):
                 self._serve_evidence(p)
-            elif p.startswith("/api/"):
-                self._json({"ok": False, "error": "المسار غير موجود"}, code=404)
             else:
                 self.send_error(404)
         except FileNotFoundError:
-            try: self.send_error(404)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError): pass
+            self.send_error(404)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         except Exception as e:
@@ -250,85 +152,74 @@ class H(BaseHTTPRequestHandler):
         p = self._auth()
         if p is None: return
         try:
-            try:
-                n = int(self.headers.get("Content-Length", 0))
-            except ValueError:
-                return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
-            if n < 0:
-                return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
-            if n > MAX_UPLOAD:
-                return self._json({"ok": False, "error": "حجم الملف يتجاوز الحد الأقصى المسموح (5 ميجابايت)"}, code=413)
-            raw, ip = self.rfile.read(n), self.client_address[0]
-            try:
-                with bus._lock:
-                    post_fn = bus.post.get(p)
-                if p == "/api/import" and self.arg("kind") in ("vehicles", "persons"):
-                    res = bus.on_import(self.arg("kind"), unquote(self.headers.get("X-Filename", "")), raw, ip)
-                elif p == "/api/camera_links/import" and bus.on_camera_links_import:
-                    res = bus.on_camera_links_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
-                elif p == "/api/field_calibrations/import" and bus.on_field_calibrations_import:
-                    res = bus.on_field_calibrations_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
-                elif post_fn is not None:
-                    payload = json.loads(raw.decode("utf-8") if raw else "{}")
-                    if not isinstance(payload, dict):
-                        res = {"ok": False, "error": "بيانات الطلب غير صالحة"}
-                    else:
-                        res = post_fn(payload, ip)
-                elif p.startswith("/api/"):
-                    return self._json({"ok": False, "error": "المسار غير موجود"}, code=404)
+            n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            return self.send_error(400)
+        if n < 0 or n > MAX_UPLOAD:
+            return self.send_error(413)
+        raw, ip = self.rfile.read(n), self.client_address[0]
+        try:
+            if p == "/api/import" and self.arg("kind") in ("vehicles", "persons"):
+                res = bus.on_import(self.arg("kind"), unquote(self.headers.get("X-Filename", "")), raw, ip)
+            elif p in bus.post:
+                payload = json.loads(raw.decode("utf-8") if raw else "{}")
+                if not isinstance(payload, dict):
+                    res = {"ok": False, "error": "بيانات الطلب غير صالحة"}
                 else:
-                    return self.send_error(404)
-            except json.JSONDecodeError:
-                res = {"ok": False, "error": "صيغة JSON غير صالحة"}
-            except Exception as e:
-                log.error("POST %s failed: %s", p, e)
-                res = {"ok": False, "error": "تعذّر معالجة الطلب"}
-            self._json(res)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
+                    res = bus.post[p](payload, ip)
+            else:
+                return self.send_error(404)
+        except json.JSONDecodeError:
+            res = {"ok": False, "error": "صيغة JSON غير صالحة"}
+        except Exception as e:
+            log.error("POST %s failed: %s", p, e)
+            res = {"ok": False, "error": "تعذّر معالجة الطلب"}
+        self._json(res)
 
     def stream(self, cam=""):
-        try:
-            self.send_response(200)
-            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            last = -1
-            while True:
-                cur_fid, b = bus.get_stream_frame(cam)
-                if b is not None and cur_fid != last:
-                    last = cur_fid
-                    self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(b) + b + b"\r\n")
-                time.sleep(0.04)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            return
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        last = -1
+        while True:
+            if cam and cam in bus.cam_frames:
+                cf = bus.cam_frames[cam]
+                cur_fid, b = cf["fid"], cf["jpg"]
+            else:
+                cur_fid, b = bus.fid, bus.frame
+            if b is not None and cur_fid != last:
+                last = cur_fid
+                self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(b) + b + b"\r\n")
+            time.sleep(0.04)
 
     def events(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
         q = queue.Queue(maxsize=200)
-        bus.add_sub(q)
+        bus.subs.append(q)
         try:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            init = bus.get_init_payload()
+            init = json.dumps({"type": "init", "alerts": bus.alerts, "failed_dispatches": bus.failed_dispatches}, ensure_ascii=False)
             self.wfile.write(f"data: {init}\n\n".encode("utf-8"))
             while True:
                 try:
                     self.wfile.write(f"data: {q.get(timeout=15)}\n\n".encode("utf-8"))
                 except queue.Empty:
                     self.wfile.write(b": ping\n\n")
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            return
         finally:
-            bus.remove_sub(q)
+            if q in bus.subs:
+                bus.subs.remove(q)
 
 
 def get_lan_ip():
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
     except Exception:
         try:
             return socket.gethostbyname(socket.gethostname())

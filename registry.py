@@ -6,7 +6,7 @@ Round 4 upgrades:
   status updates, deletion, and known-face loading, plus safe migration/quarantine of legacy ambiguous faces.
 - P1-D: Removal of static fallback HMAC key, atomic secret/key file writing with 0600 permissions from creation,
   and explicit refusal to silently overwrite corrupt/truncated HMAC keys."""
-import contextlib, csv, hashlib, hmac, io, os, re, secrets, shutil, sqlite3, stat, threading, time
+import contextlib, csv, hashlib, hmac, io, logging, os, re, secrets, shutil, sqlite3, stat, subprocess, threading, time
 
 try:
     import fcntl
@@ -33,6 +33,128 @@ _IPC_RLOCK = threading.RLock()
 _IPC_STATE = {"depth": 0, "fd": None}
 
 
+# MERSAD_WINDOWS_PRIVATE_ACL_HELPERS
+def _ensure_windows_lock_byte(fd):
+    fd.seek(0, os.SEEK_END)
+    if fd.tell() == 0:
+        fd.write(bytes([0]))
+        fd.flush()
+    fd.seek(0)
+
+
+def _windows_current_user_sid():
+    if os.name != "nt":
+        return None
+    try:
+        proc = subprocess.run(
+            ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10, check=False,
+        )
+        if proc.returncode != 0:
+            raise OSError((proc.stderr or proc.stdout or "whoami failed").strip())
+        match = re.search(r"\bS-1-(?:\d+-){1,}\d+\b", proc.stdout)
+        if not match:
+            raise OSError("Could not determine current Windows user SID")
+        return match.group(0)
+    except Exception as exc:
+        raise OSError(f"Cannot determine Windows user SID: {exc}") from exc
+
+
+def _windows_acl_script(check_only=False, is_dir=False):
+    if check_only:
+        return r"""
+$ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+$p = $env:MERSAD_ACL_PATH
+$acl = Get-Acl -LiteralPath $p
+if (-not $acl.AreAccessRulesProtected) { exit 21 }
+$cur = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowed = @($cur, 'S-1-5-18', 'S-1-5-32-544')
+$rules = $acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier])
+$currentAllow = $false
+foreach ($r in $rules) {
+    $sid = $r.IdentityReference.Value
+    if ($sid -eq $cur -and $r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) { $currentAllow = $true }
+    if ($r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and $sid -notin $allowed) { exit 22 }
+}
+if (-not $currentAllow) { exit 23 }
+exit 0
+"""
+    dir_flag = "$true" if is_dir else "$false"
+    return r"""
+$ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+$p = $env:MERSAD_ACL_PATH
+$isDir = """ + dir_flag + r"""
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($null -eq $current) { throw 'Cannot resolve current user SID' }
+$acl = Get-Acl -LiteralPath $p
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleSpecific($rule) }
+$acl.SetOwner($current)
+$inheritance = [System.Security.AccessControl.InheritanceFlags]::None
+if ($isDir) { $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit }
+$propagation = [System.Security.AccessControl.PropagationFlags]::None
+$rights = [System.Security.AccessControl.FileSystemRights]::FullControl
+$allow = [System.Security.AccessControl.AccessControlType]::Allow
+$principals = @($current.Value, 'S-1-5-18', 'S-1-5-32-544')
+foreach ($sidText in $principals) {
+  $sid = [System.Security.Principal.SecurityIdentifier]::new($sidText)
+  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, $inheritance, $propagation, $allow)
+  [void]$acl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $p -AclObject $acl
+"""
+
+
+def _windows_acl_call(path, script):
+    env = dict(os.environ)
+    env["MERSAD_ACL_PATH"] = os.path.abspath(path)
+    powershell = shutil.which("pwsh.exe") or shutil.which("powershell.exe")
+    if not powershell:
+        raise OSError("PowerShell is required to secure Windows secret-file ACLs")
+    proc = subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
+         "-ExecutionPolicy", "Bypass", "-Command", script],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=20, check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or f"exit code {proc.returncode}").strip()
+        raise OSError(f"Windows ACL operation failed for {path}: {detail[-500:]}")
+    return True
+
+
+def _set_windows_private_acl(path, is_dir=False):
+    if os.name != "nt":
+        return True
+    path = os.path.abspath(path)
+    if not os.path.exists(path):
+        raise OSError(f"Cannot set ACL on missing path: {path}")
+    # Protect each parent directory once. Atomic temp files inherit its private
+    # owner-only ACL; do not launch PowerShell for every config save.
+    cache = globals().setdefault("_WINDOWS_PRIVATE_DIRS", set())
+    key = os.path.normcase(path)
+    if is_dir and key in cache:
+        return True
+    _windows_current_user_sid()
+    _windows_acl_call(path, _windows_acl_script(check_only=False, is_dir=is_dir))
+    if not _windows_acl_is_private(path):
+        raise OSError(f"Could not verify private Windows ACL on {path}")
+    if is_dir:
+        cache.add(key)
+    return True
+
+def _windows_acl_is_private(path):
+    if os.name != "nt":
+        return False
+    try:
+        return _windows_acl_call(path, _windows_acl_script(check_only=True))
+    except OSError:
+        return False
+
+
 def atomic_write_secret_bytes(target_path, data_bytes):
     """Atomically write secret bytes with restricted owner-only permissions (0600) from creation (P1-D).
     - Creates a protected temp file via os.open(..., O_CREAT|O_EXCL|O_WRONLY, 0o600).
@@ -45,12 +167,16 @@ def atomic_write_secret_bytes(target_path, data_bytes):
         raise OSError(f"Target directory does not exist: {parent_dir}")
     if os.path.lexists(target_path) and os.path.islink(target_path):
         raise OSError(f"Refusing to write secret to symlink path: {target_path}")
+    if os.name == "nt":
+        _set_windows_private_acl(parent_dir, is_dir=True)
 
     tmp_path = os.path.join(parent_dir, f".{os.path.basename(target_path)}.tmp.{os.getpid()}.{secrets.token_hex(6)}")
     fd = None
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp_path, flags, 0o600)
+        if os.name == "nt":
+            _set_windows_private_acl(tmp_path, is_dir=False)
         try:
             os.chmod(tmp_path, 0o600)
         except OSError:
@@ -76,17 +202,6 @@ def atomic_write_secret_bytes(target_path, data_bytes):
                 raise OSError(f"Failed to enforce 0600 permissions on {tmp_path}")
 
         os.replace(tmp_path, target_path)
-        if os.name == "nt":
-            try:
-                import subprocess as _sp
-                user = os.environ.get("USERNAME", "")
-                if user:
-                    _sp.run(
-                        ["icacls", os.path.abspath(target_path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
-                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, timeout=5, check=False
-                    )
-            except Exception:
-                pass
     finally:
         if fd is not None:
             try: os.close(fd)
@@ -96,19 +211,23 @@ def atomic_write_secret_bytes(target_path, data_bytes):
             except OSError: pass
 
 
-_HMAC_KEY_FILENAME = ".mersad_hmac.key"
-
-
 def _get_hmac_key():
-    """Load or create a local 32-byte secret key for HMAC pseudonymization and audit chain signing (P1-D, GAP-11).
+    """Load or create a local 32-byte secret key for HMAC pseudonymization (P1-D).
     - Never falls back to a static hardcoded key: raises RuntimeError if key storage is unavailable or unwritable.
     - Never silently overwrites a corrupt or truncated key file (which would alter existing pseudonyms)."""
     base_dir = os.environ.get("MERSAD_DATA_DIR") or os.getcwd()
-    key_path = os.path.abspath(os.path.join(base_dir, _HMAC_KEY_FILENAME))
+    key_path = os.path.abspath(os.path.join(base_dir, ".mersad_hmac.key"))
     if os.path.lexists(key_path):
         if os.path.islink(key_path):
             _HMAC_KEY_CACHE.pop(key_path, None)
             raise RuntimeError(f"Security error: HMAC key file {key_path} cannot be a symbolic link")
+        if os.name == "nt":
+            try:
+                _set_windows_private_acl(base_dir, is_dir=True)
+                _set_windows_private_acl(key_path, is_dir=False)
+            except OSError as e:
+                _HMAC_KEY_CACHE.pop(key_path, None)
+                raise RuntimeError(f"Cannot securely protect Windows HMAC key at {key_path}: {e}") from e
         try:
             with open(key_path, "rb") as f:
                 k = f.read()
@@ -148,42 +267,93 @@ def pseud(s):
     return "p-" + digest
 
 
+def _ensure_lock_byte(fd):
+    """Windows CRT byte-range locks require a real byte in the file on some builds."""
+    fd.seek(0, os.SEEK_END)
+    if fd.tell() == 0:
+        fd.write(b"\0")
+        fd.flush()
+    fd.seek(0)
+
+
+def _is_network_filesystem_path(path):
+    """Recognize Windows UNC and mapped remote-drive paths before selecting SQLite journaling."""
+    raw = str(path or "")
+    normalized = raw.replace("/", "\\")
+    if normalized.startswith("\\\\") or normalized.lower().startswith("\\\\?\\unc\\"):
+        return True
+    if os.name == "nt" and raw:
+        try:
+            import ctypes
+            drive, _ = os.path.splitdrive(os.path.abspath(raw))
+            if drive:
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
+                kernel32.GetDriveTypeW.restype = ctypes.c_uint
+                return int(kernel32.GetDriveTypeW(drive + "\\")) == 4  # DRIVE_REMOTE
+        except Exception:
+            return False
+    return False
+
+
 @contextlib.contextmanager
 def interprocess_db_lock(db_path=None):
-    """Re-entrant thread + OS-level inter-process file lock for atomic multi-process SQLite writes (P0-E)."""
+    """Re-entrant thread + OS-level inter-process file lock for atomic SQLite writes.
+
+    The depth counter is changed only after all locks are acquired. This avoids
+    corrupting re-entrant state if opening/locking the sidecar fails, and the
+    Windows sidecar is initialized before attempting a one-byte msvcrt lock.
+    """
     t_lock = D.get("lock")
     p = db_path or D.get("db_path") or os.path.join(os.environ.get("MERSAD_DATA_DIR") or os.getcwd(), "mersad.db")
     lock_file = f"{p}.ipclock"
     _IPC_RLOCK.acquire()
-    if t_lock is not None:
-        t_lock.acquire()
+    t_acquired = False
+    entered = False
+    opened_fd = None
     try:
+        if t_lock is not None:
+            t_lock.acquire()
+            t_acquired = True
         if _IPC_STATE["depth"] == 0 and p and p != ":memory:":
-            fd = open(lock_file, "a+b")
-            if fcntl is not None:
-                fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-            elif msvcrt is not None:
-                fd.seek(0)
-                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
-            _IPC_STATE["fd"] = fd
+            parent = os.path.dirname(os.path.abspath(lock_file))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            opened_fd = open(lock_file, "a+b")
+            if msvcrt is not None:
+                _ensure_lock_byte(opened_fd)
+                msvcrt.locking(opened_fd.fileno(), msvcrt.LK_LOCK, 1)
+            elif fcntl is not None:
+                fcntl.flock(opened_fd.fileno(), fcntl.LOCK_EX)
+            _IPC_STATE["fd"] = opened_fd
+            opened_fd = None  # ownership transferred to the re-entrant state
         _IPC_STATE["depth"] += 1
+        entered = True
         yield
     finally:
-        _IPC_STATE["depth"] -= 1
-        if _IPC_STATE["depth"] == 0 and _IPC_STATE["fd"] is not None:
-            fd = _IPC_STATE["fd"]
-            _IPC_STATE["fd"] = None
+        if entered:
+            _IPC_STATE["depth"] -= 1
+            if _IPC_STATE["depth"] == 0 and _IPC_STATE["fd"] is not None:
+                fd = _IPC_STATE["fd"]
+                _IPC_STATE["fd"] = None
+                try:
+                    if msvcrt is not None:
+                        fd.seek(0)
+                        msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                    elif fcntl is not None:
+                        fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+                try:
+                    fd.close()
+                except Exception:
+                    pass
+        if opened_fd is not None:
             try:
-                if fcntl is not None:
-                    fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-                elif msvcrt is not None:
-                    fd.seek(0)
-                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                opened_fd.close()
             except Exception:
                 pass
-            try: fd.close()
-            except Exception: pass
-        if t_lock is not None:
+        if t_acquired:
             t_lock.release()
         _IPC_RLOCK.release()
 
@@ -385,211 +555,79 @@ def migrate_legacy_faces(db):
     return quarantined_cnt
 
 
-_CRITICAL_DB_ERR_TOKENS = (
-    "database or disk is full",
-    "disk is full",
-    "no space left",
-    "readonly",
-    "read-only",
-    "attempt to write a readonly database",
-    "permission denied",
-    "access is denied",
-    "unable to open database file",
-    "not a database",
-    "database disk image is malformed",
-)
+def configure_sqlite_journal_mode(db, db_path=None):
+    """Prefer WAL, but fall back to DELETE if a filesystem cannot support WAL/shared-memory files.
 
+    WAL is preferred for local disks. On some network/removable filesystems SQLite
+    cannot create or use the -shm sidecar; in that case DELETE mode remains a safe
+    single-writer fallback. In-memory databases keep their native journal mode.
+    """
+    path = db_path or D.get("db_path")
+    if not path:
+        try:
+            rows = db.execute("PRAGMA database_list").fetchall()
+            path = next((str(row[2]) for row in rows if str(row[1]) == "main"), "")
+        except Exception:
+            path = ""
+    current = str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+    if not path or path == ":memory:" or "mode=memory" in str(path).lower():
+        return current
 
-def _is_critical_storage_error(exc):
-    msg = str(exc or "").strip().lower()
-    return any(tok in msg for tok in _CRITICAL_DB_ERR_TOKENS)
+    # WAL's shared-memory sidecar is not a safe default on UNC/mapped network
+    # shares. Choose rollback journaling before any transaction starts.
+    if _is_network_filesystem_path(path):
+        try:
+            row = db.execute("PRAGMA journal_mode=DELETE").fetchone()
+            mode = str(row[0]).lower() if row else ""
+            if mode != "delete":
+                raise sqlite3.OperationalError(f"SQLite refused DELETE journal mode on network path (returned {mode or 'unknown'})")
+            logging.getLogger("mersad.registry").warning(
+                "Network database path detected; using SQLite DELETE journal mode instead of WAL: %s", str(path)[:240]
+            )
+            return mode
+        except sqlite3.OperationalError as exc:
+            raise sqlite3.OperationalError(
+                f"SQLite cannot establish DELETE journal mode on network path {path!r}; "
+                "use a local disk for MERSAD_AI data. " + str(exc)
+            ) from exc
 
-
-def _is_in_memory_db(db, db_path=None):
-    if db_path == ":memory:":
-        return True
-    if db_path:
-        return False
+    wal_error = None
     try:
-        db_list = db.execute("PRAGMA database_list").fetchall()
-        if db_list and all(not str(r[2] or "").strip() for r in db_list):
-            return True
-    except Exception:
-        pass
-    return False
+        row = db.execute("PRAGMA journal_mode=WAL").fetchone()
+        mode = str(row[0]).lower() if row else ""
+        if mode == "wal":
+            return mode
+        wal_error = RuntimeError(f"SQLite returned journal mode {mode or 'unknown'} instead of WAL")
+    except sqlite3.OperationalError as exc:
+        wal_error = exc
 
-
-def _ensure_calibration_and_eval_schema(db):
-    """Idempotently ensure extended camera_links columns, field_calibrations table, and plate_eval_runs table exist (Stage 11)."""
-    db.execute(
-        "CREATE TABLE IF NOT EXISTS camera_links("
-        "from_cam TEXT, to_cam TEXT, min_sec REAL DEFAULT 90, expected_sec REAL DEFAULT 300, "
-        "source TEXT DEFAULT 'user_calibrated', via TEXT DEFAULT '', "
-        "max_sec REAL DEFAULT 0, distance_m REAL DEFAULT 0, observations_count INTEGER DEFAULT 0, "
-        "calibration_date TEXT DEFAULT '', traffic_condition TEXT DEFAULT 'normal', "
-        "measurement_source TEXT DEFAULT 'manual', notes TEXT DEFAULT '', "
-        "updated_ts REAL DEFAULT 0, updated_by TEXT DEFAULT '', "
-        "PRIMARY KEY(from_cam, to_cam))"
-    )
-    cols_cl = {r[1] for r in db.execute("PRAGMA table_info(camera_links)").fetchall()}
-    for col_name, col_ddl in (
-        ("via", "ALTER TABLE camera_links ADD COLUMN via TEXT DEFAULT ''"),
-        ("max_sec", "ALTER TABLE camera_links ADD COLUMN max_sec REAL DEFAULT 0"),
-        ("distance_m", "ALTER TABLE camera_links ADD COLUMN distance_m REAL DEFAULT 0"),
-        ("observations_count", "ALTER TABLE camera_links ADD COLUMN observations_count INTEGER DEFAULT 0"),
-        ("calibration_date", "ALTER TABLE camera_links ADD COLUMN calibration_date TEXT DEFAULT ''"),
-        ("traffic_condition", "ALTER TABLE camera_links ADD COLUMN traffic_condition TEXT DEFAULT 'normal'"),
-        ("measurement_source", "ALTER TABLE camera_links ADD COLUMN measurement_source TEXT DEFAULT 'manual'"),
-        ("notes", "ALTER TABLE camera_links ADD COLUMN notes TEXT DEFAULT ''"),
-        ("updated_ts", "ALTER TABLE camera_links ADD COLUMN updated_ts REAL DEFAULT 0"),
-        ("updated_by", "ALTER TABLE camera_links ADD COLUMN updated_by TEXT DEFAULT ''"),
-    ):
-        if col_name not in cols_cl:
-            try:
-                db.execute(col_ddl)
-            except sqlite3.OperationalError:
-                pass
-
-    db.execute("""CREATE TABLE IF NOT EXISTS field_calibrations(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        entry_type TEXT DEFAULT 'manual_unverified',
-        verification_status TEXT DEFAULT 'manual_unverified',
-        from_cam TEXT DEFAULT '',
-        to_cam TEXT DEFAULT '',
-        transit_sec REAL DEFAULT 0,
-        measured_plate_accuracy REAL,
-        samples_count INTEGER DEFAULT 0,
-        correct_reads INTEGER DEFAULT 0,
-        incorrect_reads INTEGER DEFAULT 0,
-        source_description TEXT DEFAULT '',
-        measurement_date TEXT DEFAULT '',
-        model_used TEXT DEFAULT '',
-        operator_name TEXT DEFAULT '',
-        notes TEXT DEFAULT '',
-        created_ts REAL DEFAULT 0,
-        updated_ts REAL DEFAULT 0
-    )""")
-
-    db.execute("""CREATE TABLE IF NOT EXISTS plate_eval_runs(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts REAL NOT NULL,
-        eval_date TEXT DEFAULT '',
-        dataset_path TEXT DEFAULT '',
-        plate_model TEXT DEFAULT '',
-        detector_mode TEXT DEFAULT '',
-        vehicle_stage_enabled INTEGER DEFAULT 0,
-        total_samples INTEGER DEFAULT 0,
-        valid_files INTEGER DEFAULT 0,
-        invalid_files INTEGER DEFAULT 0,
-        detected_count INTEGER DEFAULT 0,
-        failed_detection_count INTEGER DEFAULT 0,
-        failed_ocr_count INTEGER DEFAULT 0,
-        detection_recall REAL DEFAULT 0,
-        detection_precision REAL DEFAULT 0,
-        mean_iou REAL,
-        exact_match_rate REAL DEFAULT 0,
-        digits_match_rate REAL DEFAULT 0,
-        char_accuracy_rate REAL DEFAULT 0,
-        cer REAL DEFAULT 0,
-        mean_latency_ms REAL DEFAULT 0,
-        status TEXT DEFAULT 'completed',
-        report_json TEXT DEFAULT '{}'
-    )""")
+    try:
+        row = db.execute("PRAGMA journal_mode=DELETE").fetchone()
+        mode = str(row[0]).lower() if row else ""
+        if mode != "delete":
+            raise sqlite3.OperationalError(f"SQLite refused DELETE journal mode (returned {mode or 'unknown'})")
+        logging.getLogger("mersad.registry").warning(
+            "SQLite WAL is unavailable for database path; falling back to DELETE journal mode: %s",
+            str(wal_error)[:240],
+        )
+        return mode
+    except sqlite3.OperationalError as delete_error:
+        raise sqlite3.OperationalError(
+            "Unable to initialize SQLite journaling: WAL failed and DELETE fallback failed. "
+            f"WAL error={wal_error}; DELETE error={delete_error}"
+        ) from delete_error
 
 
 def migrate_db(db, lock, db_path=None):
-    """Apply numbered, non-destructive schema migrations (v1..v6) with automatic backup of existing database files.
-    GAP-02: Strictly separates WAL/mmap filesystem incompatibility from critical storage failures (disk full / read-only),
-    rolls back cleanly before switching to DELETE mode, verifies journal_mode == 'delete'/'truncate', and forbids MEMORY/OFF."""
-    eff_path = db_path or D.get("db_path")
-    if eff_path is None and _is_in_memory_db(db, None):
-        eff_path = ":memory:"
-    is_mem = (eff_path == ":memory:")
-    with interprocess_db_lock(eff_path):
+    """Apply numbered, non-destructive schema migrations (v1..v6) with automatic backup of existing database files."""
+    with interprocess_db_lock(db_path):
         was_in_tx = db.in_transaction
         if not was_in_tx:
-            need_delete_fallback = False
-            wal_err = None
-            try:
-                mode_row = db.execute("PRAGMA journal_mode=WAL").fetchone()
-                cur_mode = str(mode_row[0]).strip().lower() if (mode_row and mode_row[0] is not None) else ""
-                if not is_mem and cur_mode != "wal":
-                    need_delete_fallback = True
-                else:
-                    db.execute("PRAGMA busy_timeout=15000")
-                    db.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_ts REAL, description TEXT)")
-            except Exception as exc:
-                if _is_critical_storage_error(exc) or isinstance(exc, PermissionError):
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                    raise sqlite3.OperationalError(
-                        f"Critical database storage failure during initialization ({eff_path or 'db'}): {exc}"
-                    ) from exc
-                if isinstance(exc, sqlite3.OperationalError):
-                    need_delete_fallback = True
-                    wal_err = exc
-                else:
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                    raise
-
-            if need_delete_fallback:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-                try:
-                    res_mode = db.execute("PRAGMA journal_mode=DELETE").fetchone()
-                except Exception as del_exc:
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                    raise sqlite3.OperationalError(
-                        f"Failed to switch SQLite journal_mode from WAL to DELETE for {eff_path or 'db'}: {del_exc}"
-                    ) from (wal_err or del_exc)
-                actual_mode = str(res_mode[0]).strip().lower() if (res_mode and res_mode[0] is not None) else ""
-                if not is_mem:
-                    if actual_mode in ("memory", "off"):
-                        raise sqlite3.OperationalError(
-                            f"Unsafe SQLite journal_mode '{actual_mode}' is strictly forbidden for operational database {eff_path or 'db'}"
-                        )
-                    if actual_mode not in ("delete", "truncate"):
-                        raise sqlite3.OperationalError(
-                            f"SQLite WAL fallback failed: expected journal_mode 'delete'/'truncate', got '{actual_mode}'"
-                        )
-                try:
-                    db.execute("PRAGMA busy_timeout=15000")
-                    db.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_ts REAL, description TEXT)")
-                except Exception as create_exc:
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                    raise sqlite3.OperationalError(
-                        f"Database schema_migrations initialization failed after DELETE fallback ({eff_path or 'db'}): {create_exc}"
-                    ) from create_exc
-        else:
-            try:
-                db.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_ts REAL, description TEXT)")
-            except Exception as tx_exc:
-                if _is_critical_storage_error(tx_exc):
-                    raise sqlite3.OperationalError(
-                        f"Critical database storage failure during migration ({eff_path or 'db'}): {tx_exc}"
-                    ) from tx_exc
-                raise
+            configure_sqlite_journal_mode(db, db_path=db_path)
+            db.execute("PRAGMA busy_timeout=15000")
+        db.execute("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_ts REAL, description TEXT)")
         cur_ver = db.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
         if cur_ver >= 6:
-            # Idempotent check: ensure camera_links extended columns, field_calibrations, plate_eval_runs, and vehicle indexes exist
-            db.execute("CREATE INDEX IF NOT EXISTS idx_vehicles_digits ON vehicles(plate_digits)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_vehicles_status ON vehicles(status)")
-            _ensure_calibration_and_eval_schema(db)
-            if not was_in_tx:
-                db.commit()
             return
         has_legacy = bool(db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sightings'").fetchone())
         if has_legacy and cur_ver < 6 and db_path and os.path.exists(db_path) and os.path.getsize(db_path) > 0:
@@ -683,7 +721,6 @@ def migrate_db(db, lock, db_path=None):
                     try: db.execute(ddl)
                     except sqlite3.OperationalError: pass
             db.execute("CREATE INDEX IF NOT EXISTS idx_vehicles_digits ON vehicles(plate_digits)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_vehicles_status ON vehicles(status)")
 
             cols_a = {r[1] for r in db.execute("PRAGMA table_info(alerts)").fetchall()}
             for col, ddl in (
@@ -785,37 +822,17 @@ def migrate_db(db, lock, db_path=None):
               who TEXT DEFAULT '',
               status TEXT DEFAULT 'in_progress'
             );
-            CREATE TABLE IF NOT EXISTS camera_links(
-              from_cam TEXT,
-              to_cam TEXT,
-              min_sec REAL DEFAULT 90,
-              expected_sec REAL DEFAULT 300,
-              source TEXT DEFAULT 'user_calibrated',
-              via TEXT DEFAULT '',
-              PRIMARY KEY(from_cam, to_cam)
-            );
             """)
-            cols_cl = {r[1] for r in db.execute("PRAGMA table_info(camera_links)").fetchall()}
-            if "via" not in cols_cl:
-                try:
-                    db.execute("ALTER TABLE camera_links ADD COLUMN via TEXT DEFAULT ''")
-                except sqlite3.OperationalError:
-                    pass
-            _ensure_calibration_and_eval_schema(db)
             migrate_legacy_faces(db)
-            db.execute(
-                "INSERT INTO schema_migrations VALUES(6, ?, 'v6_camera_links_via_and_constraints: Strict person_id face isolation, quarantine legacy faces, dispatch_owner, archive ops journal, camera_links.via')",
-                (time.time(),)
-            )
+            db.execute("INSERT INTO schema_migrations VALUES(6, ?, 'Strict person_id face isolation, quarantine legacy faces, dispatch_owner, archive ops journal')", (time.time(),))
 
         if not was_in_tx:
             db.commit()
 
 
 def init(db, lock, log, refresh, db_path=None):
-    eff_path = db_path if db_path is not None else (":memory:" if _is_in_memory_db(db, None) else None)
-    D.update(db=db, lock=lock, log=log, refresh=refresh, db_path=eff_path)
-    migrate_db(db, lock, db_path=eff_path)
+    D.update(db=db, lock=lock, log=log, refresh=refresh, db_path=db_path)
+    migrate_db(db, lock, db_path=db_path)
 
 
 def pick(v, kw, default):
@@ -1044,20 +1061,10 @@ def list_rows(kind, q=""):
     return [dict(zip(cols, r)) for r in rows]
 
 
-LAST_LOOKUP_STATS = {"approx_rows_scanned": 0, "legacy_rows_scanned": 0, "elapsed_ms": 0.0}
-
-
 def lookup_vehicle(plate):
-    """Look up a vehicle using core digits + secondary letters/governorate (P0-A, P0-B, P0-C, GAP-13).
-    GAP-13 optimization:
-    - Uses idx_vehicles_digits / PRIMARY KEY for exact digit or canonical plate lookup.
-    - Scans only legacy rows with empty plate_digits if any exist.
-    - Restricts approximate edit-distance-1 candidate fetch strictly to status IN ('wanted', 'stolen')
-      with LENGTH(plate_digits) BETWEEN len(q_digits)-1 AND len(q_digits)+1 via idx_vehicles_status."""
-    t0 = time.perf_counter()
+    """Look up a vehicle using core digits + secondary letters/governorate (P0-A, P0-B, P0-C)."""
     q_digits, q_letters, ocr_fixed = split_plate_ex(plate)
     if not q_digits:
-        LAST_LOOKUP_STATS.update(approx_rows_scanned=0, legacy_rows_scanned=0, elapsed_ms=(time.perf_counter() - t0) * 1000.0)
         return None
     with D["lock"]:
         cur = D["db"].execute(
@@ -1067,33 +1074,17 @@ def lookup_vehicle(plate):
         )
         rows = cur.fetchall()
     if not rows:
-        # Check only legacy rows where plate_digits was not populated (0 rows on migrated databases)
         with D["lock"]:
-            cur_leg = D["db"].execute(
-                "SELECT plate, COALESCE(plate_digits,''), COALESCE(plate_letters,''), governorate, model, color, vtype, owner, status, notes "
-                "FROM vehicles WHERE COALESCE(plate_digits, '') = ''"
-            )
-            leg_v = cur_leg.fetchall()
-        rows = [r for r in leg_v if split_plate(r[0])[0] == q_digits]
+            cur2 = D["db"].execute("SELECT plate, COALESCE(plate_digits,''), COALESCE(plate_letters,''), governorate, model, color, vtype, owner, status, notes FROM vehicles")
+            all_v = cur2.fetchall()
+        rows = [r for r in all_v if (r[1] or split_plate(r[0])[0]) == q_digits]
 
         if not rows:
-            min_len = max(1, len(q_digits) - 1)
-            max_len = len(q_digits) + 1
-            with D["lock"]:
-                cur_approx = D["db"].execute(
-                    "SELECT plate, COALESCE(plate_digits,''), COALESCE(plate_letters,''), governorate, model, color, vtype, owner, status, notes "
-                    "FROM vehicles WHERE status IN ('wanted', 'stolen') "
-                    "AND (LENGTH(COALESCE(plate_digits, '')) BETWEEN ? AND ? OR COALESCE(plate_digits, '') = '')",
-                    (min_len, max_len)
-                )
-                wanted_v = cur_approx.fetchall()
-            LAST_LOOKUP_STATS.update(
-                approx_rows_scanned=len(wanted_v),
-                legacy_rows_scanned=len(leg_v),
-                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
-            )
             approx = []
-            for r in wanted_v:
+            for r in all_v:
+                r_st = r[8] or "normal"
+                if r_st not in ("wanted", "stolen"):
+                    continue
                 r_dg = r[1] or split_plate(r[0])[0]
                 if _edit_distance_1(q_digits, r_dg):
                     approx.append(r)
@@ -1113,7 +1104,6 @@ def lookup_vehicle(plate):
                     "visual_check_only": True
                 }
             return None
-    LAST_LOOKUP_STATS.update(approx_rows_scanned=0, legacy_rows_scanned=0, elapsed_ms=(time.perf_counter() - t0) * 1000.0)
 
     candidates = []
     for pl, pdg, plt, gov, mod, col, vt, own, st, nt in rows:
@@ -1236,13 +1226,8 @@ def parse_file(fn, data):
     if f.endswith((".xlsx", ".xlsm")):
         try: from openpyxl import load_workbook
         except ImportError: raise ValueError("لقراءة Excel ثبّت: pip install openpyxl (أو احفظ الملف بصيغة CSV)")
-        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        try:
-            ws = wb.active
-            return [[cell(c) for c in r] for r in ws.iter_rows(values_only=True)]
-        finally:
-            try: wb.close()
-            except Exception: pass
+        ws = load_workbook(io.BytesIO(data), read_only=True, data_only=True).active
+        return [[cell(c) for c in r] for r in ws.iter_rows(values_only=True)]
     if f.endswith((".csv", ".txt")):
         try: txt = data.decode("utf-8-sig")
         except UnicodeDecodeError: txt = data.decode("cp1256", "replace")
@@ -1301,14 +1286,9 @@ def template(kind):
     heads, ex = (VH, VEX) if kind == "vehicles" else (PH, PEX)
     try:
         from openpyxl import Workbook
-        wb = Workbook()
-        try:
-            ws = wb.active; ws.sheet_view.rightToLeft = True
-            ws.append(heads); ws.append(ex); buf = io.BytesIO(); wb.save(buf)
-            return buf.getvalue(), f"mersad_{kind}_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        finally:
-            try: wb.close()
-            except Exception: pass
+        wb = Workbook(); ws = wb.active; ws.sheet_view.rightToLeft = True
+        ws.append(heads); ws.append(ex); buf = io.BytesIO(); wb.save(buf)
+        return buf.getvalue(), f"mersad_{kind}_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     except ImportError:
         s = io.StringIO(); w = csv.writer(s); w.writerow(heads); w.writerow(ex)
         return s.getvalue().encode("utf-8-sig"), f"mersad_{kind}_template.csv", "text/csv; charset=utf-8"

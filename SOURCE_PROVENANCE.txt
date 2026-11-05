@@ -1,0 +1,10 @@
+MERSAD AI V7.1 patched source package
+Repository: alinon9/MERSAD-AI-
+Source commit: 220fefff8ad4441f52e54d6a2b4aa4b3ada25783
+Base archive: MERSAD_AI_FIXED_5.zip
+Base archive SHA256: e8c1777fd7be65a4070a9dd26975ee717710934ea3f425be8c62fd368d1ca37e
+V7.1 patch SHA256: f5970b79226a5197ab0c33327bdb686622ef62bbeec854c3ef9784b57b2b120a
+Windows patch script: ci/patch_windows_build.py
+Windows patch script SHA256: 0797d05ac275243fbdd70ac613ceb0b7d1788abc89bad4b1ff43bd8b80d93b3c
+This is the source tree after the same V7.1 delta and Windows-specific patching used by build #47.
+Python dependencies and downloaded model weights are not embedded in this source archive.

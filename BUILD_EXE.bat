@@ -1,4 +1,5 @@
 @echo off
+set "YOLO_AUTOINSTALL=false"
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
@@ -22,10 +23,33 @@ venv\Scripts\python.exe check_install.py --strict || (
     exit /b 1
 )
 
-echo [2/5] Running automated self-test suite...
-venv\Scripts\python.exe selftest.py || (
-    echo.
-    echo [ERROR] Self-test failed - aborting build.
+echo [2/5] Running 3 repeated self-test suites to catch concurrency/camera flakes...
+for /L %%I in (1,1,3) do (
+    venv\Scripts\python.exe -u selftest.py > selftest_build_%%I.log 2>&1 || (
+        type selftest_build_%%I.log
+        echo [ERROR] Standard self-test run %%I failed - aborting build.
+        pause
+        exit /b 1
+    )
+    findstr /C:"SELF-TEST OK" selftest_build_%%I.log >nul || (
+        type selftest_build_%%I.log
+        echo [ERROR] Self-test run %%I did not confirm success.
+        pause
+        exit /b 1
+    )
+)
+set MERSAD_BLOCK_SKLEARN=1
+venv\Scripts\python.exe -u selftest.py > selftest_build_nosklearn.log 2>&1 || (
+    type selftest_build_nosklearn.log
+    set MERSAD_BLOCK_SKLEARN=
+    echo [ERROR] No-scikit-learn self-test failed - aborting build.
+    pause
+    exit /b 1
+)
+set MERSAD_BLOCK_SKLEARN=
+findstr /C:"SELF-TEST OK" selftest_build_nosklearn.log >nul || (
+    type selftest_build_nosklearn.log
+    echo [ERROR] No-scikit-learn run did not confirm success.
     pause
     exit /b 1
 )
@@ -36,15 +60,13 @@ venv\Scripts\pip.exe install pyinstaller==6.11.1 -c constraints-win-x64.txt || (
     pause
     exit /b 1
 )
-venv\Scripts\python.exe check_install.py --verify-pip-deps || (
-    echo [ERROR] Dependency verification (--verify-pip-deps) reported package conflicts.
+venv\Scripts\python.exe -m pip check || (
+    echo [ERROR] pip check reported package conflicts.
     pause
     exit /b 1
 )
 
 echo [4/5] Building MERSAD_AI --onedir distribution (logging to build_pyinstaller.log)...
-set YOLO_OFFLINE=true
-set ULTRALYTICS_AUTOINSTALL=false
 venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --name MERSAD_AI ^
   --add-data "dashboard.html;." ^
   --add-data "README_AR.md;." ^
@@ -54,19 +76,10 @@ venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --name MERSAD_AI ^
   --hidden-import camera_history ^
   --hidden-import notify ^
   --hidden-import server ^
-  --hidden-import check_install ^
-  --hidden-import prefetch ^
   --hidden-import openpyxl ^
   --collect-all easyocr ^
   --collect-all ultralytics ^
   --collect-submodules sklearn ^
-  --exclude-module opencv-python-headless ^
-  --exclude-module ultralytics.trackers ^
-  --exclude-module torch.utils.tensorboard ^
-  --exclude-module scipy.special._cdflib ^
-  --exclude-module tensorboard ^
-  --exclude-module lap ^
-  --exclude-module lapx ^
   mersad_live.py > build_pyinstaller.log 2>&1 || (
     echo [ERROR] PyInstaller build failed. Last lines of build_pyinstaller.log:
     powershell -NoProfile -Command "Get-Content build_pyinstaller.log -Tail 35" 2>nul
@@ -112,7 +125,6 @@ echo @echo off
 echo chcp 65001 ^>nul
 echo cd /d "%%~dp0"
 echo MERSAD_AI.exe --verify
-echo MERSAD_AI.exe --verify-models
 echo pause
 ) > "dist\MERSAD_AI\VERIFY_AUDIT.bat"
 
@@ -123,6 +135,39 @@ for %%F in ("dist\MERSAD_AI\MERSAD_AI.exe" "dist\MERSAD_AI\models\yunet.onnx" "d
         pause
         exit /b 1
     )
+)
+
+pushd "%TEMP%"
+"%~dp0dist\MERSAD_AI\MERSAD_AI.exe" --verify > "%~dp0exe_verify_build.log" 2>&1
+set VERIFY_RC=!ERRORLEVEL!
+popd
+if not "!VERIFY_RC!"=="0" (
+    type exe_verify_build.log
+    echo [ERROR] Standalone EXE audit verification failed.
+    pause
+    exit /b 1
+)
+findstr /C:"Audit chain OK" exe_verify_build.log >nul || (
+    type exe_verify_build.log
+    echo [ERROR] Standalone EXE did not confirm audit-chain integrity.
+    pause
+    exit /b 1
+)
+
+"%~dp0dist\MERSAD_AI\MERSAD_AI.exe" --verify-models > "%~dp0exe_model_verify.log" 2>&1
+set MODEL_VERIFY_RC=!ERRORLEVEL!
+if not "!MODEL_VERIFY_RC!"=="0" (
+    type exe_model_verify.log
+    echo [ERROR] Bundled AI model verification failed after build.
+    pause
+    exit /b 1
+)
+type exe_model_verify.log
+findstr /C:"All bundled AI models are present and valid." exe_model_verify.log >nul || (
+    type exe_model_verify.log
+    echo [ERROR] Standalone EXE did not confirm model integrity.
+    pause
+    exit /b 1
 )
 
 echo.

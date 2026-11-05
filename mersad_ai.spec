@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec file for MERSAD AI (--onedir distribution for Windows x64)."""
+
+# MERSAD_SPEC_ULTRALYTICS_AUTOINSTALL_GUARD
+import os as _mersad_env_os
+_mersad_env_os.environ['YOLO_AUTOINSTALL'] = 'false'
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = [
@@ -14,30 +18,15 @@ hiddenimports = [
     "camera_history",
     "notify",
     "server",
-    "check_install",
-    "prefetch",
     "openpyxl",
 ]
-
-import os as _os
-_os.environ["YOLO_OFFLINE"] = "true"
-_os.environ["ULTRALYTICS_AUTOINSTALL"] = "false"
-
-_EXCLUDED_SUBMODULES = (
-    "ultralytics.trackers",
-    "torch.utils.tensorboard",
-    "scipy.special._cdflib",
-)
 
 for pkg in ("easyocr", "ultralytics"):
     try:
         tmp_ret = collect_all(pkg)
         datas += tmp_ret[0]
         binaries += tmp_ret[1]
-        hiddenimports += [
-            m for m in tmp_ret[2]
-            if not any(m == ex or m.startswith(ex + ".") for ex in _EXCLUDED_SUBMODULES)
-        ]
+        hiddenimports += tmp_ret[2]
     except Exception:
         pass
 
@@ -55,7 +44,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["opencv-python-headless", "ultralytics.trackers", "torch.utils.tensorboard", "scipy.special._cdflib", "tensorboard", "lap", "lapx"],
+    excludes=["opencv-python-headless"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

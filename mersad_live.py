@@ -13,7 +13,11 @@ Camera -> vehicles/trucks (YOLOv8n) -> plates (OCR) | faces (consenting voluntee
   python mersad_live.py --no-telegram-listener              # disable getUpdates polling in secondary process
   python mersad_live.py --verify                            # check audit chain & evidence files
 """
-import argparse, collections, csv, hashlib, hmac, json, logging, logging.handlers, os, queue, re, shutil, socket, sqlite3, stat, sys, threading, time, urllib.error, urllib.request, uuid, webbrowser, zipfile
+
+# MERSAD_ULTRALYTICS_AUTOINSTALL_GUARD
+import os as _mersad_env_os
+_mersad_env_os.environ['YOLO_AUTOINSTALL'] = 'false'
+import argparse, collections, hashlib, json, logging, logging.handlers, os, re, shutil, socket, sqlite3, stat, sys, threading, time, urllib.error, urllib.request, uuid, webbrowser, zipfile
 
 BUNDLE_DIR = os.path.abspath(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))))
 INSTALL_DIR = os.path.abspath(
@@ -73,17 +77,26 @@ def resolve_writable_appdir(preferred_dir=None, explicit_env=None):
 
 
 def resolve_resource_path(rel_path):
-    """Resolve a read-only resource or model path across APPDIR, INSTALL_DIR, and BUNDLE_DIR (Stage 5d)."""
-    for base in (APPDIR, INSTALL_DIR, BUNDLE_DIR):
+    """Resolve bundled read-only assets before writable user data in frozen distributions.
+
+    Source/dev runs retain APPDIR-first behavior so downloaded local models are reusable.
+    Frozen --onedir builds prefer assets adjacent to the executable / PyInstaller bundle;
+    otherwise a stale user-data models directory could shadow the assets validated for the EXE.
+    """
+    bases = (INSTALL_DIR, BUNDLE_DIR, APPDIR) if getattr(sys, "frozen", False) else (APPDIR, INSTALL_DIR, BUNDLE_DIR)
+    for base in bases:
         if base:
             cand = os.path.join(base, rel_path)
             if os.path.exists(cand):
                 return cand
-    return os.path.join(APPDIR or INSTALL_DIR, rel_path)
+    return os.path.join(APPDIR, rel_path)
 
 
-# GAP-03: Pure path defaults at import time without touching cwd, creating directories, or opening files
-APPDIR = os.path.abspath(os.environ.get("MERSAD_DATA_DIR") or INSTALL_DIR)
+APPDIR = resolve_writable_appdir()
+os.makedirs(APPDIR, exist_ok=True)
+if not os.environ.get("MERSAD_DATA_DIR"):
+    os.environ["MERSAD_DATA_DIR"] = APPDIR
+os.chdir(APPDIR)
 
 # Record which Telegram env vars were pre-set in the OS environment BEFORE load_cfg() runs (P1-G)
 _PREEXISTING_ENV = {
@@ -116,18 +129,18 @@ def _setup_logging(max_bytes=2_000_000, backup_count=3):
     return logger
 
 
-logger = logging.getLogger("mersad")
+logger = _setup_logging()
 
 # P2-M: Pin OpenCV Zoo models to an immutable commit hash and verify SHA-256 digests
-ZOO_COMMIT = "0d61067727e22ed9fa2f7ef5ce81dac7a8d0fb8a"
-ZOO = f"https://github.com/opencv/opencv_zoo/raw/{ZOO_COMMIT}/models/"
+ZOO_COMMIT = "39a1451d0f9b23fc4ebaed06a277127efa0374d0"
+ZOO = f"https://huggingface.co/opencv/opencv_zoo/resolve/{ZOO_COMMIT}/models/"
 MODELS = {
     "yunet.onnx": ZOO + "face_detection_yunet/face_detection_yunet_2023mar.onnx",
     "sface.onnx": ZOO + "face_recognition_sface/face_recognition_sface_2021dec.onnx"
 }
 MODEL_SHA256 = {
-    "yunet.onnx": "8f2383e4dd3cfbb4553bf0fb6cde5e5f80f5f70c6e595e3fd10e819a79d1527c",
-    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da85eab3da1e9bedf8ef69c25eb8d7e52275"
+    "yunet.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
 }
 MODEL_MIN_BYTES = {
     "yunet.onnx": 200_000,
@@ -155,7 +168,6 @@ AR = {
     "FACE MATCH (demo watchlist)": "تطابق وجه محتمل (قائمة تجريبية) - يتطلب تحققاً بشرياً"
 }
 AID, ENR, FH, FA, KNOWN, EVID, WHY, TRACKS, FACE_ALERT = [0], {}, {}, {}, [], {}, {}, {}, [0.45]
-FACE_DETECT_INTERVAL = 2
 CONFIRM_READS = 3
 VOTE_WINDOW_SEC = 10.0
 ALERT_COOLDOWN_SEC = 30.0
@@ -174,30 +186,15 @@ SESSION_ID = "sess-" + uuid.uuid4().hex[:8]
 PROCESS_OWNER_ID = f"pid:{os.getpid()}:{SESSION_ID}"
 
 DB_PATH = os.path.join(APPDIR, "mersad.db")
-db = None
+db = sqlite3.connect(DB_PATH, timeout=15.0, check_same_thread=False)
 DBL = threading.RLock()
 _DISPATCH_LOCK = threading.Lock()
-_ENROLL_LOCK = threading.RLock()
-_FACE_STATE_LOCK = threading.RLock()
-_RUNTIME_STATE_LOCK = threading.RLock()
 _IN_FLIGHT_DISPATCH = set()
 pseud = R.pseud
-INS = None
-ANALYTICS = None
-CAMERA_HISTORY = None
-_RUNTIME_INITIALIZED = False
 
 
-def legacy_chain_hash(prev, i, ts, action, ref):
-    """Compute legacy unkeyed SHA-256 digest (64 hex chars without 'h1:' prefix) for verifying pre-upgrade audit records (GAP-11)."""
+def chain_hash(prev, i, ts, action, ref):
     return hashlib.sha256(f"{prev}|{i}|{ts}|{action}|{ref}".encode("utf-8")).hexdigest()
-
-
-def chain_hash(prev, i, ts, action, ref, key=None):
-    """Compute versioned HMAC-SHA256 audit chain digest ('h1:<64-hex>') using .mersad_hmac.key (GAP-11)."""
-    payload = f"{prev}|{i}|{ts}|{action}|{ref}".encode("utf-8")
-    k = key if key is not None else R._get_hmac_key()
-    return "h1:" + hmac.new(k, payload, hashlib.sha256).hexdigest()
 
 
 def _log_in_tx(conn, action, ref=""):
@@ -213,11 +210,28 @@ def _log_in_tx(conn, action, ref=""):
 
 def log(action, ref=""):
     """Atomically append a tamper-evident SHA-256 record to audit across threads and OS processes (P0-E)."""
-    if db is None:
-        init_runtime_env()
     clean_ref = redact_url(ref)
     R.run_atomic_tx(db, DBL, lambda conn: _log_in_tx(conn, action, clean_ref), db_path=DB_PATH)
     logger.info("AUDIT [%s] %s", action, clean_ref)
+
+
+R.init(db, DBL, log, lambda: refresh_known(), db_path=DB_PATH)
+try:
+    import insights as INS
+    INS.init(db, DBL)
+except Exception as e:
+    INS = None
+    logger.warning("Learning module off: %s", e)
+    print("Learning module off:", e)
+
+# Lightweight read-only analytics and persistent camera reliability history.
+try:
+    import analytics as ANALYTICS
+    import camera_history as CAMERA_HISTORY
+    CAMERA_HISTORY.init(db, DBL, db_path=DB_PATH)
+except Exception as e:
+    ANALYTICS = CAMERA_HISTORY = None
+    logger.warning("Operational analytics/camera history off: %s", e)
 
 
 HIGH = ("VEHICLE: WANTED", "VEHICLE: STOLEN", "FACE MATCH (demo watchlist)", "ROUTE ANOMALY (impossible transit)")
@@ -294,8 +308,7 @@ def _sync_alerts_from_db(reset_stuck_in_flight=False):
         R.run_atomic_tx(db, DBL, _sync_tx, db_path=DB_PATH)
 
         mx = db.execute("SELECT COALESCE(MAX(id), 0) FROM alerts").fetchone()[0]
-        with _RUNTIME_STATE_LOCK:
-            AID[0] = max(AID[0], int(mx or 0))
+        AID[0] = max(AID[0], int(mx or 0))
         rows = db.execute(
             "SELECT id, msg, subject, ref, detail, cam, ts_str, img, status, dispatched, "
             "COALESCE(dispatch_status,'not_required'), COALESCE(repeat_count,1), COALESCE(notify_status,'pending') "
@@ -307,27 +320,23 @@ def _sync_alerts_from_db(reset_stuck_in_flight=False):
             "FROM alerts WHERE status='confirm' AND COALESCE(dispatched,0)=0 "
             "AND COALESCE(dispatch_status,'failed') IN ('pending','in_flight','failed','uncertain') ORDER BY id DESC"
         ).fetchall()
-    new_alerts = []
+    bus.alerts[:] = []
     for aid, msg, subj, ref, det, cam, ts_str, img, st, disp, dst, rep_cnt, n_st in rows:
         al = {
             "id": aid, "msg": msg, "subject": subj, "ref": ref, "detail": det or "", "cam": cam, "ts": ts_str,
             "img": img, "dispatch_status": dst, "repeat_count": int(rep_cnt or 1),
             "notify_status": n_st, "info_only": is_no_dispatch_msg(msg)
         }
-        new_alerts.append(al)
+        bus.alerts.append(al)
         if img:
             ev_p = os.path.join("evidence", img)
             if os.path.exists(ev_p):
-                with _RUNTIME_STATE_LOCK:
-                    EVID[aid] = ev_p
-    new_fdisp = [
+                EVID[aid] = ev_p
+    bus.failed_dispatches[:] = [
         {"id": r[0], "msg": r[1], "subject": r[2], "ref": r[3], "detail": r[4] or "", "cam": r[5], "ts": r[6], "img": r[7],
          "dispatch_status": r[8], "attempts": r[9], "next_retry_ts": r[10], "last_error": r[11], "dispatch_owner": r[12]}
         for r in f_rows
     ]
-    with bus._lock:
-        bus.alerts[:] = new_alerts
-        bus.failed_dispatches[:] = new_fdisp
 
 
 def _is_evidence_archivable(conn, bname):
@@ -494,67 +503,8 @@ def _recover_interrupted_archives():
                 except OSError: pass
 
 
-def init_runtime_env(appdir=None, db_path=None, force=False):
-    """Explicitly initialize the operational runtime environment (GAP-03):
-    - Resolves writable APPDIR, sets MERSAD_DATA_DIR, and changes working directory to APPDIR.
-    - Configures rotating mersad.log file handler.
-    - Opens SQLite connection and initializes registry, insights, and camera_history schemas.
-    - Synchronizes alerts and recovers interrupted evidence archives.
-    Never called during `--verify-models` or static diagnostic imports from `check_install.py`."""
-    global APPDIR, DB_PATH, db, logger, INS, ANALYTICS, CAMERA_HISTORY, _RUNTIME_INITIALIZED
-    if _RUNTIME_INITIALIZED and not force and db is not None:
-        return db
-    APPDIR = os.path.abspath(appdir) if appdir else resolve_writable_appdir()
-    os.makedirs(APPDIR, exist_ok=True)
-    if not os.environ.get("MERSAD_DATA_DIR"):
-        os.environ["MERSAD_DATA_DIR"] = APPDIR
-    os.chdir(APPDIR)
-    logger = _setup_logging()
-    DB_PATH = os.path.abspath(db_path) if db_path else os.path.join(APPDIR, "mersad.db")
-    if db is None or force:
-        db = sqlite3.connect(DB_PATH, timeout=15.0, check_same_thread=False)
-    R.init(db, DBL, log, lambda: refresh_known(), db_path=DB_PATH)
-    try:
-        import insights as _ins_mod
-        INS = _ins_mod
-        INS.init(db, DBL, db_path=DB_PATH)
-    except Exception as e:
-        INS = None
-        logger.warning("Learning module off: %s", e)
-        print("Learning module off:", e)
-
-    try:
-        import analytics as _an_mod
-        import camera_history as _ch_mod
-        ANALYTICS = _an_mod
-        CAMERA_HISTORY = _ch_mod
-        CAMERA_HISTORY.init(db, DBL, db_path=DB_PATH)
-    except Exception as e:
-        ANALYTICS = CAMERA_HISTORY = None
-        logger.warning("Operational analytics/camera history off: %s", e)
-
-    _sync_alerts_from_db(reset_stuck_in_flight=True)
-    _recover_interrupted_archives()
-    _RUNTIME_INITIALIZED = True
-    return db
-
-
-def _should_auto_init_runtime():
-    if __name__ == "__main__":
-        return False
-    if os.environ.get("MERSAD_SKIP_RUNTIME_INIT") == "1":
-        return False
-    if "--verify-models" in sys.argv or "--verify-pip-deps" in sys.argv or "--evaluate-plates" in sys.argv:
-        return False
-    main_mod = sys.modules.get("__main__")
-    main_file = os.path.basename(getattr(main_mod, "__file__", "") or "").lower()
-    if main_file in ("check_install.py", "prefetch.py"):
-        return False
-    return True
-
-
-if _should_auto_init_runtime():
-    init_runtime_env()
+_sync_alerts_from_db(reset_stuck_in_flight=True)
+_recover_interrupted_archives()
 
 
 def archive_old_evidence(retention_days=None, who="system", _allow_test_override=False):
@@ -566,8 +516,7 @@ def archive_old_evidence(retention_days=None, who="system", _allow_test_override
     cfg_days = float(DEFAULTS.get("evidence_retention_days", 30))
     if os.path.exists("mersad_config.json"):
         try:
-            with open("mersad_config.json", encoding="utf-8") as cf:
-                cfg_days = float(json.load(cf).get("evidence_retention_days", 30))
+            cfg_days = float(json.load(open("mersad_config.json", encoding="utf-8")).get("evidence_retention_days", 30))
         except Exception:
             pass
     raw_days = float(retention_days if retention_days is not None else cfg_days)
@@ -742,37 +691,14 @@ def verify():
     - Active evidence: must exist in evidence/ (not a symlink) with matching SHA-256.
     - Archived evidence: must have an 'evidence archived' record AND exist in evidence_archive/ with matching SHA-256
       (unless also recorded in 'evidence purged')."""
-    if db is None or not _RUNTIME_INITIALIZED:
-        init_runtime_env()
     prev = "0" * 64
     with DBL:
         rows = db.execute("SELECT i, ts, action, ref, prev, hash FROM audit ORDER BY i").fetchall()
     archived_map = {}
     purged_map = {}
-    seen_hmac_v1 = False
-    hmac_key = None
     for i, ts, ac, ref, p, h in rows:
-        if p != prev:
+        if p != prev or chain_hash(p, i, ts, ac, ref) != h:
             return f"TAMPERING DETECTED at record #{i}"
-        h_str = str(h or "")
-        if h_str.startswith("h1:"):
-            seen_hmac_v1 = True
-            if hmac_key is None:
-                base_dir = os.environ.get("MERSAD_DATA_DIR") or APPDIR or os.getcwd()
-                key_path = os.path.abspath(os.path.join(base_dir, getattr(R, "_HMAC_KEY_FILENAME", ".mersad_hmac.key")))
-                if not os.path.lexists(key_path):
-                    return f"TAMPERING DETECTED: missing .mersad_hmac.key required to verify h1 audit record #{i}"
-                try:
-                    hmac_key = R._get_hmac_key()
-                except Exception as key_err:
-                    return f"TAMPERING DETECTED: corrupt or unreadable .mersad_hmac.key at record #{i} ({key_err})"
-            if h_str != chain_hash(p, i, ts, ac, ref, key=hmac_key):
-                return f"TAMPERING DETECTED at record #{i}"
-        else:
-            if seen_hmac_v1:
-                return f"TAMPERING DETECTED at record #{i} (downgrade attack)"
-            if h_str != legacy_chain_hash(p, i, ts, ac, ref):
-                return f"TAMPERING DETECTED at record #{i}"
         if ac == "evidence archived" and " sha256=" in str(ref):
             rel_p = str(ref).partition(" ")[0].strip()
             arch_h = str(ref).partition(" sha256=")[2].strip().split()[0]
@@ -824,74 +750,13 @@ def verify():
     return f"Audit chain OK ({', '.join(parts)})"
 
 
-def _extract_face_box(entry):
-    """Extract (x, y, bw, bh) integer bounding box from a tuple/list or dict face entry."""
-    if entry is None:
-        return None
-    if isinstance(entry, dict):
-        if "box" in entry and entry["box"] is not None:
-            b = entry["box"]
-            return (int(b[0]), int(b[1]), int(b[2]), int(b[3]))
-        x = entry.get("x", 0)
-        y = entry.get("y", 0)
-        bw = entry.get("bw", entry.get("w", 0))
-        bh = entry.get("bh", entry.get("h", 0))
-        return (int(x), int(y), int(bw), int(bh))
-    if isinstance(entry, (tuple, list)) and len(entry) >= 4:
-        return (int(entry[0]), int(entry[1]), int(entry[2]), int(entry[3]))
-    return None
-
-
-def get_boxes_to_blur_for_alert(face_entries, alert_kind="vehicle", target_face_box=None):
-    """Strict privacy blurring policy separating vehicle alerts from watchlist face alerts (GAP-09):
-    - When `alert_kind == 'vehicle'` (all vehicle, plate, truck, and route alerts without exception):
-      returns 100% of all detected face boxes in `face_entries` (whether 'unenrolled', 'normal', or 'watch')
-      so no human face is ever exposed in a vehicle evidence photo.
-    - When `alert_kind == 'face'` ('FACE MATCH (demo watchlist)' exclusively):
-      returns all other face boxes in `face_entries` except the single `target_face_box` that triggered the watchlist match."""
-    all_boxes = []
-    for fe in (face_entries or []):
-        b = _extract_face_box(fe)
-        if b is not None and b[2] > 0 and b[3] > 0:
-            all_boxes.append(b)
-    kind = str(alert_kind or "vehicle").strip().lower()
-    if kind != "face":
-        return all_boxes
-    t_box = _extract_face_box(target_face_box)
-    if t_box is None:
-        return all_boxes
-    out_boxes = []
-    skipped_target = False
-    for b in all_boxes:
-        if not skipped_target and b == t_box:
-            skipped_target = True
-            continue
-        out_boxes.append(b)
-    return out_boxes
-
-
-def resolve_face_detect_score(score_val=None):
-    """Return validated YuNet face detector score threshold (default 0.65, bounded in [0.30, 0.95], GAP-09)."""
-    try:
-        v = float(score_val if score_val is not None else DEFAULTS.get("face_detect_score", 0.65))
-        if v != v or not np.isfinite(v):
-            return 0.65
-    except (TypeError, ValueError):
-        return 0.65
-    return round(min(0.95, max(0.30, v)), 3)
-
-
 def blur_unmatched_faces(frame, unmatched_boxes):
-    """Blur specified face bounding boxes in evidence frames before saving to disk or sending to Telegram (P2-K, GAP-09)."""
+    """Blur bystander/unmatched faces in evidence frames before saving to disk or sending to Telegram (P2-K)."""
     if frame is None or getattr(frame, "size", 0) == 0 or not unmatched_boxes:
         return frame
     out = frame.copy()
     H, W = out.shape[:2]
-    for item in unmatched_boxes:
-        b = _extract_face_box(item)
-        if b is None:
-            continue
-        x, y, bw, bh = b
+    for (x, y, bw, bh) in unmatched_boxes:
         x1, y1 = max(0, int(x)), max(0, int(y))
         x2, y2 = min(W, int(x + bw)), min(H, int(y + bh))
         if x2 > x1 + 4 and y2 > y1 + 4:
@@ -907,10 +772,9 @@ def alert_text(msg, subject, cam, ts, extra=""):
             f"⚠️ رصد آلي، ويتطلب تأكيداً بشرياً قبل أي إجراء.")
 
 
-def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatched_faces=None, face_entries=None, target_face_box=None):
-    """Create or deduplicate an alert atomically across threads/processes (P0-E, P1-I, P2-K, GAP-09).
+def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatched_faces=None):
+    """Create or deduplicate an alert atomically across threads/processes (P0-E, P1-I, P2-K).
     - Deduplicates active pending alerts by (msg, ref), incrementing repeat_count instead of spamming new alerts.
-    - Enforces get_boxes_to_blur_for_alert() when face_entries are supplied (100% face blur on vehicle alerts; non-target blur on face alerts).
     - Uses SQLite AUTOINCREMENT for alert IDs so concurrent OS processes never collide.
     - Cleans up temporary evidence file if the DB transaction fails."""
     now = time.time()
@@ -918,14 +782,8 @@ def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatch
     ref = str(ref or subject)
     no_disp = is_no_dispatch_msg(msg)
 
-    if face_entries is not None:
-        alert_kind = "face" if str(msg or "").startswith("FACE MATCH") else "vehicle"
-        boxes_to_blur = get_boxes_to_blur_for_alert(face_entries, alert_kind=alert_kind, target_face_box=target_face_box)
-    else:
-        boxes_to_blur = unmatched_faces
-
     os.makedirs("evidence", exist_ok=True)
-    safe_frame = blur_unmatched_faces(frame, boxes_to_blur)
+    safe_frame = blur_unmatched_faces(frame, unmatched_faces)
     if safe_frame is None or getattr(safe_frame, "size", 0) == 0:
         safe_frame = np.zeros((120, 320, 3), dtype=np.uint8)
     now_ms = int(now * 1000)
@@ -980,9 +838,8 @@ def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatch
         bus.publish({"type": "alert_updated", "id": aid, "repeat_count": rep_cnt, "ts": ts})
         return aid
 
-    with _RUNTIME_STATE_LOCK:
-        AID[0] = max(AID[0], aid)
-        EVID[aid] = tmp_path
+    AID[0] = max(AID[0], aid)
+    EVID[aid] = tmp_path
     al = {
         "id": aid, "msg": msg, "subject": subject, "ref": ref, "detail": detail or "", "cam": cam, "ts": ts,
         "img": img_name, "dispatch_status": "not_required", "repeat_count": 1, "info_only": no_disp
@@ -1022,9 +879,7 @@ def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatch
 
 def _refresh_failed_dispatches():
     _sync_alerts_from_db()
-    with bus._lock:
-        fdisp_snap = list(bus.failed_dispatches)
-    bus.publish({"type": "failed_dispatches", "items": fdisp_snap})
+    bus.publish({"type": "failed_dispatches", "items": bus.failed_dispatches})
 
 
 def _attempt_dispatch(aid, trigger="auto", is_manual=False, owner_id=None):
@@ -1074,9 +929,7 @@ def _attempt_dispatch(aid, trigger="auto", is_manual=False, owner_id=None):
         return False
     al, attempt_no = claimed
 
-    with _RUNTIME_STATE_LOCK:
-        ev_cached = EVID.get(aid)
-    ev_path = ev_cached or (os.path.join("evidence", al.get("img", "")) if al.get("img") else None)
+    ev_path = EVID.get(aid) or (os.path.join("evidence", al.get("img", "")) if al.get("img") else None)
     if ev_path and not os.path.exists(ev_path):
         ev_path = None
 
@@ -1186,8 +1039,7 @@ def _attempt_dispatch(aid, trigger="auto", is_manual=False, owner_id=None):
     def _finalize_and_sync(conn):
         _finalize_lease(conn)
         if final_status[0] == "sent":
-            with bus._lock:
-                bus.failed_dispatches[:] = [x for x in bus.failed_dispatches if x.get("id") != aid]
+            bus.failed_dispatches[:] = [x for x in bus.failed_dispatches if x.get("id") != aid]
         else:
             f_rows = conn.execute(
                 "SELECT id, msg, subject, ref, detail, cam, ts_str, img, COALESCE(dispatch_status,'failed'), "
@@ -1195,18 +1047,15 @@ def _attempt_dispatch(aid, trigger="auto", is_manual=False, owner_id=None):
                 "FROM alerts WHERE status='confirm' AND COALESCE(dispatched,0)=0 "
                 "AND COALESCE(dispatch_status,'failed') IN ('pending','in_flight','failed','uncertain') ORDER BY id DESC"
             ).fetchall()
-            new_fdisp = [
+            bus.failed_dispatches[:] = [
                 {"id": r[0], "msg": r[1], "subject": r[2], "ref": r[3], "detail": r[4] or "", "cam": r[5], "ts": r[6], "img": r[7],
                  "dispatch_status": r[8], "attempts": r[9], "next_retry_ts": r[10], "last_error": r[11], "dispatch_owner": r[12]}
                 for r in f_rows
             ]
-            with bus._lock:
-                bus.failed_dispatches[:] = new_fdisp
 
     R.run_atomic_tx(db, DBL, _finalize_and_sync, db_path=DB_PATH)
     if final_status[0] == "sent":
-        with _RUNTIME_STATE_LOCK:
-            EVID.pop(aid, None)
+        EVID.pop(aid, None)
     _refresh_failed_dispatches()
     bus.publish({"type": "dispatched", "id": aid, "ok": final_status[0] == "sent", "attempt": attempt_no,
                  "dispatch_status": final_status[0]})
@@ -1298,8 +1147,6 @@ def _dispatch_retry_loop(stop_event=None):
             if now - last_arch > 3600:
                 last_arch = now
                 archive_old_evidence(who="periodic_scheduler")
-                if CAMERA_HISTORY and hasattr(CAMERA_HISTORY, "prune_history"):
-                    CAMERA_HISTORY.prune_history()
         except Exception as e:
             logger.debug("Retry loop error: %s", e)
         time.sleep(0.25)
@@ -1338,8 +1185,7 @@ def decide(aid, action, who):
         _refresh_failed_dispatches()
         dispatch(res, trigger=f"confirm:{who}")
     else:
-        with _RUNTIME_STATE_LOCK:
-            EVID.pop(aid, None)
+        EVID.pop(aid, None)
     return True
 
 
@@ -1398,186 +1244,88 @@ def refresh_known():
             valid.append(KnownFace(n, emb, int(w), person_id=pid, ref=ref))
             active_keys.add(f"id:{pid}")
             active_keys.add(n)
-    with _FACE_STATE_LOCK:
-        KNOWN[:] = valid
-        for k in list(FH):
-            base_k = str(k).partition("|")[2] if "|" in str(k) else str(k)
-            if k not in active_keys and base_k not in active_keys:
-                FH.pop(k, None)
+    KNOWN[:] = valid
+    for k in list(FH):
+        if k not in active_keys:
+            FH.pop(k, None)
     bus.publish({"type": "people"})
 
 
-ENROLL_MIN_FACE_PX = 40
-ENROLL_COMPETING_AREA_RATIO = 0.50
-ENROLL_MIN_SAMPLE_SIM = 0.55
-ENROLL_MAX_INCONSISTENT = 5
+def req_enroll(name_or_id, watch=False, who="operator", ref="", person_id=None):
+    """Start face enrollment bound to a specific unambiguous person_id (P0-A item 3)."""
+    if ENR.get("req"):
+        return False
+    p = R.get_person(name=name_or_id, ref=ref, person_id=person_id)
+    if not p or not p.get("consent"):
+        return False
+    ENR["req"] = {
+        "person_id": int(p["id"]),
+        "name": p["name"],
+        "ref": p.get("ref", ""),
+        "watch": bool(p.get("status") == "watch" or watch),
+        "who": who,
+        "samples": [],
+        "t0": time.time()
+    }
+    return True
 
 
-def req_enroll(name_or_id, watch=False, who="operator", ref="", person_id=None, cam=None):
-    """Start face enrollment bound to a specific unambiguous person_id and camera source (P0-A, GAP-10, POST-GAP-04)."""
-    with _ENROLL_LOCK:
-        if ENR.get("req"):
-            return False
-        p = R.get_person(name=name_or_id, ref=ref, person_id=person_id)
-        if not p or not p.get("consent"):
-            return False
-        target_cam = str(cam or "").strip()
-        ENR["req"] = {
-            "person_id": int(p["id"]),
-            "name": p["name"],
-            "ref": p.get("ref", ""),
-            "watch": bool(p.get("status") == "watch" or watch),
-            "who": who,
-            "cam": target_cam,
-            "samples": [],
-            "inconsistent_count": 0,
-            "competing_count": 0,
-            "t0": time.time()
-        }
-        return True
+def enroll_step(emb=None):
+    """Called every frame; collects 5 validated 128-D embeddings and binds them strictly to er['person_id'] (P0-A)."""
+    er = ENR.get("req")
+    if not er:
+        return
+    if time.time() - er["t0"] > 30:
+        ENR["req"] = None; bus.publish({"type": "enroll", "n": -1}); return
+    norm_emb = validate_embedding(emb)
+    if norm_emb is None:
+        return
+    er["samples"].append(norm_emb.astype(np.float32).tobytes())
+    bus.publish({"type": "enroll", "n": len(er["samples"])})
+    if len(er["samples"]) >= 5:
+        target_pid = int(er.get("person_id") or 0)
 
-
-def enroll_step(emb=None, cam=None, face_box=None, faces_in_frame=None):
-    """Collect 5 validated, mutually consistent 128-D embeddings from a single bound camera (P0-A, GAP-10, POST-GAP-04):
-    - Protected by _ENROLL_LOCK against concurrent HTTP/video thread access.
-    - Replaces any prior embeddings for person_id=pid inside the atomic transaction so re-enrollment never accumulates stale samples."""
-    with _ENROLL_LOCK:
-        er = ENR.get("req")
-        if not er:
-            return False
-        if time.time() - er["t0"] > 30:
-            ENR["req"] = None
-            bus.publish({"type": "enroll", "n": -1, "error": "انتهت مهلة التسجيل: لم تكتمل 5 عينات متسقة خلال 30 ثانية"})
-            return False
-
-        req_cam = str(er.get("cam") or "").strip()
-        cur_cam = str(cam or "").strip()
-        if req_cam and cur_cam and cur_cam != req_cam:
-            return False
-        if not req_cam and cur_cam:
-            er["cam"] = cur_cam
-
-        if faces_in_frame is not None:
-            boxes = [b for b in (_extract_face_box(fe) for fe in faces_in_frame) if b is not None and b[2] > 0 and b[3] > 0]
-            if not boxes:
-                return False
-            boxes_sorted = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
-            largest_box = boxes_sorted[0]
-            max_area = float(largest_box[2] * largest_box[3])
-            if face_box is None:
-                face_box = largest_box
-            if len(boxes_sorted) >= 2:
-                second_area = float(boxes_sorted[1][2] * boxes_sorted[1][3])
-                if max_area > 0 and (second_area / max_area) >= ENROLL_COMPETING_AREA_RATIO:
-                    er["competing_count"] = int(er.get("competing_count", 0)) + 1
-                    if er["competing_count"] >= ENROLL_MAX_INCONSISTENT:
-                        ENR["req"] = None
-                        bus.publish({
-                            "type": "enroll",
-                            "n": -1,
-                            "error": "تم إلغاء التسجيل بسبب عدم اتساق عينات الوجه أو تحرك شخص آخر أمام الكاميرا"
-                        })
-                    else:
-                        bus.publish({
-                            "type": "enroll",
-                            "n": len(er["samples"]),
-                            "warning": "يوجد أكثر من وجه متنافس أمام الكاميرا — يرجى وقوف شخص واحد فقط"
-                        })
-                    return False
-
-        if face_box is not None:
-            fb = _extract_face_box(face_box)
-            if fb is not None and (fb[2] < ENROLL_MIN_FACE_PX or fb[3] < ENROLL_MIN_FACE_PX):
-                bus.publish({
-                    "type": "enroll",
-                    "n": len(er["samples"]),
-                    "warning": f"حجم الوجه صغير جداً ({fb[2]}x{fb[3]} < {ENROLL_MIN_FACE_PX}px) — اقترب من الكاميرا"
-                })
-                return False
-
-        norm_emb = validate_embedding(emb)
-        if norm_emb is None:
-            return False
-
-        for prev_bytes in er["samples"]:
-            prev_vec = validate_embedding(np.frombuffer(prev_bytes, dtype=np.float32))
-            if prev_vec is not None:
-                sim = float((norm_emb @ prev_vec.T).item())
-                if sim < ENROLL_MIN_SAMPLE_SIM:
-                    er["inconsistent_count"] = int(er.get("inconsistent_count", 0)) + 1
-                    if er["inconsistent_count"] >= ENROLL_MAX_INCONSISTENT:
-                        ENR["req"] = None
-                        bus.publish({
-                            "type": "enroll",
-                            "n": -1,
-                            "error": "تم إلغاء التسجيل بسبب عدم اتساق عينات الوجه أو تحرك شخص آخر أمام الكاميرا"
-                        })
-                    else:
-                        bus.publish({
-                            "type": "enroll",
-                            "n": len(er["samples"]),
-                            "warning": f"عينة وجه غير متسقة (التشابه {sim:.2f} < {ENROLL_MIN_SAMPLE_SIM}) — اثبت أمام الكاميرا"
-                        })
-                    return False
-
-        er["samples"].append(norm_emb.astype(np.float32).tobytes())
-        bus.publish({"type": "enroll", "n": len(er["samples"])})
-        if len(er["samples"]) >= 5:
-            target_pid = int(er.get("person_id") or 0)
-            samples_to_save = list(er["samples"])
-            cam_saved = er.get("cam") or "-"
-            who_saved = er["who"]
-            watch_req = er.get("watch")
-            name_saved = er["name"]
-
-            def _save_samples(conn):
-                R.migrate_db(conn, DBL)
-                if target_pid > 0:
-                    p = conn.execute(
-                        "SELECT id, name, COALESCE(ref,''), COALESCE(status,'normal'), COALESCE(consent,0) "
-                        "FROM persons WHERE id=? AND COALESCE(consent,0)=1",
-                        (target_pid,)
-                    ).fetchone()
-                else:
-                    p_all = conn.execute(
-                        "SELECT id, name, COALESCE(ref,''), COALESCE(status,'normal'), COALESCE(consent,0) "
-                        "FROM persons WHERE name=? AND COALESCE(consent,0)=1",
-                        (name_saved,)
-                    ).fetchall()
-                    p = p_all[0] if len(p_all) == 1 else None
-                if p:
-                    pid, p_name, p_ref, p_status, _ = p
-                    w_flag = int(p_status == "watch" or watch_req)
-                    # POST-GAP-04: Replace any prior face samples for this person_id so re-enrollment keeps exactly 5 fresh samples
-                    conn.execute("DELETE FROM faces WHERE person_id=?", (pid,))
-                    for smp in samples_to_save:
-                        conn.execute(
-                            "INSERT INTO faces(name, emb, watch, person_id, quarantined, quarantine_reason) VALUES(?,?,?,?,0,'')",
-                            (p_name, smp, w_flag, pid)
-                        )
-                    _log_in_tx(
-                        conn,
-                        "face enrolled (consent confirmed)",
-                        f"{pseud(f'{pid}:{p_name}')} id={pid} ref={p_ref} cam={cam_saved} watch={w_flag} by {who_saved}"
+        def _save_samples(conn):
+            R.migrate_db(conn, DBL)
+            if target_pid > 0:
+                p = conn.execute(
+                    "SELECT id, name, COALESCE(ref,''), COALESCE(status,'normal'), COALESCE(consent,0) "
+                    "FROM persons WHERE id=? AND COALESCE(consent,0)=1",
+                    (target_pid,)
+                ).fetchone()
+            else:
+                p_all = conn.execute(
+                    "SELECT id, name, COALESCE(ref,''), COALESCE(status,'normal'), COALESCE(consent,0) "
+                    "FROM persons WHERE name=? AND COALESCE(consent,0)=1",
+                    (er["name"],)
+                ).fetchall()
+                p = p_all[0] if len(p_all) == 1 else None
+            if p:
+                pid, p_name, p_ref, p_status, _ = p
+                w_flag = int(p_status == "watch" or er.get("watch"))
+                for s in er["samples"]:
+                    conn.execute(
+                        "INSERT INTO faces(name, emb, watch, person_id, quarantined, quarantine_reason) VALUES(?,?,?,?,0,'')",
+                        (p_name, s, w_flag, pid)
                     )
+                _log_in_tx(
+                    conn,
+                    "face enrolled (consent confirmed)",
+                    f"{pseud(f'{pid}:{p_name}')} id={pid} ref={p_ref} watch={w_flag} by {er['who']}"
+                )
 
-            R.run_atomic_tx(db, DBL, _save_samples, db_path=DB_PATH)
-            ENR["req"] = None
-            refresh_known()
-        return True
+        R.run_atomic_tx(db, DBL, _save_samples, db_path=DB_PATH)
+        ENR["req"] = None
+        refresh_known()
 
 
 def match_face_embedding(emb, rec=None):
-    """Match a 128-D embedding against consented KNOWN embeddings and return FaceMatchResult(name, score, watch, person_id, ref) (P0-A, FINAL-OBS-03)."""
+    """Match a 128-D embedding against consented KNOWN embeddings and return FaceMatchResult(name, score, watch, person_id, ref) (P0-A)."""
     q = validate_embedding(emb)
-    if q is None:
-        return FaceMatchResult("unenrolled", 0.0, 0, person_id=0, ref="")
-    with _FACE_STATE_LOCK:
-        known_snap = list(KNOWN)
-    if not known_snap:
+    if q is None or not KNOWN:
         return FaceMatchResult("unenrolled", 0.0, 0, person_id=0, ref="")
     best_name, best_sc, best_wl, best_pid, best_ref = "unenrolled", 0.0, 0, 0, ""
-    for item in known_snap:
+    for item in KNOWN:
         nm, k_emb, w = item[0], item[1], item[2]
         pid = getattr(item, "person_id", 0)
         ref = getattr(item, "ref", "")
@@ -1590,9 +1338,8 @@ def match_face_embedding(emb, rec=None):
     return FaceMatchResult(best_name, best_sc, best_wl, person_id=best_pid, ref=best_ref)
 
 
-def face_step(name, sc, watch, frame, cam, frame_idx=0, unmatched_faces=None, person_id=None, ref=None, face_entries=None, target_face_box=None):
-    """Watchlist check keyed by internal person_id so two homonymous persons never share streak/cooldown state (P0-A, GAP-09).
-    Blurs all other faces in the frame except `target_face_box` when raising a FACE MATCH alert."""
+def face_step(name, sc, watch, frame, cam, frame_idx=0, unmatched_faces=None, person_id=None, ref=None):
+    """Watchlist check keyed by internal person_id so two homonymous persons never share streak/cooldown state (P0-A item 6)."""
     if isinstance(name, FaceMatchResult):
         if person_id is None:
             person_id = name.person_id
@@ -1602,32 +1349,24 @@ def face_step(name, sc, watch, frame, cam, frame_idx=0, unmatched_faces=None, pe
     if name == "unenrolled" or not watch or sc < FACE_ALERT[0]:
         return False
     pid_val = int(person_id or 0)
+    if pid_val <= 0:
+        for item in KNOWN:
+            if item[0] == name and getattr(item, "person_id", 0) > 0:
+                pid_val = int(item.person_id)
+                if not ref:
+                    ref = getattr(item, "ref", "")
+                break
+    identity_key = f"id:{pid_val}" if pid_val > 0 else str(name)
     now = time.time()
-    with _FACE_STATE_LOCK:
-        if pid_val <= 0:
-            for item in KNOWN:
-                if item[0] == name and getattr(item, "person_id", 0) > 0:
-                    pid_val = int(item.person_id)
-                    if not ref:
-                        ref = getattr(item, "ref", "")
-                    break
-        identity_key = f"id:{pid_val}" if pid_val > 0 else str(name)
-        streak_key = f"{cam}|{identity_key}" if cam else identity_key
-        prev_cnt, prev_ts, prev_f = FH.get(streak_key, (0, 0.0, -999))
-        is_consec = (now - prev_ts <= 4.0) and (frame_idx <= 0 or (0 <= (frame_idx - prev_f) <= 12))
-        cnt = prev_cnt + 1 if is_consec else 1
-        FH[streak_key] = (cnt, now, frame_idx)
-        should_alert = (cnt >= 3 and now - FA.get(identity_key, 0.0) > ALERT_COOLDOWN_SEC)
-        if should_alert:
-            FA[identity_key] = now
-            FH[streak_key] = (0, now, frame_idx)
-    if should_alert:
+    prev_cnt, prev_ts, prev_f = FH.get(identity_key, (0, 0.0, -999))
+    is_consec = (now - prev_ts <= 4.0) and (frame_idx <= 0 or (frame_idx - prev_f) <= 12)
+    cnt = prev_cnt + 1 if is_consec else 1
+    FH[identity_key] = (cnt, now, frame_idx)
+    if cnt >= 3 and now - FA.get(identity_key, 0.0) > ALERT_COOLDOWN_SEC:
+        FA[identity_key] = now
+        FH[identity_key] = (0, now, frame_idx)
         disp_subj = f"{name} [{ref}] (تشابه {sc:.2f})" if ref else f"{name} (تشابه {sc:.2f})"
         alert_ref = pseud(f"{pid_val}:{name}") if pid_val > 0 else pseud(name)
-        boxes_to_blur = (
-            get_boxes_to_blur_for_alert(face_entries, alert_kind="face", target_face_box=target_face_box)
-            if face_entries is not None else unmatched_faces
-        )
         raise_alert(
             "FACE MATCH (demo watchlist)",
             disp_subj,
@@ -1635,9 +1374,7 @@ def face_step(name, sc, watch, frame, cam, frame_idx=0, unmatched_faces=None, pe
             frame,
             ref=alert_ref,
             extra="\nهذا احتمال تطابق خوارزمي وليس إثباتاً قاطعاً، ويتطلب تحققاً بشرياً قبل أي إجراء.",
-            unmatched_faces=boxes_to_blur,
-            face_entries=face_entries,
-            target_face_box=target_face_box
+            unmatched_faces=unmatched_faces
         )
         return True
     return False
@@ -1676,8 +1413,7 @@ def verify_yolo_pt_file(path, expected_sha256=None, min_bytes=6_000_000):
     sidecar = f"{path}.sha256"
     if not expected_sha256 and os.path.isfile(sidecar):
         try:
-            with open(sidecar, "r", encoding="utf-8") as sf:
-                expected_sha256 = sf.read().strip().split()[0]
+            expected_sha256 = open(sidecar, "r", encoding="utf-8").read().strip().split()[0]
         except Exception:
             pass
     h = hashlib.sha256()
@@ -1729,6 +1465,103 @@ def verify_easyocr_dir(easyocr_dir="models/easyocr"):
             return False, f"corrupt_pth_header:{fn}"
         valid_pths.append(fn)
     return True, f"verified_{len(valid_pths)}_pth_weights({','.join(sorted(valid_pths))})"
+
+
+
+def verify_runtime_model_assets(models_dir=None):
+    """Verify all bundled weights without downloading anything at runtime.
+
+    Frozen EXE builds must be self-contained: if any required model is absent or
+    damaged, startup fails with a report instead of unexpectedly requiring the
+    internet or writing model files under a protected installation directory.
+    """
+    root = os.path.abspath(models_dir or resolve_resource_path("models"))
+    checks = []
+    for filename in MODELS:
+        path = os.path.join(root, filename)
+        ok, reason = verify_onnx_file(
+            path,
+            expected_sha256=MODEL_SHA256.get(filename),
+            min_bytes=MODEL_MIN_BYTES.get(filename, 50_000),
+        )
+        checks.append({"model": filename, "ok": bool(ok), "reason": str(reason)})
+    yolo_path = os.path.join(root, "yolov8n.pt")
+    ok_yolo, reason_yolo = verify_yolo_pt_file(
+        yolo_path, min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000)
+    )
+    checks.append({"model": "yolov8n.pt", "ok": bool(ok_yolo), "reason": str(reason_yolo)})
+    ok_easy, reason_easy = verify_easyocr_dir(os.path.join(root, "easyocr"))
+    checks.append({"model": "easyocr/Arabic+English", "ok": bool(ok_easy), "reason": str(reason_easy)})
+    return all(item["ok"] for item in checks), checks
+
+
+def create_offline_easyocr_reader(easyocr_module=None, model_storage_directory=None):
+    """Create the OCR reader only from prevalidated bundled/local weights.
+
+    Runtime model downloads are deliberately disabled. A missing or damaged model
+    is reported as an actionable startup error instead of attempting an invisible
+    network download or writing to a protected installation directory.
+    """
+    if easyocr_module is None:
+        import easyocr as easyocr_module
+    model_dir = model_storage_directory or resolve_resource_path(os.path.join("models", "easyocr"))
+    model_dir = os.path.abspath(model_dir)
+    valid, reason = verify_easyocr_dir(model_dir)
+    if not valid:
+        raise RuntimeError(
+            f"EasyOCR Arabic/English model weights are missing or invalid ({reason}) at '{model_dir}'. "
+            "Run prefetch.py or BUILD_EXE.bat while connected to the internet, then retry. "
+            "Runtime downloads are disabled."
+        )
+    try:
+        return easyocr_module.Reader(
+            ["ar", "en"], gpu=False,
+            model_storage_directory=model_dir,
+            download_enabled=False,
+        )
+    except TypeError as exc:
+        raise RuntimeError(
+            "The installed EasyOCR Reader does not support download_enabled=False. "
+            "Install the pinned EasyOCR version from requirements.txt."
+        ) from exc
+
+
+def _bounded_camera_timeout_ms(env_name, default=5000):
+    try:
+        value = int(os.environ.get(env_name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(1000, min(60000, value))
+
+
+NETWORK_CAMERA_OPEN_TIMEOUT_MS = _bounded_camera_timeout_ms("MERSAD_CAMERA_OPEN_TIMEOUT_MS", 5000)
+NETWORK_CAMERA_READ_TIMEOUT_MS = _bounded_camera_timeout_ms("MERSAD_CAMERA_READ_TIMEOUT_MS", 5000)
+
+
+def _open_camera_capture(source):
+    """Open a camera source; network URLs use bounded FFmpeg open/read timeouts.
+
+    Opening is called only from each camera's dedicated reader thread, so a slow
+    or unreachable RTSP/HTTP camera cannot delay other cameras or server startup.
+    """
+    source_value = int(source) if str(source).isdigit() else source
+    if isinstance(source_value, str) and source_value.strip().lower().startswith((
+        "rtsp://", "rtsps://", "http://", "https://"
+    )):
+        if not all(hasattr(cv2, key) for key in ("CAP_FFMPEG", "CAP_PROP_OPEN_TIMEOUT_MSEC", "CAP_PROP_READ_TIMEOUT_MSEC")):
+            raise RuntimeError("This OpenCV build lacks bounded network-camera timeout support; install the pinned OpenCV package.")
+        params = [
+            int(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC), int(NETWORK_CAMERA_OPEN_TIMEOUT_MS),
+            int(cv2.CAP_PROP_READ_TIMEOUT_MSEC), int(NETWORK_CAMERA_READ_TIMEOUT_MS),
+        ]
+        try:
+            return cv2.VideoCapture(source_value, cv2.CAP_FFMPEG, params)
+        except (TypeError, cv2.error) as exc:
+            raise RuntimeError(
+                "OpenCV could not create a network camera capture with bounded timeouts; "
+                "the source will be retried without blocking the main service."
+            ) from exc
+    return cv2.VideoCapture(source_value)
 
 
 def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, expected_sha256=None, timeout=30.0, retries=3, validator_fn=None):
@@ -1865,66 +1698,13 @@ def _resolve_vclass(cls_id, model):
     return VCLS.get(int(cls_id))
 
 
-ACTIVE_DEVICE = {"device": "cpu", "use_gpu": False, "cuda_available": False, "fallback_warning": ""}
-
-
-def resolve_compute_device(requested="auto", torch_module=None):
-    """Resolve execution device ('cpu' vs 'cuda:0') for YOLO and EasyOCR (GAP-16).
-    - Supports 'auto', 'cpu', 'cuda', 'gpu', True, False.
-    - When GPU/CUDA is explicitly requested ('cuda', 'gpu', True) on a CPU-only build or machine without CUDA,
-      logs a clear warning and falls back safely to CPU without raising an exception."""
-    if torch_module is None:
-        try:
-            import torch as _t_mod
-            torch_module = _t_mod
-        except Exception:
-            torch_module = None
-
-    cuda_avail = False
-    if torch_module is not None:
-        try:
-            cuda_obj = getattr(torch_module, "cuda", None)
-            if cuda_obj is not None and callable(getattr(cuda_obj, "is_available", None)):
-                cuda_avail = bool(cuda_obj.is_available())
-        except Exception:
-            cuda_avail = False
-
-    if isinstance(requested, bool):
-        req_str = "cuda" if requested else "cpu"
-    else:
-        req_str = str(requested or "auto").strip().lower()
-
-    if req_str in ("cpu", "false", "0", "no"):
-        return {"device": "cpu", "use_gpu": False, "cuda_available": cuda_avail, "fallback_warning": ""}
-
-    if req_str in ("cuda", "gpu", "true", "1") or req_str.startswith("cuda"):
-        if cuda_avail:
-            dev_name = "cuda:0" if req_str in ("cuda", "gpu", "true", "1") else req_str
-            return {"device": dev_name, "use_gpu": True, "cuda_available": True, "fallback_warning": ""}
-        warn_msg = (
-            f"Requested compute device '{requested}', but CUDA is not available in the current PyTorch environment; "
-            "falling back safely to CPU."
-        )
-        logger.warning(warn_msg)
-        return {"device": "cpu", "use_gpu": False, "cuda_available": False, "fallback_warning": warn_msg}
-
-    # Default 'auto' mode
-    if cuda_avail:
-        return {"device": "cuda:0", "use_gpu": True, "cuda_available": True, "fallback_warning": ""}
-    return {"device": "cpu", "use_gpu": False, "cuda_available": False, "fallback_warning": ""}
-
-
-def detect_vehicles(img, model, device=None):
-    """YOLOv8n: car / motorcycle / bus / truck -> [(x, y, w, h, class)]. Passes device to YOLO (GAP-16)."""
+def detect_vehicles(img, model):
+    """YOLOv8n: car / motorcycle / bus / truck -> [(x, y, w, h, class)]."""
     if not model or img is None or getattr(img, "size", 0) == 0:
         return []
     H, W = img.shape[:2]
     target_classes = _get_vehicle_class_ids(model)
-    eff_dev = device or ACTIVE_DEVICE.get("device", "cpu")
-    try:
-        res_list = model(img, imgsz=480, conf=0.35, classes=target_classes, verbose=False, device=eff_dev)
-    except TypeError:
-        res_list = model(img, imgsz=480, conf=0.35, classes=target_classes, verbose=False)
+    res_list = model(img, imgsz=480, conf=0.35, classes=target_classes, verbose=False)
     if not res_list:
         return []
     r = res_list[0]
@@ -1940,22 +1720,14 @@ def detect_vehicles(img, model, device=None):
     return out
 
 
-def find_plates(img, yolo=None, device=None):
-    """YOLO plate model if provided (--plate-model), else classic OpenCV Canny rectangle search.
-    GAP-17 engineering note: Replacing classic Canny contour detection in field deployments requires
-    providing a dedicated YOLO plate detector (--plate-model) trained on real Yemeni license plates.
-    Geometric thresholds are kept stable unless backed by a reproducible before/after benchmark via evaluate_plates_dataset()."""
+def find_plates(img, yolo=None):
+    """YOLO plate model if provided, else classic OpenCV rectangle search."""
     if img is None or getattr(img, "size", 0) == 0:
         return []
     H, W = img.shape[:2]
     if yolo:
         out = []
-        eff_dev = device or ACTIVE_DEVICE.get("device", "cpu")
-        try:
-            y_res = yolo(img, verbose=False, device=eff_dev)
-        except TypeError:
-            y_res = yolo(img, verbose=False)
-        for b in y_res[0].boxes.xyxy.tolist():
+        for b in yolo(img, verbose=False)[0].boxes.xyxy.tolist():
             x1, y1 = max(0, int(b[0])), max(0, int(b[1]))
             x2, y2 = min(W, int(b[2])), min(H, int(b[3]))
             if x2 > x1 and y2 > y1:
@@ -2186,13 +1958,11 @@ def register(d, conf, cam, vc="unknown", curfew=None, direction="عبور نسب
     if conflict_rec:
         why_str = conflict_rec["why"]
     if why_str:
-        with _RUNTIME_STATE_LOCK:
-            WHY[d] = why_str
+        WHY[d] = why_str
 
     # P0-B: If registry match has contradictory letters, ambiguity, or edit-distance-1 approximation -> visual check only!
     if v and v["status"] != "normal" and v.get("visual_check_only"):
-        with _RUNTIME_STATE_LOCK:
-            WHY[d] = v.get("match_note", "تطابق محتمل — تحقق بصري")
+        WHY[d] = v.get("match_note", "تطابق محتمل — تحقق بصري")
         return "POSSIBLE MATCH (visual check)", v
 
     if v and v["status"] in ("wanted", "stolen"):
@@ -2239,23 +2009,15 @@ def enroll_api(d, ip):
         return {"ok": False, "error": "الشخص غير موجود في السجل"}
     if not p["consent"]:
         return {"ok": False, "error": "لا توجد موافقة مسجّلة لهذا الشخص"}
-    with _RUNTIME_STATE_LOCK:
-        default_cam = str(STATUS.get("cam") or "").split(",")[0].strip()
-    req_cam = str(d.get("cam") or "").strip() or default_cam
-    if not req_enroll(p["name"], p["status"] == "watch", ip, ref=p.get("ref", ""), person_id=p["id"], cam=req_cam):
+    if not req_enroll(p["name"], p["status"] == "watch", ip, ref=p.get("ref", ""), person_id=p["id"]):
         return {"ok": False, "error": "عملية تسجيل أخرى جارية"}
-    return {"ok": True, "person_id": p["id"], "cam": req_cam}
+    return {"ok": True, "person_id": p["id"]}
 
 
 def ins_act(fn, name):
     def h(d, ip):
         if not INS: return {"ok": False, "error": "وحدة التحليل غير متاحة"}
-        try:
-            r = fn(d)
-        except TypeError:
-            r = fn()
-        log("learning model: " + name, f"n={r.get('n', 0)} by {ip}")
-        return r
+        r = fn(); log("learning model: " + name, f"n={r.get('n', 0)} by {ip}"); return r
     return h
 
 
@@ -2286,23 +2048,11 @@ def stats():
              "vehicles": q("SELECT COUNT(*) FROM vehicles"), "persons": q("SELECT COUNT(*) FROM persons"), "chain": q("SELECT COUNT(*) FROM audit")}
     tg_cfg = bool(os.getenv("TELEGRAM_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"))
     tg_conn = bool(tg_cfg and _notify_mod.TELEGRAM_STATUS.get("connected", True))
-    with bus._lock:
-        pending_cnt = len(bus.alerts)
-    with _RUNTIME_STATE_LOCK:
-        fps_val = STATUS["fps"]
-        cam_val = STATUS["cam"]
-        cams_snap = {k: dict(v) for k, v in (STATUS.get("cameras") or {}).items()}
-        t0_val = STATUS["t0"]
-    if INS and hasattr(INS, "_STATE_LOCK"):
-        with INS._STATE_LOCK:
-            learning_ready = bool(INS.M.get("model"))
-    else:
-        learning_ready = bool(INS and INS.M.get("model"))
     d.update(
-        pending=pending_cnt, fps=fps_val, cam=cam_val, cameras=cams_snap,
-        uptime=int(now - t0_val), telegram=tg_cfg, telegram_connected=tg_conn,
+        pending=len(bus.alerts), fps=STATUS["fps"], cam=STATUS["cam"], cameras=STATUS.get("cameras", {}),
+        uptime=int(now - STATUS["t0"]), telegram=tg_cfg, telegram_connected=tg_conn,
         telegram_error=_notify_mod.TELEGRAM_STATUS.get("last_error", ""),
-        learning=learning_ready
+        learning=bool(INS and INS.M["model"])
     )
     return d
 
@@ -2314,75 +2064,29 @@ def wire():
     def _analytics_report():
         if not ANALYTICS:
             return {"ok": False, "error": "التحليلات غير متاحة"}
-        with _RUNTIME_STATE_LOCK:
-            cams_snap = {k: dict(v) for k, v in (STATUS.get("cameras") or {}).items()}
         with DBL:
-            return ANALYTICS.build_report(db, cams_snap)
+            return ANALYTICS.build_report(db, STATUS.get("cameras", {}))
 
     def _camera_health_report(period="24h"):
         if not CAMERA_HISTORY:
             return {"ok": False, "error": "سجل صحة الكاميرات غير متاح"}
-        with _RUNTIME_STATE_LOCK:
-            cams_snap = {k: dict(v) for k, v in (STATUS.get("cameras") or {}).items()}
         with DBL:
-            return CAMERA_HISTORY.build_report(db, cams_snap, period=period)
+            return CAMERA_HISTORY.build_report(db, STATUS.get("cameras", {}), period=period)
 
     bus.on_analytics = _analytics_report
     bus.on_analytics_export = (lambda: ANALYTICS.export_csv(_analytics_report())) if ANALYTICS else (lambda: b"\xef\xbb\xbf")
     bus.on_camera_health = _camera_health_report
     bus.on_camera_health_export = (lambda period="24h": CAMERA_HISTORY.export_csv(_camera_health_report(period))) if CAMERA_HISTORY else (lambda period="24h": b"\xef\xbb\xbf")
-    bus.on_insights = (
-        (lambda include_demo=False: INS.summary(include_demo=include_demo))
-        if INS else (lambda include_demo=False: {"data_source": "live", "includes_demo": False, "model": {"ready": False, "type": "none", "reason": "module_disabled"}, "forecast": None, "anomalies": [], "corridors": [], "paths": []})
-    )
-    bus.on_path = (
-        (lambda p, include_demo=False: INS.plate_path(p, include_demo=include_demo))
-        if INS and hasattr(INS, "plate_path") else (lambda p, include_demo=False: {"ok": False, "error": "غير متاح"})
-    )
-    bus.on_camera_links = (
-        (lambda q="", status="": INS.list_camera_links(q=q, status_filter=status))
-        if INS and hasattr(INS, "list_camera_links") else (lambda q="", status="": {"ok": True, "links": [], "inferred_links": [], "calibrated_cameras": []})
-    )
-    bus.on_camera_links_export = (
-        (lambda fmt="json": INS.export_camera_links(fmt=fmt))
-        if INS and hasattr(INS, "export_camera_links") else (lambda fmt="json": (b"{}", "mersad_camera_links.json", "application/json; charset=utf-8"))
-    )
-    bus.on_camera_links_import = (
-        (lambda filename, raw, ip: INS.import_camera_links(raw, filename=filename, who=ip))
-        if INS and hasattr(INS, "import_camera_links") else (lambda filename, raw, ip: {"ok": False, "error": "غير متاح"})
-    )
-    bus.on_field_calibrations = (
-        INS.list_field_calibrations
-        if INS and hasattr(INS, "list_field_calibrations") else (lambda: {"ok": True, "items": [], "automated_eval_still_required": True})
-    )
-    bus.on_field_calibrations_export = (
-        (lambda fmt="json": INS.export_field_calibrations(fmt=fmt))
-        if INS and hasattr(INS, "export_field_calibrations") else (lambda fmt="json": (b"{}", "mersad_manual_calibrations.json", "application/json; charset=utf-8"))
-    )
-    bus.on_field_calibrations_import = (
-        (lambda filename, raw, ip: INS.import_field_calibrations(raw, filename=filename, who=ip))
-        if INS and hasattr(INS, "import_field_calibrations") else (lambda filename, raw, ip: {"ok": False, "error": "غير متاح"})
-    )
-    bus.on_plate_eval_status = get_plate_eval_status
-    bus.on_plate_eval_history = list_plate_eval_runs
+    bus.on_insights = INS.summary if INS else (lambda: {"model": {"ready": False, "type": "none", "reason": "module_disabled"}, "forecast": None, "anomalies": [], "corridors": [], "paths": []})
+    bus.on_path = INS.plate_path if INS and hasattr(INS, "plate_path") else (lambda p: {"ok": False, "error": "غير متاح"})
     bus.post = {
         "/api/decision": lambda d, ip: {"ok": bool(d.get("action") in ("confirm", "ack", "dismiss") and str(d.get("id", "")).isdigit() and decide(int(d["id"]), d["action"], ip))},
         "/api/retry_dispatch": lambda d, ip: retry_dispatch(int(d["id"]), ip) if str(d.get("id", "")).isdigit() else {"ok": False, "error": "معرّف غير صالح"},
         # P1-H: /api/archive_evidence ignores any user-supplied retention_days and strictly uses configured retention (>= 7 days)
         "/api/archive_evidence": lambda d, ip: {"ok": True, **archive_old_evidence(retention_days=None, who=f"api:{ip}", _allow_test_override=False)},
-        "/api/insights/train": ins_act(lambda d: INS.train(include_demo=bool(isinstance(d, dict) and (d.get("include_demo") or d.get("demo")))), "train"),
-        "/api/insights/seed": ins_act(lambda d: INS.seed_demo(), "seed demo history"),
-        "/api/insights/clear": ins_act(lambda d: INS.clear_demo(), "clear demo history"),
-        "/api/camera_links": (lambda d, ip: INS.save_camera_link(d, who=ip)) if INS and hasattr(INS, "save_camera_link") else (lambda d, ip: {"ok": False, "error": "غير متاح"}),
-        "/api/camera_links/delete": (lambda d, ip: INS.delete_camera_link(d, who=ip)) if INS and hasattr(INS, "delete_camera_link") else (lambda d, ip: {"ok": False, "error": "غير متاح"}),
-        "/api/field_calibrations": (lambda d, ip: INS.save_field_calibration(d, who=ip)) if INS and hasattr(INS, "save_field_calibration") else (lambda d, ip: {"ok": False, "error": "غير متاح"}),
-        "/api/field_calibrations/delete": (lambda d, ip: INS.delete_field_calibration(d, who=ip)) if INS and hasattr(INS, "delete_field_calibration") else (lambda d, ip: {"ok": False, "error": "غير متاح"}),
-        "/api/plate_eval/inspect": lambda d, ip: inspect_plate_dataset(d.get("dataset_path", ""), plate_model_path=d.get("plate_model", "")),
-        "/api/plate_eval/validate_model": lambda d, ip: validate_plate_model_path(d.get("plate_model", "")),
-        "/api/plate_eval/upload_dataset": lambda d, ip: stage_uploaded_eval_files(d, who=ip),
-        "/api/plate_eval/start": lambda d, ip: start_plate_eval_job(d, who=ip),
-        "/api/plate_eval/cancel": lambda d, ip: cancel_plate_eval_job(who=ip),
-        "/api/browse_path": lambda d, ip: browse_local_path(mode=d.get("mode", "folder")),
+        "/api/insights/train": ins_act(lambda: INS.train(), "train"),
+        "/api/insights/seed": ins_act(lambda: INS.seed_demo(), "seed demo history"),
+        "/api/insights/clear": ins_act(lambda: INS.clear_demo(), "clear demo history"),
         "/api/vehicle": R.save_vehicle,
         "/api/vehicle/delete": lambda d, ip: R.delete("vehicles", d.get("key", ""), ip),
         "/api/person": R.save_person,
@@ -2393,53 +2097,26 @@ def wire():
 
 DEFAULTS = {
     "source": "0", "cam": "CAM1", "host": "127.0.0.1", "allow_lan": False, "port": 8000,
-    "trucks_only": False, "truck_curfew": "", "face_score": 0.45, "face_detect_score": 0.65,
+    "trucks_only": False, "truck_curfew": "", "face_score": 0.45,
     "evidence_retention_days": 30, "open_browser": True, "first_run_done": False, "dashboard_token": "",
-    "telegram_token": "", "telegram_chat_id": "", "telegram_patrol_chat_id": "", "camera_links": {}, "device": "auto"
+    "telegram_token": "", "telegram_chat_id": "", "telegram_patrol_chat_id": "", "camera_links": {}
 }
-
-_CURFEW_RE = re.compile(r"^\s*(\d{1,2})(?::00)?\s*-\s*(\d{1,2})(?::00)?\s*$")
-
-
-def parse_curfew(spec):
-    """Validate and parse truck curfew specification ('HH-HH' or 'HH:00-HH:00' with 0 <= HH <= 23) (GAP-15).
-    Returns (start_hour, end_hour) tuple on valid input, or None with a logged warning on invalid/out-of-range input."""
-    if spec is None:
-        return None
-    s = str(spec).strip()
-    if not s:
-        return None
-    m = _CURFEW_RE.match(s)
-    if not m:
-        logger.warning("Invalid truck curfew format %r (expected 'HH-HH' or 'HH:00-HH:00'); curfew disabled", spec)
-        return None
-    h1, h2 = int(m.group(1)), int(m.group(2))
-    if not (0 <= h1 <= 23 and 0 <= h2 <= 23):
-        logger.warning("Truck curfew hours out of range (0..23) in %r; curfew disabled", spec)
-        return None
-    return (h1, h2)
-
-
-def _update_aggregate_fps(cam_states):
-    """Compute STATUS['fps'] as the average FPS across online cameras while keeping per-camera FPS isolated (GAP-15)."""
-    online_fps = [
-        float(st.get("fps", 0.0))
-        for st in (cam_states or {}).values()
-        if st.get("status") == "online" and float(st.get("fps", 0.0)) > 0
-    ]
-    val = round(sum(online_fps) / len(online_fps), 1) if online_fps else 0.0
-    with _RUNTIME_STATE_LOCK:
-        STATUS["fps"] = val
-    return val
 
 
 def _load_secrets_file():
-    """Load .mersad_secrets.json safely, rejecting symlinks and enforcing 0600 on POSIX (P1-D)."""
+    """Load secrets safely, enforcing POSIX modes or restricted Windows ACLs (P1-D)."""
     if not os.path.lexists(_SECRETS_FILE):
         return {}
     if os.path.islink(_SECRETS_FILE):
         logger.error("Security error: %s is a symbolic link; refusing to load secrets", _SECRETS_FILE)
         return {}
+    if os.name == "nt":
+        try:
+            R._set_windows_private_acl(os.getcwd(), is_dir=True)
+            R._set_windows_private_acl(_SECRETS_FILE, is_dir=False)
+        except OSError as e:
+            logger.error("Security error: cannot protect Windows secrets ACL: %s", redact_url(e))
+            return {}
     if os.name == "posix":
         try:
             st_mode = stat.S_IMODE(os.stat(_SECRETS_FILE).st_mode)
@@ -2588,7 +2265,7 @@ def _camera_reader_worker(st, stop_ev):
                 continue
             new_cap = None
             try:
-                new_cap = cv2.VideoCapture(int(src_spec) if str(src_spec).isdigit() else src_spec)
+                new_cap = _open_camera_capture(src_spec)
                 is_op = bool(new_cap and new_cap.isOpened())
                 ok_re, frame_re = (new_cap.read() if is_op else (False, None))
             except Exception as e:
@@ -2596,12 +2273,20 @@ def _camera_reader_worker(st, stop_ev):
                 ok_re, frame_re = False, None
 
             if ok_re and frame_re is not None and getattr(frame_re, "size", 0) > 0:
+                if stop_ev.is_set() or STOP_MAIN_EVENT.is_set():
+                    try:
+                        if new_cap is not None:
+                            new_cap.release()
+                    except Exception:
+                        pass
+                    break
                 with st["lock"]:
                     st["cap"] = new_cap
                     st["latest_frame"] = frame_re
                     st["latest_frame_seq"] += 1
                     st["last_frame_ts"] = time.time()
                     st["read_failed"] = False
+                    st["fail_count"] = 0
                     st["just_reconnected"] = True
             else:
                 is_eof = bool(new_cap is not None and getattr(new_cap, "eof", False))
@@ -2624,7 +2309,7 @@ def _camera_reader_worker(st, stop_ev):
         while not stop_ev.is_set() and not STOP_MAIN_EVENT.is_set():
             with st["lock"]:
                 unconsumed = st["latest_frame_seq"] > st["last_processed_seq"]
-            if not unconsumed or (time.time() - wait_start) >= 0.12:
+            if not unconsumed or (time.time() - wait_start) >= 0.04:
                 break
             time.sleep(0.002)
 
@@ -2662,152 +2347,8 @@ def _camera_reader_worker(st, stop_ev):
                     st["next_reconnect_ts"] = now_fail + _compute_reconnect_backoff(st["fail_count"])
 
 
-_ACTIVE_CAM_STATES = {}
-
-
-def _enqueue_latest_inference(st, item):
-    """Non-blocking drop-oldest / keep-latest enqueue into a bounded 1-slot per-camera inference queue (GAP-08).
-    Never blocks the video display & streaming loop."""
-    q = st["infer_queue"]
-    st["infer_idle_event"].clear()
-    dropped = 0
-    while True:
-        try:
-            q.get_nowait()
-            dropped += 1
-        except queue.Empty:
-            break
-    if dropped:
-        with st["infer_lock"]:
-            st["dropped_infer_frames"] = int(st.get("dropped_infer_frames", 0)) + dropped
-    try:
-        q.put_nowait(item)
-    except queue.Full:
-        pass
-
-
-def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfew):
-    """Execute heavy vehicle/plate/OCR inference on a single frame snapshot outside the display thread (GAP-08)."""
-    cam_name = st["cam"]
-    inf_frame, now_f, inf_face_entries, inf_veh_blur_boxes, frame_no = item
-    H, W = inf_frame.shape[:2]
-    with st["infer_lock"]:
-        st["det_runs"] += 1
-        det_runs_now = st["det_runs"]
-    with _RUNTIME_STATE_LOCK:
-        if cam_name in STATUS.get("cameras", {}):
-            STATUS["cameras"][cam_name]["detections"] = det_runs_now
-
-    new_vboxes = detect_vehicles(inf_frame, vyolo)
-    new_boxes = []
-    for (vx, vy, vw, vh, vc) in (new_vboxes or [(0, 0, W, H, "unknown")]):
-        if trucks_only and vc != "truck":
-            continue
-        oy = vy + int(vh * .35) if vc != "unknown" else 0
-        sub = inf_frame[oy:vy + vh, vx:vx + vw]
-        if sub.size == 0:
-            continue
-        for (x, y, bw, bh) in find_plates(sub, yolo):
-            x, y = x + vx, y + oy
-            d, c = read_plate(reader, inf_frame[y:y + bh, x:x + bw])
-            new_boxes.append((x, y, bw, bh, d))
-            if not d:
-                continue
-            with st["infer_lock"]:
-                confirmed = confirm_plate_read(d, c, (x, y, bw, bh), now_f, st["votes"], st["tracks"], st["last_seen"])
-            if confirmed:
-                cm, direction = confirmed[0], confirmed[1]
-                win_plate = getattr(confirmed, "plate", d) or d
-                l_conf = getattr(confirmed, "letters_confirmed", True)
-                with st["infer_lock"]:
-                    st["last_plate"] = win_plate
-                msg, v = register(win_plate, cm, cam_name, vc, curfew, direction, raw_text=d,
-                                  session_id=SESSION_ID, letters_confirmed=l_conf)
-                base, detail = vinfo(v)
-                bus.publish({"type": "sighting", "plate": win_plate, "cam": cam_name, "vclass": vc, "direction": direction,
-                             "ts": time.strftime("%H:%M:%S"), "conf": round(cm, 2),
-                             "model": v["model"] if v else "", "status": v["status"] if v else "",
-                             "match_note": v.get("match_note", "") if v else ""})
-                if msg:
-                    with _RUNTIME_STATE_LOCK:
-                        why_val = WHY.get(win_plate, "")
-                    if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")):
-                        detail = " · ".join(x for x in (detail, why_val) if x)
-                    raise_alert(msg, win_plate, cam_name, inf_frame, detail=detail,
-                                extra=f"\nنوع المركبة: {vc}\nالاتجاه/المسار: {direction}"
-                                + (f"\nالسيارة: {base}" if base else "")
-                                + (f"\nالسبب: {why_val}" if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")) and why_val else ""),
-                                unmatched_faces=inf_veh_blur_boxes,
-                                face_entries=inf_face_entries)
-                if INS:
-                    with INS._STATE_LOCK:
-                        should_retrain = INS.M.get("since", 0) >= 100
-                        if should_retrain:
-                            INS.M["since"] = 0
-                    if should_retrain:
-                        threading.Thread(target=INS.train, daemon=True).start()
-
-    with st["infer_lock"]:
-        st["vboxes"] = new_vboxes
-        st["boxes"] = new_boxes
-        st["consec_errors"] = 0
-
-
-def _camera_inference_worker(st, stop_ev, vyolo, yolo, reader, trucks_only, curfew):
-    """Dedicated per-camera asynchronous inference worker thread (GAP-08).
-    Processes only the freshest frame from st['infer_queue'] so slow YOLO/EasyOCR calls never stall video streaming."""
-    cam_name = st["cam"]
-    q = st["infer_queue"]
-    while not stop_ev.is_set() and not STOP_MAIN_EVENT.is_set():
-        try:
-            item = q.get(timeout=0.02)
-        except queue.Empty:
-            if not st["infer_busy"]:
-                st["infer_idle_event"].set()
-            continue
-
-        st["infer_busy"] = True
-        st["infer_idle_event"].clear()
-        try:
-            _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfew)
-        except Exception as inf_err:
-            with st["infer_lock"]:
-                st["consec_errors"] += 1
-                err_cnt = st["consec_errors"]
-            with _RUNTIME_STATE_LOCK:
-                if cam_name in STATUS.get("cameras", {}):
-                    STATUS["cameras"][cam_name]["errors"] = err_cnt
-            logger.error("Error in async inference worker on camera %s (consec=%d): %s",
-                         cam_name, err_cnt, redact_url(inf_err), exc_info=True)
-        finally:
-            try:
-                q.task_done()
-            except ValueError:
-                pass
-            if q.empty():
-                st["infer_busy"] = False
-                st["infer_idle_event"].set()
-
-
-def wait_for_pending_inference(timeout=5.0, cam=None):
-    """Explicit synchronization helper for tests and post-loop shutdown (GAP-08).
-    Waits outside the display loop until queued inference jobs finish."""
-    deadline = time.time() + float(timeout)
-    states = [
-        st for k, st in list(_ACTIVE_CAM_STATES.items())
-        if cam is None or k == cam
-    ]
-    for st in states:
-        while time.time() < deadline:
-            if st["infer_queue"].empty() and not st["infer_busy"] and st["infer_idle_event"].is_set():
-                break
-            st["infer_idle_event"].wait(timeout=min(0.02, max(0.001, deadline - time.time())))
-    return all(st["infer_queue"].empty() and not st["infer_busy"] for st in states)
-
-
 def main():
     global SESSION_ID, PROCESS_OWNER_ID
-    init_runtime_env()
     STOP_MAIN_EVENT.clear()
     cfg = load_cfg()
     ap = argparse.ArgumentParser()
@@ -2821,10 +2362,7 @@ def main():
     ap.add_argument("--port", type=int, default=cfg["port"])
     ap.add_argument("--token")
     ap.add_argument("--face-score", type=float, default=cfg["face_score"], help="min cosine similarity to raise a face alert")
-    ap.add_argument("--face-detect-score", type=float, default=cfg.get("face_detect_score", 0.65), help="YuNet face detection score threshold (default 0.65)")
     ap.add_argument("--retention-days", type=float, default=cfg.get("evidence_retention_days", 30))
-    ap.add_argument("--device", default=cfg.get("device", "auto"), help="Compute device: auto, cpu, or cuda (default: auto)")
-    ap.add_argument("--gpu", action="store_true", help="Request GPU (CUDA) acceleration if available (falls back to CPU with warning)")
     ap.add_argument("--no-window", action="store_true")
     ap.add_argument("--no-telegram-listener", action="store_true", help="Do not start getUpdates polling in this process")
     a = ap.parse_args()
@@ -2859,35 +2397,21 @@ def main():
 
     if a.retention_days and a.retention_days >= MIN_RETENTION_DAYS:
         archive_old_evidence(a.retention_days, who="startup")
-        if CAMERA_HISTORY and hasattr(CAMERA_HISTORY, "prune_history"):
-            CAMERA_HISTORY.prune_history(retention_days=max(30.0, float(a.retention_days)))
 
-    curfew = parse_curfew(a.truck_curfew)
-    fetch_models()
-    os.environ.setdefault("YOLO_OFFLINE", "true")
-    os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "false")
+    curfew = tuple(map(int, a.truck_curfew.split("-"))) if a.truck_curfew else None
+    if getattr(sys, "frozen", False):
+        models_ok, model_checks = verify_runtime_model_assets()
+        if not models_ok:
+            issues = "; ".join(f"{x['model']}: {x['reason']}" for x in model_checks if not x["ok"])
+            raise RuntimeError(
+                "Bundled AI model verification failed. Runtime downloads are disabled for the EXE. "
+                "Rebuild or restore the complete dist\\MERSAD_AI\\models directory while online. " + issues
+            )
+    else:
+        fetch_models()
     import easyocr
     easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
-    easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
-    if not easyocr_verified:
-        if _is_dir_writable(easyocr_dir):
-            os.makedirs(easyocr_dir, exist_ok=True)
-        else:
-            easyocr_dir = os.path.join(APPDIR, "models", "easyocr")
-            os.makedirs(easyocr_dir, exist_ok=True)
-            easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
-    dev_info = resolve_compute_device("cuda" if getattr(a, "gpu", False) else getattr(a, "device", cfg.get("device", "auto")))
-    ACTIVE_DEVICE.update(dev_info)
-    use_gpu = bool(dev_info["use_gpu"])
-    try:
-        reader = easyocr.Reader(
-            ["ar", "en"],
-            gpu=use_gpu,
-            model_storage_directory=easyocr_dir,
-            download_enabled=not easyocr_verified,
-        )
-    except TypeError:
-        reader = easyocr.Reader(["ar", "en"], gpu=use_gpu, model_storage_directory=easyocr_dir)
+    reader = create_offline_easyocr_reader(easyocr, easyocr_dir)
     yolo = vyolo = None
     try:
         from ultralytics import YOLO
@@ -2902,8 +2426,7 @@ def main():
     trucks_only = a.trucks_only and vyolo is not None
     yunet_p = resolve_resource_path(os.path.join("models", "yunet.onnx"))
     sface_p = resolve_resource_path(os.path.join("models", "sface.onnx"))
-    det_score = resolve_face_detect_score(getattr(a, "face_detect_score", cfg.get("face_detect_score", 0.65)))
-    det = cv2.FaceDetectorYN.create(yunet_p, "", (320, 320), det_score)
+    det = cv2.FaceDetectorYN.create(yunet_p, "", (320, 320), 0.8)
     rec = cv2.FaceRecognizerSF.create(sface_p, "")
     if a.token:
         bus.token = a.token
@@ -2930,32 +2453,19 @@ def main():
     reader_threads = []
     now_init = time.time()
     for src_item, cam_name in zip(sources, cams):
-        cap_obj = cv2.VideoCapture(int(src_item) if src_item.isdigit() else src_item)
-        is_open = bool(cap_obj and cap_obj.isOpened())
-        is_eof = bool(not is_open and cap_obj is not None and getattr(cap_obj, "eof", False))
-        if not is_open:
-            try:
-                if cap_obj is not None:
-                    cap_obj.release()
-            except Exception:
-                pass
-            cap_obj = None
-            red_s = redact_url(src_item)
-            logger.warning("Camera source initially unavailable (entering reconnect monitor): %s (%s)", red_s, cam_name)
-            print(f"\nCamera source initially unavailable (monitoring for reconnection): {red_s} ({cam_name})")
+        # Do not open cameras synchronously here: RTSP/HTTP open can block for
+        # seconds. Each independent reader thread owns its open/read/reconnect loop.
+        cap_obj = None
+        is_open = False
+        is_eof = False
+        red_s = redact_url(src_item)
+        logger.info("Camera reader scheduled for asynchronous connection: %s (%s)", red_s, cam_name)
 
-        init_status = "online" if is_open else "reconnecting"
-        idle_ev = threading.Event()
-        idle_ev.set()
+        init_status = "reconnecting"
         st = {
             "cam": cam_name,
             "src": src_item,
             "lock": threading.Lock(),
-            "infer_lock": threading.Lock(),
-            "infer_queue": queue.Queue(maxsize=1),
-            "infer_busy": False,
-            "infer_idle_event": idle_ev,
-            "dropped_infer_frames": 0,
             "cap": cap_obj,
             "status": init_status,
             "n": 0,
@@ -2966,13 +2476,10 @@ def main():
             "last_plate": None,
             "boxes": [],
             "vboxes": [],
-            "face_entries": [],
-            "unmatched_face_boxes": [],
-            "face_det_runs": 0,
-            "fail_count": 0 if is_open else 1,
+            "fail_count": 0,
             "consec_errors": 0,
-            "disconnected_since": 0.0 if is_open else now_init,
-            "next_reconnect_ts": 0.0 if is_open else (now_init + _compute_reconnect_backoff(1)),
+            "disconnected_since": now_init,
+            "next_reconnect_ts": now_init,
             "offline_alert_sent": False,
             "fps": 0.0,
             "reconnect_count": 0,
@@ -2981,10 +2488,11 @@ def main():
             "latest_frame": None,
             "latest_frame_seq": 0,
             "last_processed_seq": 0,
-            "last_frame_ts": now_init if is_open else 0.0,
-            "read_failed": not is_open,
+            "last_frame_ts": 0.0,
+            "read_failed": True,
             "just_reconnected": False,
-            "logged_session_start": is_open,
+            "ever_online": False,
+            "logged_session_start": False,
             "eof": is_eof
         }
         if not is_open:
@@ -2994,29 +2502,17 @@ def main():
         if CAMERA_HISTORY:
             CAMERA_HISTORY.record_status(cam_name, st["status"], reason="startup", force=True)
 
-    _ACTIVE_CAM_STATES.clear()
-    _ACTIVE_CAM_STATES.update(cam_states)
-    infer_threads = []
-    with _RUNTIME_STATE_LOCK:
-        STATUS["cam"] = ",".join(cam_states.keys())
-        STATUS["cameras"] = {
-            k: {"status": v["status"], "fps": 0.0, "frames": 0, "detections": 0, "errors": 0, "fail_count": v["fail_count"], "reconnect_count": v.get("reconnect_count", 0)}
-            for k, v in cam_states.items()
-        }
+    STATUS["cam"] = ",".join(cam_states.keys())
+    STATUS["cameras"] = {
+        k: {"status": v["status"], "fps": 0.0, "frames": 0, "detections": 0, "errors": 0, "fail_count": v["fail_count"], "reconnect_count": v.get("reconnect_count", 0)}
+        for k, v in cam_states.items()
+    }
     for cam_name, st in cam_states.items():
-        if st["status"] == "online":
-            log("session start", cam_name)
+        bus.set_frame(_make_offline_frame(cam_name, "reconnecting"), cam=cam_name, status="reconnecting")
+        bus.publish({"type": "camera_status", "cam": cam_name, "status": "reconnecting"})
         rt = threading.Thread(target=_camera_reader_worker, args=(st, stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
         rt.start()
         reader_threads.append(rt)
-        it = threading.Thread(
-            target=_camera_inference_worker,
-            args=(st, stop_ev, vyolo, yolo, reader, trucks_only, curfew),
-            daemon=True,
-            name=f"cam_infer_{cam_name}",
-        )
-        it.start()
-        infer_threads.append(it)
 
     print("Faces are matched ONLY against volunteers who gave consent. Bystander faces in evidence photos are blurred.")
 
@@ -3042,8 +2538,11 @@ def main():
                     fail_cnt = st["fail_count"]
 
                 if just_rec:
-                    if st["status"] != "online":
+                    # The first successful connection is not counted as a recovery.
+                    # Subsequent successful connections after the camera was online are.
+                    if st.get("ever_online", False):
                         st["reconnect_count"] = int(st.get("reconnect_count", 0)) + 1
+                    st["ever_online"] = True
                     if not st["logged_session_start"]:
                         st["logged_session_start"] = True
                         log("session start", cam_name)
@@ -3083,16 +2582,11 @@ def main():
                             # Keep status frame fresh so old camera frames are never mistaken for a live feed (P1-C item 6)
                             bus.set_frame(_make_offline_frame(cam_name, st["status"]), cam=cam_name, status=st["status"])
 
-                    with st["infer_lock"]:
-                        det_r_off = st["det_runs"]
-                        err_c_off = st["consec_errors"]
-                    with _RUNTIME_STATE_LOCK:
-                        STATUS["cameras"][cam_name] = {
-                            "status": st["status"], "fps": st["fps"] if st["status"] == "online" else 0.0,
-                            "frames": st["n"], "detections": det_r_off, "errors": err_c_off,
-                            "fail_count": fail_cnt, "reconnect_count": st.get("reconnect_count", 0)
-                        }
-                    _update_aggregate_fps(cam_states)
+                    STATUS["cameras"][cam_name] = {
+                        "status": st["status"], "fps": st["fps"] if st["status"] == "online" else 0.0,
+                        "frames": st["n"], "detections": st["det_runs"], "errors": st["consec_errors"],
+                        "fail_count": fail_cnt, "reconnect_count": st.get("reconnect_count", 0)
+                    }
                     if not is_eof:
                         any_alive = True
                     continue
@@ -3107,106 +2601,110 @@ def main():
                 if now_loop - st["fps_t"] >= 2.0:
                     st["fps"] = round(st["fps_n"] / (now_loop - st["fps_t"]), 1)
                     st["fps_t"], st["fps_n"] = now_loop, 0
-                    _update_aggregate_fps(cam_states)
+                    STATUS["fps"] = st["fps"]
 
                 # P0-D: Per-frame exception guard with consecutive error counter so a single frame error never kills the program
                 try:
                     H, W = frame.shape[:2]
                     view = frame.copy()
-                    with _ENROLL_LOCK:
-                        enroll_active = ENR.get("req") is not None
-                    face_interval = max(1, int(FACE_DETECT_INTERVAL or 1))
-                    should_detect_faces = (st["n"] <= 1) or (st["n"] % face_interval == 0) or enroll_active or (not st.get("face_entries"))
-                    main_face = None
-                    if should_detect_faces:
-                        det.setInputSize((W, H))
-                        _, fs = det.detect(frame)
-                        fs = fs if fs is not None else []
-                        names, unmatched_face_boxes = [], []
-                        face_entries = []
-                        for f in fs:
-                            x, y, bw, bh = map(int, f[:4])
-                            raw_emb = rec.feature(rec.alignCrop(frame, f))
-                            m_res = match_face_embedding(raw_emb, rec=rec)
-                            name, sc, wl = m_res[0], m_res[1], m_res[2]
-                            pid_m = getattr(m_res, "person_id", 0)
-                            ref_m = getattr(m_res, "ref", "")
-                            names.append(name)
-                            if name == "unenrolled":
-                                unmatched_face_boxes.append((x, y, bw, bh))
-                            face_entries.append((x, y, bw, bh, name, sc, wl, raw_emb, pid_m, ref_m))
-                            if main_face is None or bw * bh > main_face[1]:
-                                main_face = (raw_emb, bw * bh, (x, y, bw, bh))
-                        with st["infer_lock"]:
-                            st["face_entries"] = list(face_entries)
-                            st["unmatched_face_boxes"] = list(unmatched_face_boxes)
-                            st["face_det_runs"] = int(st.get("face_det_runs", 0)) + 1
-                        for (x, y, bw, bh, name, sc, wl, _, pid_m, ref_m) in face_entries:
-                            face_boxes_blur = get_boxes_to_blur_for_alert(face_entries, alert_kind="face", target_face_box=(x, y, bw, bh))
-                            face_step(name, sc, wl, frame, cam_name, frame_idx=st["n"],
-                                      unmatched_faces=face_boxes_blur, person_id=pid_m, ref=ref_m,
-                                      face_entries=face_entries, target_face_box=(x, y, bw, bh))
-                    else:
-                        with st["infer_lock"]:
-                            face_entries = list(st.get("face_entries", []))
-                            unmatched_face_boxes = list(st.get("unmatched_face_boxes", []))
-                        names = [fe[4] for fe in face_entries]
+                    det.setInputSize((W, H))
+                    _, fs = det.detect(frame)
+                    fs = fs if fs is not None else []
+                    main_face, names, unmatched_face_boxes = None, [], []
+                    face_entries = []
+                    for f in fs:
+                        x, y, bw, bh = map(int, f[:4])
+                        raw_emb = rec.feature(rec.alignCrop(frame, f))
+                        m_res = match_face_embedding(raw_emb, rec=rec)
+                        name, sc, wl = m_res[0], m_res[1], m_res[2]
+                        pid_m = getattr(m_res, "person_id", 0)
+                        ref_m = getattr(m_res, "ref", "")
+                        names.append(name)
+                        if name == "unenrolled":
+                            unmatched_face_boxes.append((x, y, bw, bh))
+                        face_entries.append((x, y, bw, bh, name, sc, wl, raw_emb, pid_m, ref_m))
+                        if main_face is None or bw * bh > main_face[1]:
+                            main_face = (raw_emb, bw * bh)
 
                     for (x, y, bw, bh, name, sc, wl, _, pid_m, ref_m) in face_entries:
+                        face_step(name, sc, wl, frame, cam_name, frame_idx=st["n"],
+                                  unmatched_faces=unmatched_face_boxes, person_id=pid_m, ref=ref_m)
                         cv2.rectangle(view, (x, y), (x + bw, y + bh), (255, 160, 0), 2)
                         cv2.putText(view, f"{name} {sc:.2f}" if sc else name, (x, max(15, y - 6)), FONT, .55, (255, 160, 0), 2)
 
-                    if main_face and (st["n"] % 4 == 0 or enroll_active):
-                        enroll_step(main_face[0], cam=cam_name, face_box=main_face[2], faces_in_frame=face_entries)
+                    enroll_step(main_face[0] if main_face and st["n"] % 4 == 0 else None)
                     if now_loop - t_faces > 1.0:
                         t_faces = now_loop
-                        bus.publish({"type": "faces", "n": len(face_entries), "names": sorted({x for x in names if x != "unenrolled"})})
+                        bus.publish({"type": "faces", "n": len(fs), "names": sorted({x for x in names if x != "unenrolled"})})
 
-                    # GAP-09: For any vehicle/plate/route alert, 100% of all faces in the frame are blurred
-                    vehicle_alert_blur_boxes = get_boxes_to_blur_for_alert(face_entries, alert_kind="vehicle")
-
-                    # GAP-08 & P0-D: Strictly non-blocking per-camera async inference enqueue (maxsize=1, drop-oldest)
+                    # P0-D: Use per-camera frame counter st["n"] % 6 == 0 so every camera gets equal detection scheduling!
                     if st["n"] % 6 == 0:
-                        _enqueue_latest_inference(
-                            st,
-                            (frame.copy(), time.time(), list(face_entries), list(vehicle_alert_blur_boxes), st["n"])
-                        )
+                        st["det_runs"] += 1
+                        st["boxes"], st["vboxes"] = [], detect_vehicles(frame, vyolo)
+                        now_f = time.time()
+                        for (vx, vy, vw, vh, vc) in (st["vboxes"] or [(0, 0, W, H, "unknown")]):
+                            if trucks_only and vc != "truck":
+                                continue
+                            oy = vy + int(vh * .35) if vc != "unknown" else 0
+                            sub = frame[oy:vy + vh, vx:vx + vw]
+                            if sub.size == 0:
+                                continue
+                            for (x, y, bw, bh) in find_plates(sub, yolo):
+                                x, y = x + vx, y + oy
+                                d, c = read_plate(reader, frame[y:y + bh, x:x + bw])
+                                st["boxes"].append((x, y, bw, bh, d))
+                                if not d:
+                                    continue
+                                confirmed = confirm_plate_read(d, c, (x, y, bw, bh), now_f, st["votes"], st["tracks"], st["last_seen"])
+                                if confirmed:
+                                    cm, direction = confirmed[0], confirmed[1]
+                                    win_plate = getattr(confirmed, "plate", d) or d
+                                    l_conf = getattr(confirmed, "letters_confirmed", True)
+                                    st["last_plate"] = win_plate
+                                    msg, v = register(win_plate, cm, cam_name, vc, curfew, direction, raw_text=d,
+                                                      session_id=SESSION_ID, letters_confirmed=l_conf)
+                                    base, detail = vinfo(v)
+                                    bus.publish({"type": "sighting", "plate": win_plate, "cam": cam_name, "vclass": vc, "direction": direction,
+                                                 "ts": time.strftime("%H:%M:%S"), "conf": round(cm, 2),
+                                                 "model": v["model"] if v else "", "status": v["status"] if v else "",
+                                                 "match_note": v.get("match_note", "") if v else ""})
+                                    if msg:
+                                        if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")):
+                                            detail = " · ".join(x for x in (detail, WHY.get(win_plate, "")) if x)
+                                        raise_alert(msg, win_plate, cam_name, frame, detail=detail,
+                                                    extra=f"\nنوع المركبة: {vc}\nالاتجاه/المسار: {direction}"
+                                                    + (f"\nالسيارة: {base}" if base else "")
+                                                    + (f"\nالسبب: {WHY[win_plate]}" if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")) and win_plate in WHY else ""),
+                                                    unmatched_faces=unmatched_face_boxes)
+                                    if INS and INS.M["since"] >= 100:
+                                        INS.M["since"] = 0
+                                        threading.Thread(target=INS.train, daemon=True).start()
 
-                    with st["infer_lock"]:
-                        vboxes_snap = list(st["vboxes"])
-                        boxes_snap = list(st["boxes"])
-
-                    for (x, y, bw, bh, vc) in vboxes_snap:
+                    for (x, y, bw, bh, vc) in st["vboxes"]:
                         cv2.rectangle(view, (x, y), (x + bw, y + bh), (0, 200, 255), 2)
                         cv2.putText(view, vc.upper(), (x, max(15, y - 6)), FONT, .6, (0, 200, 255), 2)
-                    for (x, y, bw, bh, d) in boxes_snap:
+                    for (x, y, bw, bh, d) in st["boxes"]:
                         cv2.rectangle(view, (x, y), (x + bw, y + bh), (0, 220, 0), 2)
                         if d:
                             cv2.putText(view, d, (x, max(15, y - 6)), FONT, .7, (0, 220, 0), 2)
-                    with bus._lock:
-                        top_alert = bus.alerts[0] if bus.alerts else None
-                    if top_alert:
+                    if bus.alerts:
                         cv2.rectangle(view, (0, 0), (W, 60), (0, 0, 180), -1)
-                        cv2.putText(view, f"ALERT: {top_alert['msg']}  [C]onfirm [X]dismiss", (10, 38), FONT, .7, (255, 255, 255), 2)
+                        cv2.putText(view, f"ALERT: {bus.alerts[0]['msg']}  [C]onfirm [X]dismiss", (10, 38), FONT, .7, (255, 255, 255), 2)
                     if st["n"] % 2 == 0:
                         sm = cv2.resize(view, (640, int(640 * H / W)))
                         jpg_bytes = cv2.imencode(".jpg", sm, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
                         bus.set_frame(jpg_bytes, cam=cam_name, status="online")
+                    st["consec_errors"] = 0
                 except Exception as frame_err:
-                    with st["infer_lock"]:
-                        st["consec_errors"] += 1
+                    st["consec_errors"] += 1
                     logger.error("Error processing frame #%d on camera %s (consec=%d): %s",
                                  st["n"], cam_name, st["consec_errors"], redact_url(frame_err), exc_info=True)
 
-                with st["infer_lock"]:
-                    det_runs_cur = st["det_runs"]
-                    err_cnt_cur = st["consec_errors"]
-                with _RUNTIME_STATE_LOCK:
-                    STATUS["cameras"][cam_name] = {
-                        "status": st["status"], "fps": st["fps"], "frames": st["n"],
-                        "detections": det_runs_cur, "errors": err_cnt_cur, "fail_count": fail_cnt,
-                        "reconnect_count": st.get("reconnect_count", 0)
-                    }
+                STATUS["cameras"][cam_name] = {
+                    "status": st["status"], "fps": st["fps"], "frames": st["n"],
+                    "detections": st["det_runs"], "errors": st["consec_errors"], "fail_count": fail_cnt,
+                    "reconnect_count": st.get("reconnect_count", 0)
+                }
 
                 k = 255
                 if gui_enabled:
@@ -3219,17 +2717,17 @@ def main():
                 if k == ord("q"):
                     any_alive = False
                     break
-                if k in (ord("c"), ord("x")):
-                    with bus._lock:
-                        aid_top = bus.alerts[0]["id"] if bus.alerts else None
-                    if aid_top is not None:
-                        decide(aid_top, "confirm" if k == ord("c") else "dismiss", "console")
+                if k in (ord("c"), ord("x")) and bus.alerts:
+                    decide(bus.alerts[0]["id"], "confirm" if k == ord("c") else "dismiss", "console")
                 if k == ord("p") and st["last_plate"]:
                     R.save_vehicle({**(R.lookup_vehicle(st["last_plate"]) or {"plate": st["last_plate"]}), "status": "watch"}, "console")
                 if k == ord("e"):
-                    msg_enr = "لتسجيل وجه متطوع بأمان دون تجميد بث الكاميرات، استخدم تبويب «سجل الأشخاص» في لوحة العمليات (dashboard.html)."
-                    logger.info("Console 'e' key pressed: %s", msg_enr)
-                    print(msg_enr)
+                    nm = input("Volunteer name: ").strip()
+                    ref_in = input("Reference ID (optional, to distinguish homonymous names): ").strip()
+                    if nm and input("Did this person give explicit consent? (y/n) ").lower() == "y":
+                        w = input("Add to demo watchlist? (y/n) ").lower() == "y"
+                        res_p = R.save_person({"name": nm, "ref": ref_in, "consent": True, "status": "watch" if w else "normal"}, "console")
+                        req_enroll(nm, w, "console", ref=ref_in, person_id=res_p.get("id"))
             if not any_alive:
                 break
             if not processed_any_frame:
@@ -3237,26 +2735,14 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        wait_for_pending_inference(timeout=2.0)
         stop_ev.set()
-        for rt in reader_threads:
-            try:
-                rt.join(timeout=1.0)
-            except Exception:
-                pass
-        for it in infer_threads:
-            try:
-                it.join(timeout=1.0)
-            except Exception:
-                pass
-        for cam_name, st in cam_states.items():
-            with st["infer_lock"]:
-                det_fin = st["det_runs"]
-                err_fin = st["consec_errors"]
-            with _RUNTIME_STATE_LOCK:
-                if cam_name in STATUS.get("cameras", {}):
-                    STATUS["cameras"][cam_name]["detections"] = det_fin
-                    STATUS["cameras"][cam_name]["errors"] = err_fin
+        try:
+            _notify_mod.wait_listener_stopped(timeout=3.0)
+        except Exception:
+            pass
+        # Release captures before joining so a backend blocked in read() gets a
+        # chance to wake immediately. Network opens/reads are also bounded above.
+        for st in cam_states.values():
             with st["lock"]:
                 cap_to_rel = st["cap"]
                 st["cap"] = None
@@ -3265,6 +2751,13 @@ def main():
                     cap_to_rel.release()
             except Exception:
                 pass
+        join_timeout = max(1.0, NETWORK_CAMERA_READ_TIMEOUT_MS / 1000.0 + 0.5)
+        for rt in reader_threads:
+            try:
+                rt.join(timeout=join_timeout)
+            except Exception:
+                pass
+        for cam_name, st in cam_states.items():
             if st.get("logged_session_start"):
                 log("session end", cam_name)
         if gui_enabled:
@@ -3274,972 +2767,21 @@ def main():
         except Exception: pass
 
 
-def _levenshtein_distance(s1, s2):
-    """Compute standard Levenshtein edit distance between two strings (GAP-17)."""
-    a, b = str(s1 or ""), str(s2 or "")
-    if a == b:
-        return 0
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i] + [0] * len(b)
-        for j, cb in enumerate(b, 1):
-            cost = 0 if ca == cb else 1
-            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-        prev = cur
-    return prev[-1]
-
-
-def _compute_cer(expected, predicted):
-    """Compute Character Error Rate (CER) = Levenshtein(expected, predicted) / max(1, len(expected)) (GAP-17)."""
-    exp_s = str(expected or "").strip()
-    pred_s = str(predicted or "").strip()
-    if not exp_s:
-        return 0.0 if not pred_s else 1.0
-    return float(_levenshtein_distance(exp_s, pred_s)) / float(len(exp_s))
-
-
-def _bbox_iou(box_a, box_b):
-    """Compute Intersection over Union (IoU) between two (x, y, w, h) bounding boxes (GAP-17)."""
-    if not box_a or not box_b or len(box_a) < 4 or len(box_b) < 4:
-        return 0.0
-    ax, ay, aw, ah = [float(v) for v in box_a[:4]]
-    bx, by, bw, bh = [float(v) for v in box_b[:4]]
-    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
-        return 0.0
-    ax2, ay2 = ax + aw, ay + ah
-    bx2, by2 = bx + bw, by + bh
-    ix1, iy1 = max(ax, bx), max(ay, by)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-    inter = iw * ih
-    if inter <= 0.0:
-        return 0.0
-    union = aw * ah + bw * bh - inter
-    return float(inter / union) if union > 0 else 0.0
-
-
-_EVAL_JOB_LOCK = threading.Lock()
-_EVAL_JOB_STATE = {
-    "running": False,
-    "job_id": "",
-    "started_ts": 0.0,
-    "finished_ts": 0.0,
-    "dataset_path": "",
-    "plate_model": "",
-    "use_vehicle_detector": False,
-    "progress_current": 0,
-    "progress_total": 0,
-    "progress_percent": 0.0,
-    "current_file": "",
-    "status": "idle",
-    "error": "",
-    "cancel_event": None,
-    "last_report": None,
-}
-
-
-def validate_plate_model_path(model_path, min_bytes=1024):
-    """Validate a custom --plate-model (.pt) path before attempting to load it (Stage 11).
-    Never overwrites or deletes existing bundled models."""
-    p_str = str(model_path or "").strip()
-    if not p_str:
-        return {
-            "ok": True,
-            "custom": False,
-            "path": "",
-            "model_name": "default_canny_or_vehicle_crop",
-            "reason": "سيُستخدم الكاشف الافتراضي المدمج (بدون نموذج لوحات خارجي)",
-        }
-    abs_p = os.path.abspath(p_str)
-    if not os.path.exists(abs_p) or not os.path.isfile(abs_p) or os.path.islink(abs_p):
-        return {
-            "ok": False,
-            "custom": True,
-            "path": p_str,
-            "error": f"ملف نموذج اللوحات المحدد غير موجود أو غير قابل للقراءة: {p_str}",
-        }
-    if not abs_p.lower().endswith(".pt"):
-        return {
-            "ok": False,
-            "custom": True,
-            "path": p_str,
-            "error": "امتداد ملف النموذج غير مدعوم؛ يجب اختيار ملف نموذج PyTorch / YOLO بامتداد (.pt)",
-        }
-    ok_pt, reason_pt = verify_yolo_pt_file(abs_p, min_bytes=min_bytes)
-    if not ok_pt:
-        return {
-            "ok": False,
-            "custom": True,
-            "path": p_str,
-            "reason": reason_pt,
-            "error": f"ملف النموذج المحدد غير صالح أو تالف أو غير متوافق مع محرك YOLO ({reason_pt})",
-        }
-    return {
-        "ok": True,
-        "custom": True,
-        "path": abs_p,
-        "model_name": os.path.basename(abs_p),
-        "reason": reason_pt,
-    }
-
-
-def _parse_ground_truth_entries(gt_file):
-    """Parse ground_truth.csv or ground_truth.json and return (valid_entries, invalid_rows_errors)."""
-    raw_entries = []
-    row_errors = []
-    if gt_file.lower().endswith(".json"):
-        with open(gt_file, encoding="utf-8") as gf:
-            loaded_gt = json.load(gf)
-        if isinstance(loaded_gt, dict):
-            loaded_gt = loaded_gt.get("samples") or loaded_gt.get("items") or []
-        if not isinstance(loaded_gt, list):
-            raise ValueError("ملف ground_truth.json يجب أن يحتوي على قائمة samples")
-        for idx, x in enumerate(loaded_gt, 1):
-            if not isinstance(x, dict):
-                row_errors.append(f"السجل #{idx}: ليس كائناً صالحاً")
-                continue
-            fn = str(x.get("filename") or x.get("file") or x.get("image") or "").strip()
-            exp_p = str(x.get("expected_plate") or x.get("plate") or "").strip()
-            if not fn or not exp_p:
-                row_errors.append(f"السجل #{idx}: ينقصه اسم الصورة (filename) أو اللوحة المتوقعة (expected_plate)")
-                continue
-            entry = {"filename": fn, "expected_plate": exp_p}
-            for bk in ("x", "y", "w", "h"):
-                if x.get(bk) not in (None, ""):
-                    try:
-                        entry[bk] = float(x[bk])
-                    except (TypeError, ValueError):
-                        pass
-            raw_entries.append(entry)
-    else:
-        with open(gt_file, encoding="utf-8-sig", newline="") as cf:
-            reader_csv = csv.DictReader(cf)
-            for idx, row in enumerate(reader_csv, 1):
-                if not row:
-                    continue
-                norm_row = {str(k or "").strip().lower(): str(v or "").strip() for k, v in row.items() if k is not None}
-                if not any(norm_row.values()):
-                    continue
-                fn = norm_row.get("filename") or norm_row.get("file") or norm_row.get("image") or ""
-                exp_p = norm_row.get("expected_plate") or norm_row.get("plate") or ""
-                if not fn or not exp_p:
-                    row_errors.append(f"السطر #{idx}: ينقصه اسم الصورة (filename) أو اللوحة المتوقعة (expected_plate)")
-                    continue
-                entry = {"filename": fn, "expected_plate": exp_p}
-                for bk in ("x", "y", "w", "h"):
-                    if norm_row.get(bk, "") != "":
-                        try:
-                            entry[bk] = float(norm_row[bk])
-                        except ValueError:
-                            pass
-                raw_entries.append(entry)
-    return raw_entries, row_errors
-
-
-def inspect_plate_dataset(dataset_path, plate_model_path=None):
-    """Inspect a dataset directory or ground_truth file before starting evaluation (Stage 11).
-    Checks path existence, readability, ground_truth.csv/.json validity, valid vs invalid/corrupt image files,
-    and optional custom plate model compatibility."""
-    p_str = str(dataset_path or "").strip()
-    if not p_str:
-        return {"ok": False, "error": "يرجى تحديد مسار مجلد مجموعة البيانات أو ملف ground_truth.csv"}
-    abs_path = os.path.abspath(p_str)
-    if not os.path.exists(abs_path):
-        return {"ok": False, "error": f"المسار المحدد غير موجود: {p_str}", "dataset_path": p_str}
-
-    if os.path.isfile(abs_path):
-        base_dir = os.path.dirname(abs_path)
-        gt_file = abs_path
-    else:
-        base_dir = abs_path
-        csv_cand = os.path.join(base_dir, "ground_truth.csv")
-        json_cand = os.path.join(base_dir, "ground_truth.json")
-        gt_file = csv_cand if os.path.isfile(csv_cand) else (json_cand if os.path.isfile(json_cand) else "")
-
-    if not gt_file or not os.path.isfile(gt_file):
-        return {
-            "ok": False,
-            "status": "ground_truth_missing",
-            "dataset_path": abs_path,
-            "error": "لم يُعثر على ملف الحقيقة المرجعية (ground_truth.csv أو ground_truth.json) داخل المجلد المحدد",
-        }
-
-    try:
-        entries, row_errors = _parse_ground_truth_entries(gt_file)
-    except Exception as e:
-        return {
-            "ok": False,
-            "status": "ground_truth_parse_error",
-            "dataset_path": abs_path,
-            "error": f"تعذّر قراءة ملف ground_truth: {e}",
-        }
-
-    valid_files = []
-    invalid_files = []
-    for item in entries:
-        fn = item["filename"]
-        img_p = fn if os.path.isabs(fn) else os.path.join(base_dir, fn)
-        if not os.path.isfile(img_p):
-            invalid_files.append({"filename": fn, "reason": "الملف غير موجود"})
-            continue
-        img = cv2.imread(img_p)
-        if img is None or getattr(img, "size", 0) == 0:
-            invalid_files.append({"filename": fn, "reason": "ملف صورة تالف أو غير قابل للقراءة"})
-        else:
-            valid_files.append(fn)
-
-    model_info = validate_plate_model_path(plate_model_path) if plate_model_path else {"ok": True, "custom": False}
-    return {
-        "ok": len(valid_files) > 0 and model_info.get("ok", True),
-        "dataset_path": abs_path,
-        "ground_truth_file": gt_file,
-        "total_entries": len(entries) + len(row_errors),
-        "valid_files_count": len(valid_files),
-        "invalid_files_count": len(invalid_files) + len(row_errors),
-        "valid_files": valid_files[:50],
-        "invalid_files": invalid_files[:25],
-        "row_errors": row_errors[:25],
-        "plate_model_validation": model_info,
-        "error": (
-            model_info.get("error")
-            if not model_info.get("ok", True)
-            else ("لا توجد صور صالحة قابلة للقراءة مطابقة لملف ground_truth" if len(valid_files) == 0 else "")
-        ),
-    }
-
-
-def _save_plate_eval_run_to_db(report):
-    """Persist completed automated plate evaluation report in SQLite plate_eval_runs table (Stage 11)."""
-    if db is None:
-        return None
-    try:
-        met = report.get("metrics") or {}
-        now_ts = time.time()
-        eval_date = report.get("evaluation_date") or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now_ts))
-        rep_json = json.dumps(report, ensure_ascii=False)
-
-        def _tx(conn):
-            R.migrate_db(conn, DBL, db_path=DB_PATH)
-            cur = conn.execute(
-                "INSERT INTO plate_eval_runs("
-                "ts, eval_date, dataset_path, plate_model, detector_mode, vehicle_stage_enabled, "
-                "total_samples, valid_files, invalid_files, detected_count, failed_detection_count, failed_ocr_count, "
-                "detection_recall, detection_precision, mean_iou, exact_match_rate, digits_match_rate, "
-                "char_accuracy_rate, cer, mean_latency_ms, status, report_json"
-                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    now_ts,
-                    eval_date,
-                    str(report.get("dataset_path") or ""),
-                    str(report.get("model_used") or ""),
-                    str(report.get("detector_mode") or ""),
-                    int(bool(report.get("vehicle_stage_enabled"))),
-                    int(report.get("total_samples") or 0),
-                    int(report.get("valid_files_count") or report.get("total_samples") or 0),
-                    int(report.get("invalid_files_count") or 0),
-                    int(met.get("detected_count") or 0),
-                    int(met.get("failed_detection_count") or 0),
-                    int(met.get("failed_ocr_count") or 0),
-                    float(met.get("detection_recall") or 0.0),
-                    float(met.get("detection_precision") or 0.0),
-                    float(met["mean_iou"]) if met.get("mean_iou") is not None else None,
-                    float(met.get("exact_match_rate") or 0.0),
-                    float(met.get("digits_match_rate") or 0.0),
-                    float(met.get("char_accuracy_rate") or 0.0),
-                    float(met.get("cer") or 0.0),
-                    float(met.get("mean_latency_ms") or 0.0),
-                    str(report.get("status") or "completed"),
-                    rep_json,
-                ),
-            )
-            return int(cur.lastrowid)
-
-        return R.run_atomic_tx(db, DBL, _tx, db_path=DB_PATH)
-    except Exception as e:
-        logger.debug("Could not persist plate_eval_run: %s", e)
-        return None
-
-
-def list_plate_eval_runs(limit=20):
-    """Return recent automated plate evaluation runs from SQLite plate_eval_runs."""
-    if db is None:
-        return {"ok": True, "runs": []}
-    try:
-        with DBL:
-            R.migrate_db(db, DBL, db_path=DB_PATH)
-            rows = db.execute(
-                "SELECT id, ts, eval_date, dataset_path, plate_model, detector_mode, vehicle_stage_enabled, "
-                "total_samples, valid_files, invalid_files, detected_count, failed_detection_count, failed_ocr_count, "
-                "detection_recall, detection_precision, mean_iou, exact_match_rate, digits_match_rate, "
-                "char_accuracy_rate, cer, mean_latency_ms, status "
-                "FROM plate_eval_runs ORDER BY id DESC LIMIT ?",
-                (max(1, min(100, int(limit or 20))),)
-            ).fetchall()
-        runs = [
-            {
-                "id": int(r[0]),
-                "ts": float(r[1]),
-                "eval_date": str(r[2] or ""),
-                "dataset_path": str(r[3] or ""),
-                "model_used": str(r[4] or ""),
-                "detector_mode": str(r[5] or ""),
-                "vehicle_stage_enabled": bool(r[6]),
-                "total_samples": int(r[7] or 0),
-                "valid_files_count": int(r[8] or 0),
-                "invalid_files_count": int(r[9] or 0),
-                "detected_count": int(r[10] or 0),
-                "failed_detection_count": int(r[11] or 0),
-                "failed_ocr_count": int(r[12] or 0),
-                "detection_recall": float(r[13] or 0.0),
-                "detection_precision": float(r[14] or 0.0),
-                "mean_iou": float(r[15]) if r[15] is not None else None,
-                "exact_match_rate": float(r[16] or 0.0),
-                "digits_match_rate": float(r[17] or 0.0),
-                "char_accuracy_rate": float(r[18] or 0.0),
-                "cer": float(r[19] or 0.0),
-                "mean_latency_ms": float(r[20] or 0.0),
-                "status": str(r[21] or "completed"),
-                "verification_status": "automated_verified",
-            }
-            for r in rows
-        ]
-        return {"ok": True, "runs": runs}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "runs": []}
-
-
-def evaluate_plates_dataset(
-    dataset_path,
-    output_json=None,
-    reader=None,
-    yolo=None,
-    vyolo=None,
-    print_report=True,
-    use_vehicle_detector=False,
-    plate_model_path=None,
-    cancel_event=None,
-    progress_cb=None,
-    save_to_db=True,
-):
-    """Standardized benchmark tool to evaluate find_plates(), preprocess_plate(), and read_plate() (GAP-17, Stage 11).
-    - Reads ground_truth.csv or ground_truth.json (columns: filename, expected_plate, [x, y, w, h]).
-    - Supports --plate-model validation/loading, --use-vehicle-detector (two-stage vehicle->plate crop),
-      safe cancellation via cancel_event, and live progress reporting via progress_cb.
-    - Clearly separates:
-      1) Plate/Vehicle Detection metrics (detected_count, failed_detection_count, detection_recall, detection_precision, mean_iou)
-      2) Character & Digit OCR metrics (char_accuracy_rate = 1 - CER, cer, digits_match_rate)
-      3) Full Plate Exact Match metrics (exact_match_rate, exact_match_count, failed_ocr_count)
-    - Never fabricates synthetic accuracy numbers when dataset or ground truth is missing."""
-    spec_protocol = {
-        "required_files": ["ground_truth.csv (or ground_truth.json)", "<image_files>.jpg/.png"],
-        "csv_columns": ["filename", "expected_plate", "x", "y", "w", "h"],
-        "optional_bbox_columns": ["x", "y", "w", "h"],
-        "example_csv_row": "cam1_001.jpg,عدن-12345,180,260,220,55",
-        "field_protocol_ar": (
-            "بروتوكول التقييم الميداني للوحات اليمنية: "
-            "1) اجمع عينة مصرحاً بها لا تقل عن 100 صورة ميدانية متنوعة (نهار/ليل/زوايا مختلفة/غبار) مع توثيق اللوحة الحقيقية في ground_truth.csv. "
-            "2) شغّل `python mersad_live.py --evaluate-plates PATH` أو استخدم قسم «تقييم ومعايرة اللوحات اليمنية» في الواجهة لقياس خط الأساس. "
-            "3) للاستغناء عن كاشف الحواف الكلاسيكي Canny في الميدان، مرّر نموذج YOLO مدرباً على اللوحات اليمنية عبر `--plate-model` وقارن المقاييس."
-        ),
-    }
-
-    if not dataset_path:
-        res_empty = {
-            "ok": False,
-            "status": "dataset_missing_or_empty",
-            "reason": "No dataset path provided",
-            "error": "يرجى تحديد مسار مجموعة بيانات التقييم",
-            "dataset_path": "",
-            "total_samples": 0,
-            "ground_truth_schema": spec_protocol,
-        }
-        if output_json:
-            with open(output_json, "w", encoding="utf-8") as jf:
-                json.dump(res_empty, jf, indent=2, ensure_ascii=False)
-        return res_empty
-
-    if plate_model_path and yolo is None:
-        m_val = validate_plate_model_path(plate_model_path)
-        if not m_val.get("ok"):
-            res_bad_model = {
-                "ok": False,
-                "status": "invalid_plate_model",
-                "reason": m_val.get("error", "Invalid plate model"),
-                "error": m_val.get("error", "ملف نموذج اللوحات غير صالح"),
-                "dataset_path": str(dataset_path),
-                "plate_model_path": str(plate_model_path),
-                "total_samples": 0,
-            }
-            if output_json:
-                with open(output_json, "w", encoding="utf-8") as jf:
-                    json.dump(res_bad_model, jf, indent=2, ensure_ascii=False)
-            return res_bad_model
-        if m_val.get("custom"):
-            try:
-                from ultralytics import YOLO
-                yolo = YOLO(m_val["path"])
-            except Exception as e:
-                res_load_err = {
-                    "ok": False,
-                    "status": "invalid_plate_model",
-                    "reason": f"Failed to load YOLO plate model: {e}",
-                    "error": f"تعذّر تحميل نموذج اللوحات المحدد بواسطة محرك YOLO: {e}",
-                    "dataset_path": str(dataset_path),
-                    "plate_model_path": str(plate_model_path),
-                    "total_samples": 0,
-                }
-                if output_json:
-                    with open(output_json, "w", encoding="utf-8") as jf:
-                        json.dump(res_load_err, jf, indent=2, ensure_ascii=False)
-                return res_load_err
-
-    if use_vehicle_detector and vyolo is None:
-        try:
-            from ultralytics import YOLO
-            v_p = resolve_resource_path(os.path.join("models", "yolov8n.pt"))
-            vyolo = YOLO(v_p if os.path.exists(v_p) else "yolov8n.pt")
-        except Exception as e:
-            logger.warning("Vehicle detector unavailable during evaluate_plates_dataset: %s", e)
-
-    abs_path = os.path.abspath(str(dataset_path))
-    if os.path.isfile(abs_path):
-        base_dir = os.path.dirname(abs_path)
-        gt_file = abs_path
-    else:
-        base_dir = abs_path
-        csv_cand = os.path.join(base_dir, "ground_truth.csv")
-        json_cand = os.path.join(base_dir, "ground_truth.json")
-        gt_file = csv_cand if os.path.isfile(csv_cand) else (json_cand if os.path.isfile(json_cand) else "")
-
-    if not os.path.exists(abs_path) or not gt_file or not os.path.isfile(gt_file):
-        res_missing = {
-            "ok": False,
-            "status": "dataset_missing_or_empty",
-            "reason": f"Ground truth file (ground_truth.csv or ground_truth.json) not found in '{dataset_path}'",
-            "error": f"لم يُعثر على ملف ground_truth.csv أو ground_truth.json في المسار: {dataset_path}",
-            "dataset_path": str(dataset_path),
-            "total_samples": 0,
-            "ground_truth_schema": spec_protocol,
-        }
-        if print_report:
-            print("======================================================================")
-            print("  MERSAD AI — Yemeni License Plate Benchmark (--evaluate-plates)")
-            print("======================================================================")
-            print(f"  Status: DATASET NOT FOUND ({res_missing['reason']})")
-            print("  Required ground_truth.csv format:")
-            print("    filename,expected_plate,x,y,w,h")
-            print(f"    {spec_protocol['example_csv_row']}")
-            print(f"  Protocol: {spec_protocol['field_protocol_ar']}")
-            print("======================================================================")
-        if output_json:
-            with open(output_json, "w", encoding="utf-8") as jf:
-                json.dump(res_missing, jf, indent=2, ensure_ascii=False)
-        return res_missing
-
-    try:
-        raw_entries, row_errors = _parse_ground_truth_entries(gt_file)
-    except Exception as parse_err:
-        res_err = {
-            "ok": False,
-            "status": "ground_truth_parse_error",
-            "reason": str(parse_err),
-            "error": f"خطأ في قراءة ملف الحقيقة المرجعية: {parse_err}",
-            "dataset_path": str(dataset_path),
-            "total_samples": 0,
-            "ground_truth_schema": spec_protocol,
-        }
-        if output_json:
-            with open(output_json, "w", encoding="utf-8") as jf:
-                json.dump(res_err, jf, indent=2, ensure_ascii=False)
-        return res_err
-
-    if reader is None:
-        try:
-            import easyocr
-            easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
-            easyocr_ok, _ = verify_easyocr_dir(easyocr_dir)
-            dev_info = resolve_compute_device(os.environ.get("MERSAD_DEVICE", "auto"))
-            try:
-                reader = easyocr.Reader(
-                    ["ar", "en"],
-                    gpu=dev_info["use_gpu"],
-                    model_storage_directory=easyocr_dir,
-                    download_enabled=not easyocr_ok,
-                )
-            except TypeError:
-                reader = easyocr.Reader(["ar", "en"], gpu=dev_info["use_gpu"], model_storage_directory=easyocr_dir)
-        except Exception as e:
-            logger.warning("EasyOCR reader unavailable during evaluate_plates_dataset: %s", e)
-            reader = None
-
-    sample_results = []
-    missing_images = []
-    corrupt_images = []
-    ious = []
-    detected_cnt = 0
-    total_cand_boxes = 0
-    exact_cnt = 0
-    digits_cnt = 0
-    cers = []
-    latencies = []
-    total_raw = len(raw_entries)
-
-    for idx_entry, item in enumerate(raw_entries, 1):
-        if cancel_event is not None and cancel_event.is_set():
-            return {
-                "ok": False,
-                "status": "cancelled",
-                "reason": "Evaluation cancelled by operator",
-                "error": "تم إلغاء عملية التقييم بناءً على طلب المستخدم",
-                "dataset_path": str(dataset_path),
-                "completed_samples": len(sample_results),
-                "total_samples": total_raw,
-            }
-        fn = str(item.get("filename") or "").strip()
-        exp_raw = str(item.get("expected_plate") or "").strip()
-        if not fn or not exp_raw:
-            continue
-        if callable(progress_cb):
-            try:
-                progress_cb(idx_entry, total_raw, fn)
-            except Exception:
-                pass
-        img_p = fn if os.path.isabs(fn) else os.path.join(base_dir, fn)
-        if not os.path.isfile(img_p):
-            missing_images.append(fn)
-            continue
-        img = cv2.imread(img_p)
-        if img is None or getattr(img, "size", 0) == 0:
-            corrupt_images.append(fn)
-            missing_images.append(fn)
-            continue
-
-        gt_box = None
-        if all(k in item and item[k] is not None for k in ("x", "y", "w", "h")):
-            try:
-                gx, gy, gw, gh = float(item["x"]), float(item["y"]), float(item["w"]), float(item["h"])
-                if gw > 0 and gh > 0:
-                    gt_box = (int(gx), int(gy), int(gw), int(gh))
-            except (ValueError, TypeError):
-                gt_box = None
-
-        t0 = time.perf_counter()
-        vboxes = detect_vehicles(img, vyolo) if vyolo is not None else []
-        cand_boxes = []
-        if vboxes:
-            for (vx, vy, vw, vh, vc) in vboxes:
-                oy = vy + int(vh * 0.35) if vc != "unknown" else 0
-                sub = img[oy:vy + vh, vx:vx + vw]
-                if getattr(sub, "size", 0) == 0:
-                    continue
-                for (px, py, pw, ph) in find_plates(sub, yolo=yolo):
-                    cand_boxes.append((px + vx, py + oy, pw, ph))
-        if not cand_boxes:
-            cand_boxes = find_plates(img, yolo=yolo)
-
-        total_cand_boxes += len(cand_boxes)
-        best_iou = None
-        if gt_box is not None:
-            best_iou = max((_bbox_iou(gt_box, b) for b in cand_boxes), default=0.0)
-            ious.append(best_iou)
-            is_detected = bool(best_iou >= 0.3)
-        else:
-            is_detected = bool(len(cand_boxes) > 0)
-
-        if is_detected:
-            detected_cnt += 1
-
-        best_pred = ""
-        best_conf = 0.0
-        for (bx, by, bw, bh) in cand_boxes:
-            crop = img[max(0, by):by + bh, max(0, bx):bx + bw]
-            d_txt, d_conf = read_plate(reader, crop)
-            if d_txt and d_conf >= best_conf:
-                best_pred, best_conf = d_txt, float(d_conf)
-
-        if not best_pred:
-            # Fallback crop evaluation if ground-truth box is provided or image is already a tight plate crop
-            if gt_box is not None:
-                gx, gy, gw, gh = gt_box
-                gt_crop = img[max(0, gy):gy + gh, max(0, gx):gx + gw]
-                d_txt, d_conf = read_plate(reader, gt_crop)
-                if d_txt:
-                    best_pred, best_conf = d_txt, float(d_conf)
-            if not best_pred:
-                d_txt, d_conf = read_plate(reader, img)
-                if d_txt:
-                    best_pred, best_conf = d_txt, float(d_conf)
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        latencies.append(elapsed_ms)
-
-        exp_norm = R.norm_plate(exp_raw)
-        exp_digits, _ = R.split_plate(exp_norm)
-        pred_norm = R.norm_plate(best_pred) if best_pred else ""
-        pred_digits, _ = R.split_plate(pred_norm) if pred_norm else ("", "")
-
-        is_exact = bool(exp_norm and pred_norm == exp_norm)
-        is_digits = bool(exp_digits and pred_digits == exp_digits)
-        sample_cer = _compute_cer(exp_norm, pred_norm)
-
-        if is_exact:
-            exact_cnt += 1
-        if is_digits:
-            digits_cnt += 1
-        cers.append(sample_cer)
-
-        sample_results.append({
-            "filename": fn,
-            "expected_plate": exp_norm,
-            "expected_digits": exp_digits,
-            "predicted_plate": pred_norm,
-            "predicted_digits": pred_digits,
-            "confidence": round(best_conf, 4),
-            "detected": is_detected,
-            "vehicle_boxes_count": len(vboxes),
-            "candidate_boxes_count": len(cand_boxes),
-            "iou": round(best_iou, 4) if best_iou is not None else None,
-            "exact_match": is_exact,
-            "digits_match": is_digits,
-            "char_accuracy": round(max(0.0, 1.0 - sample_cer), 4),
-            "cer": round(sample_cer, 4),
-            "latency_ms": round(elapsed_ms, 2),
-        })
-
-    n_eval = len(sample_results)
-    invalid_cnt = len(missing_images) + len(row_errors)
-    if n_eval == 0:
-        res_no_valid = {
-            "ok": False,
-            "status": "dataset_missing_or_empty",
-            "reason": "No readable images matched ground_truth entries",
-            "error": "لا توجد صور صالحة قابلة للقراءة مطابقة لملف الحقيقة المرجعية",
-            "dataset_path": str(dataset_path),
-            "total_samples": 0,
-            "valid_files_count": 0,
-            "invalid_files_count": invalid_cnt,
-            "missing_images": missing_images,
-            "corrupt_images": corrupt_images,
-            "row_errors": row_errors,
-            "ground_truth_schema": spec_protocol,
-        }
-        if output_json:
-            with open(output_json, "w", encoding="utf-8") as jf:
-                json.dump(res_no_valid, jf, indent=2, ensure_ascii=False)
-        return res_no_valid
-
-    det_recall = round(detected_cnt / n_eval, 4)
-    det_precision = round(detected_cnt / max(1, total_cand_boxes), 4) if total_cand_boxes > 0 else 0.0
-    mean_iou_val = round(float(np.mean(ious)), 4) if ious else None
-    exact_rate = round(exact_cnt / n_eval, 4)
-    digits_rate = round(digits_cnt / n_eval, 4)
-    mean_cer = round(float(np.mean(cers)), 4)
-    char_acc = round(max(0.0, 1.0 - mean_cer), 4)
-    mean_lat = round(float(np.mean(latencies)), 2)
-    failed_det_cnt = n_eval - detected_cnt
-    failed_ocr_cnt = n_eval - exact_cnt
-
-    plate_model_label = os.path.basename(str(plate_model_path)) if plate_model_path else ("custom_yolo_plate" if yolo is not None else "OpenCV_Canny_Contour")
-    veh_model_label = f"YOLOv8n ({YOLO_RELEASE_VERSION})" if vyolo is not None else "disabled"
-    model_used_str = f"Vehicle:{veh_model_label} | Plate:{plate_model_label} | OCR:EasyOCR(ar,en)"
-    eval_date_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-    report = {
-        "ok": True,
-        "status": "evaluated",
-        "verification_status": "automated_verified",
-        "evaluation_date": eval_date_str,
-        "dataset_path": str(dataset_path),
-        "model_used": model_used_str,
-        "plate_model_path": str(plate_model_path or ""),
-        "total_samples": n_eval,
-        "valid_files_count": n_eval,
-        "invalid_files_count": invalid_cnt,
-        "missing_images": missing_images,
-        "corrupt_images": corrupt_images,
-        "row_errors": row_errors,
-        "metrics": {
-            "detected_count": detected_cnt,
-            "failed_detection_count": failed_det_cnt,
-            "detection_recall": det_recall,
-            "detection_precision": det_precision,
-            "mean_iou": mean_iou_val,
-            "exact_match_count": exact_cnt,
-            "exact_match_rate": exact_rate,
-            "failed_ocr_count": failed_ocr_cnt,
-            "digits_match_count": digits_cnt,
-            "digits_match_rate": digits_rate,
-            "char_accuracy_rate": char_acc,
-            "character_error_rate": mean_cer,
-            "cer": mean_cer,
-            "mean_latency_ms": mean_lat,
-        },
-        "vehicle_stage_enabled": bool(vyolo is not None),
-        "detector_mode": "yolo_plate_model" if yolo is not None else ("vehicle_crop_plus_canny" if vyolo is not None else "opencv_canny_contour_baseline"),
-        "field_note_ar": (
-            "تُفصل المقاييس أعلاه بدقة بين: (1) كشف منطقة اللوحة (Recall/Precision/IoU)، و(2) دقة قراءة المحارف والأرقام (1-CER وDigits Match)، و(3) المطابقة الكاملة للوحة (Exact Match). "
-            "للاستغناء عن كاشف الحواف الكلاسيكي (Canny) في الميدان، يلزم توفير نموذج YOLO مخصص للوحات (--plate-model) مدرب على لوحات يمنية حقيقية."
-        ),
-        "samples": sample_results,
-    }
-    if save_to_db:
-        run_id = _save_plate_eval_run_to_db(report)
-        if run_id is not None:
-            report["run_id"] = run_id
-
-    if print_report:
-        print("======================================================================")
-        print("  MERSAD AI — Yemeni License Plate Evaluation Report")
-        print("======================================================================")
-        print(f"  Dataset:              {dataset_path} ({n_eval} valid, {invalid_cnt} invalid)")
-        print(f"  Model Used:           {model_used_str}")
-        print(f"  Detector Mode:        {report['detector_mode']}")
-        print(f"  Detection Recall:     {det_recall * 100:.1f}% ({detected_cnt}/{n_eval})")
-        print(f"  Detection Precision:  {det_precision * 100:.1f}%")
-        if mean_iou_val is not None:
-            print(f"  Mean BBox IoU:        {mean_iou_val:.4f}")
-        print(f"  Char OCR Accuracy:    {char_acc * 100:.1f}% (CER={mean_cer:.4f})")
-        print(f"  Digits Match Rate:    {digits_rate * 100:.1f}% ({digits_cnt}/{n_eval})")
-        print(f"  Full Exact Match:     {exact_rate * 100:.1f}% ({exact_cnt}/{n_eval})")
-        print(f"  Mean Latency:         {mean_lat:.2f} ms/image")
-        print("======================================================================")
-    if output_json:
-        with open(output_json, "w", encoding="utf-8") as jf:
-            json.dump(report, jf, indent=2, ensure_ascii=False)
-    return report
-
-
-def get_plate_eval_status():
-    """Return current status and progress of the in-app Yemeni plate evaluation job (Stage 11)."""
-    with _EVAL_JOB_LOCK:
-        st = {k: v for k, v in _EVAL_JOB_STATE.items() if k != "cancel_event"}
-    return {"ok": True, **st}
-
-
-def cancel_plate_eval_job(who="operator"):
-    """Signal the active plate evaluation job to stop safely between samples (Stage 11)."""
-    with _EVAL_JOB_LOCK:
-        ev = _EVAL_JOB_STATE.get("cancel_event")
-        is_running = _EVAL_JOB_STATE.get("running", False)
-        if not is_running or ev is None:
-            return {"ok": False, "error": "لا توجد عملية تقييم جارية حالياً لإلغائها"}
-        ev.set()
-        _EVAL_JOB_STATE["status"] = "cancelling"
-    log("plate evaluation cancel requested", f"by {who}")
-    return {"ok": True, "status": "cancelling"}
-
-
-def start_plate_eval_job(data, who="operator", sync=False, reader=None, yolo=None, vyolo=None):
-    """Start a Yemeni plate evaluation job from the dashboard UI or API with single-execution concurrency guard (Stage 11)."""
-    if not isinstance(data, dict):
-        return {"ok": False, "error": "بيانات طلب التقييم غير صالحة"}
-    dataset_path = str(data.get("dataset_path") or "").strip()
-    plate_model = str(data.get("plate_model") or "").strip()
-    use_vyolo = bool(data.get("use_vehicle_detector"))
-    run_sync = bool(sync or data.get("sync"))
-
-    insp = inspect_plate_dataset(dataset_path, plate_model_path=plate_model)
-    if not insp.get("ok"):
-        return {"ok": False, "error": insp.get("error") or "مسار مجموعة البيانات أو النموذج غير صالح", "inspection": insp}
-
-    with _EVAL_JOB_LOCK:
-        if _EVAL_JOB_STATE.get("running"):
-            return {"ok": False, "error": "توجد عملية تقييم لوحات جارية حالياً؛ انتظر اكتمالها أو قم بإلغائها أولاً"}
-        cancel_ev = threading.Event()
-        job_id = "eval_" + uuid.uuid4().hex[:8]
-        _EVAL_JOB_STATE.update(
-            running=True,
-            job_id=job_id,
-            started_ts=time.time(),
-            finished_ts=0.0,
-            dataset_path=insp["dataset_path"],
-            plate_model=plate_model,
-            use_vehicle_detector=use_vyolo,
-            progress_current=0,
-            progress_total=int(insp.get("valid_files_count") or insp.get("total_entries") or 0),
-            progress_percent=0.0,
-            current_file="",
-            status="running",
-            error="",
-            cancel_event=cancel_ev,
-            last_report=None,
-        )
-
-    def _prog(cur_i, tot_n, fn):
-        with _EVAL_JOB_LOCK:
-            _EVAL_JOB_STATE["progress_current"] = int(cur_i)
-            _EVAL_JOB_STATE["progress_total"] = int(tot_n)
-            _EVAL_JOB_STATE["progress_percent"] = round((cur_i / max(1, tot_n)) * 100.0, 1)
-            _EVAL_JOB_STATE["current_file"] = str(fn)
-
-    def _worker():
-        try:
-            rep = evaluate_plates_dataset(
-                insp["dataset_path"],
-                reader=reader,
-                yolo=yolo,
-                vyolo=vyolo,
-                print_report=False,
-                use_vehicle_detector=use_vyolo,
-                plate_model_path=plate_model or None,
-                cancel_event=cancel_ev,
-                progress_cb=_prog,
-                save_to_db=True,
-            )
-            with _EVAL_JOB_LOCK:
-                _EVAL_JOB_STATE["running"] = False
-                _EVAL_JOB_STATE["finished_ts"] = time.time()
-                _EVAL_JOB_STATE["status"] = rep.get("status", "evaluated" if rep.get("ok") else "failed")
-                _EVAL_JOB_STATE["error"] = rep.get("error", "")
-                _EVAL_JOB_STATE["progress_percent"] = 100.0 if rep.get("ok") else _EVAL_JOB_STATE["progress_percent"]
-                _EVAL_JOB_STATE["last_report"] = rep
-            log("plate evaluation completed", f"job={job_id} status={rep.get('status')} samples={rep.get('total_samples',0)} by {who}")
-        except Exception as e:
-            with _EVAL_JOB_LOCK:
-                _EVAL_JOB_STATE["running"] = False
-                _EVAL_JOB_STATE["finished_ts"] = time.time()
-                _EVAL_JOB_STATE["status"] = "failed"
-                _EVAL_JOB_STATE["error"] = str(e)
-            logger.error("Plate evaluation job %s failed: %s", job_id, e)
-
-    if run_sync:
-        _worker()
-        return get_plate_eval_status()
-
-    threading.Thread(target=_worker, daemon=True, name=f"plate_eval_{job_id}").start()
-    return {"ok": True, "job_id": job_id, "status": "running", "inspection": insp}
-
-
-def stage_uploaded_eval_files(data, who="operator"):
-    """Accept browser-selected evaluation files (ground_truth.csv/.json + images encoded in base64) and stage them in APPDIR/eval_uploads/ (Stage 11)."""
-    if not isinstance(data, dict) or not isinstance(data.get("files"), list) or not data["files"]:
-        return {"ok": False, "error": "لم يتم اختيار أي ملفات لرفعها"}
-    import base64
-    batch_id = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-    target_dir = os.path.join(APPDIR, "eval_uploads", batch_id)
-    os.makedirs(target_dir, exist_ok=True)
-    saved_files = []
-    for fobj in data["files"][:250]:
-        if not isinstance(fobj, dict):
-            continue
-        raw_name = os.path.basename(str(fobj.get("name") or "").strip())
-        if not raw_name or ".." in raw_name or "/" in raw_name or "\\" in raw_name:
-            continue
-        ext = os.path.splitext(raw_name)[1].lower()
-        if ext not in (".csv", ".json", ".jpg", ".jpeg", ".png", ".bmp", ".webp"):
-            continue
-        b64 = str(fobj.get("content_base64") or "")
-        if "," in b64 and b64.startswith("data:"):
-            b64 = b64.split(",", 1)[1]
-        try:
-            raw_bytes = base64.b64decode(b64)
-        except Exception:
-            continue
-        if len(raw_bytes) > 5_000_000:
-            continue
-        dest_p = os.path.join(target_dir, raw_name)
-        with open(dest_p, "wb") as out_f:
-            out_f.write(raw_bytes)
-        saved_files.append(raw_name)
-    if not saved_files:
-        return {"ok": False, "error": "لم يتم حفظ أي ملفات صالحة"}
-    insp = inspect_plate_dataset(target_dir)
-    return {
-        "ok": True,
-        "dataset_path": target_dir,
-        "saved_files_count": len(saved_files),
-        "inspection": insp,
-    }
-
-
-def browse_local_path(mode="folder"):
-    """Open native OS folder/file selection dialog when running locally with a GUI display; otherwise return a helpful hint."""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        if str(mode or "folder").lower() == "file":
-            chosen = filedialog.askopenfilename(title="اختر ملف نموذج اللوحات (.pt) أو ملف ground_truth.csv")
-        else:
-            chosen = filedialog.askdirectory(title="اختر مجلد مجموعة بيانات اللوحات اليمنية")
-        root.destroy()
-        if chosen:
-            return {"ok": True, "path": os.path.abspath(chosen)}
-        return {"ok": False, "cancelled": True, "error": "لم يتم اختيار مسار"}
-    except Exception:
-        return {
-            "ok": False,
-            "headless": True,
-            "error": "نافذة اختيار المسار المحلية غير متاحة في وضع الخادم/بدون واجهة سطح مكتب؛ يمكنك كتابة المسار مباشرة أو رفع صور التقييم وملف ground_truth.csv من المتصفح.",
-        }
-
-
-def verify_models_cli(as_json=False):
-    """Verify all bundled/installed AI model weights (YuNet, SFace, YOLOv8n, EasyOCR ar+en) without requiring internet access."""
-    import check_install as _chk
-    items = _chk.check_models_detailed(INSTALL_DIR)
-    all_ok = all(it.get("status") == "PASS" for it in items)
-    if as_json:
-        print(json.dumps({"ok": all_ok, "models": items}, indent=2, ensure_ascii=False))
-    else:
-        print("======================================================================")
-        print("  MERSAD AI — Offline AI Models Verification (--verify-models)")
-        print("======================================================================")
-        for it in items:
-            print(f"  {it['status']:7s} [{it['category']:14s}] {it['item']}: {it['reason']}")
-            if it.get("remediation") and it["status"] != "PASS":
-                print(f"          -> Fix: {it['remediation']}")
-        print("----------------------------------------------------------------------")
-        print("  Result:", "MODELS OK (all required weights verified)" if all_ok else "MODELS INCOMPLETE OR CORRUPT")
-    return 0 if all_ok else 1
-
-
 if __name__ == "__main__":
     import multiprocessing; multiprocessing.freeze_support()
     try:
         if "--verify-models" in sys.argv:
-            sys.exit(verify_models_cli(as_json="--json" in sys.argv))
-        elif "--evaluate-plates" in sys.argv:
-            ev_ap = argparse.ArgumentParser()
-            ev_ap.add_argument("--evaluate-plates", required=True, help="Path to plate evaluation dataset directory or ground_truth.csv")
-            ev_ap.add_argument("--output-json", default=None, help="Optional output JSON path for benchmark report")
-            ev_ap.add_argument("--plate-model", default=None, help="Optional YOLO plate detector .pt")
-            ev_ap.add_argument("--vehicle-model", default=None, help="Optional YOLO vehicle detector .pt for two-stage vehicle->plate cropping")
-            ev_ap.add_argument("--use-vehicle-detector", action="store_true", help="Use bundled/default YOLOv8n vehicle detector before find_plates()")
-            ev_ap.add_argument("--json", action="store_true", help="Print JSON output to stdout")
-            ev_args, _ = ev_ap.parse_known_args()
-            yolo_eval = None
-            vyolo_eval = None
-            if ev_args.plate_model:
-                from ultralytics import YOLO
-                yolo_eval = YOLO(ev_args.plate_model)
-            if ev_args.vehicle_model or ev_args.use_vehicle_detector:
-                from ultralytics import YOLO
-                v_p = ev_args.vehicle_model or resolve_resource_path(os.path.join("models", "yolov8n.pt"))
-                vyolo_eval = YOLO(v_p if os.path.exists(v_p) else "yolov8n.pt")
-            rep = evaluate_plates_dataset(
-                ev_args.evaluate_plates,
-                output_json=ev_args.output_json,
-                yolo=yolo_eval,
-                vyolo=vyolo_eval,
-                print_report=not ev_args.json,
-            )
-            if ev_args.json:
-                print(json.dumps(rep, indent=2, ensure_ascii=False))
-            sys.exit(0 if rep.get("ok") else 1)
+            model_ok, model_report = verify_runtime_model_assets()
+            for item in model_report:
+                state = "PASS" if item.get("ok") else "FAIL"
+                print(f"[{state}] {item.get('model')}: {item.get('reason')}")
+            if not model_ok:
+                print("Bundled model verification failed. Restore/download verified weights and rebuild the complete MERSAD_AI distribution.", file=sys.stderr)
+                raise SystemExit(2)
+            print("All bundled AI models are present and valid.")
         elif "--verify" in sys.argv:
-            init_runtime_env()
-            out = verify()
-            print(out)
-            sys.exit(0 if out.startswith("Audit chain OK") else 1)
+            print(verify())
         else:
-            init_runtime_env()
             main()
     except Exception:
         import traceback; traceback.print_exc()

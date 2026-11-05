@@ -14,7 +14,6 @@ from mersad_live import (
     MODEL_MIN_BYTES,
     YOLO_MODEL_URL,
     YOLO_RELEASE_VERSION,
-    resolve_compute_device,
     safe_download_model,
     verify_onnx_file,
     verify_yolo_pt_file,
@@ -66,11 +65,7 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
         print(f"  [OK] EasyOCR Arabic/English weights already verified in {easy_dir} ({reason_easy})")
     else:
         import easyocr
-        dev_info = resolve_compute_device(os.environ.get("MERSAD_DEVICE", "auto"))
-        try:
-            easyocr.Reader(["ar", "en"], gpu=dev_info["use_gpu"], model_storage_directory=easy_dir, download_enabled=True)
-        except TypeError:
-            easyocr.Reader(["ar", "en"], gpu=dev_info["use_gpu"], model_storage_directory=easy_dir)
+        easyocr.Reader(["ar", "en"], gpu=False, model_storage_directory=easy_dir, download_enabled=True)
         ok_after, reason_after = verify_easyocr_dir(easy_dir)
         if not ok_after:
             raise RuntimeError(f"EasyOCR model verification failed in {easy_dir}: {reason_after}")
@@ -91,8 +86,7 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
     # Record local SHA-256 sidecar on first verified download so subsequent checks detect any bit-rot or tampering
     sha_sidecar = yolo_target + ".sha256"
     if os.path.isfile(yolo_target) and not os.path.isfile(sha_sidecar):
-        with open(yolo_target, "rb") as yf:
-            digest = hashlib.sha256(yf.read()).hexdigest()
+        digest = hashlib.sha256(open(yolo_target, "rb").read()).hexdigest()
         with open(sha_sidecar, "w", encoding="utf-8") as sf:
             sf.write(f"{digest}  yolov8n.pt\n")
 

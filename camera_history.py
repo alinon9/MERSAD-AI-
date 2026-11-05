@@ -29,11 +29,7 @@ _CURRENT = {}
 
 def init(db, lock, db_path=None):
     global _DB, _LOCK, _DB_PATH
-    eff_lock = lock or threading.RLock()
-    with eff_lock:
-        if _DB is not db or _DB_PATH != db_path:
-            _CURRENT.clear()
-        _DB, _LOCK, _DB_PATH = db, eff_lock, db_path
+    _DB, _LOCK, _DB_PATH = db, lock or threading.RLock(), db_path
 
     def _ensure_schema(conn):
         # Schema creation must be serialized across application processes too.
@@ -66,10 +62,6 @@ def record_status(cam, status, reason="status_unknown", ts=None, force=False):
     ts = float(time.time() if ts is None else ts)
     if ts < 0:
         return False
-    state_key = (id(_DB), _DB_PATH or "", SESSION_ID, cam)
-    with _LOCK:
-        if not force and _CURRENT.get(state_key) == status:
-            return False
 
     def tx(conn):
         row = conn.execute(
@@ -91,9 +83,7 @@ def record_status(cam, status, reason="status_unknown", ts=None, force=False):
 
     try:
         changed = R.run_atomic_tx(_DB, _LOCK, tx, db_path=_DB_PATH)
-        with _LOCK:
-            _CURRENT[state_key] = status
-            _CURRENT[cam] = status
+        _CURRENT[cam] = status
         return bool(changed)
     except (sqlite3.Error, OSError, RuntimeError):
         return False
@@ -101,36 +91,12 @@ def record_status(cam, status, reason="status_unknown", ts=None, force=False):
 
 def close_session():
     """Best-effort close markers so last observed intervals are not extended past a clean shutdown."""
-    with _LOCK:
-        items_snap = list(_CURRENT.items())
-    for cam, status in items_snap:
-        if isinstance(cam, str) and status != "unknown":
+    for cam, status in list(_CURRENT.items()):
+        if status != "unknown":
             record_status(cam, "unknown", "application_stop", force=True)
 
 
 atexit.register(close_session)
-
-
-def prune_history(retention_days=90, now=None, db=None, lock=None, db_path=None):
-    """Atomically delete camera_status_history rows older than max(30.0, float(retention_days)) days (POST-GAP-05)."""
-    eff_days = max(30.0, float(retention_days if retention_days is not None else 90.0))
-    eff_db = db if db is not None else _DB
-    eff_lock = lock if lock is not None else _LOCK
-    eff_path = db_path if db_path is not None else _DB_PATH
-    if eff_db is None:
-        return {"ok": False, "deleted": 0, "retention_days": eff_days}
-    now_ts = float(time.time() if now is None else now)
-    cutoff = now_ts - eff_days * 86400.0
-
-    def _tx(conn):
-        cur = conn.execute("DELETE FROM camera_status_history WHERE ts < ?", (cutoff,))
-        return int(cur.rowcount or 0)
-
-    try:
-        deleted = int(R.run_atomic_tx(eff_db, eff_lock, _tx, db_path=eff_path) or 0)
-        return {"ok": True, "deleted": deleted, "retention_days": eff_days}
-    except (sqlite3.Error, OSError, RuntimeError) as e:
-        return {"ok": False, "deleted": 0, "retention_days": eff_days, "error": str(e)}
 
 
 def _window_seconds(period):
