@@ -1,0 +1,72 @@
+name: Build MERSAD PREVIEW 0.1 Windows x64
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_branch:
+        description: Preview source branch to build
+        required: true
+        type: string
+        default: preview/mersad-ai-lab-0.1-20261105
+
+permissions:
+  contents: read
+
+jobs:
+  build-preview:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout requested preview branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_branch }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install innosetup --version 6.7.1 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed ($LASTEXITCODE)" }
+
+      - name: Fetch and verify original MERSAD LAB source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig
+          if ($LASTEXITCODE -ne 0) { throw "Unable to fetch original LAB source branch" }
+          $expected = "ed7b8f727243da4878e547f08489af581c83291c"
+          $actual = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
+          if ($actual -ne $expected) { throw "Original LAB commit mismatch: expected $expected, got $actual" }
+
+          $dest = Join-Path $PWD "MERSAD_LAB_Original_ed7b8f72"
+          if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $archive = Join-Path $env:RUNNER_TEMP "mersad-original-lab.tar"
+          git archive --format=tar refs/remotes/origin/mersad-lab-orig --output=$archive
+          if ($LASTEXITCODE -ne 0) { throw "Unable to archive original LAB source" }
+          tar -xf $archive -C $dest
+          if ($LASTEXITCODE -ne 0) { throw "Unable to extract original LAB source" }
+          Set-Content -Path (Join-Path $dest "COMMIT_SHA.txt") -Value $actual -Encoding ASCII
+
+      - name: Build, test, package, and verify the complete release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & .\BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Final Windows release pipeline failed ($LASTEXITCODE)" }
+
+      - name: Upload verified Windows release
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          if-no-files-found: warn
+          path: |
+            windows_binaries_staging/
