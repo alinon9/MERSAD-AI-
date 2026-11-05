@@ -21,7 +21,7 @@ jobs:
       - name: Reassemble and verify candidate Git bundle
         shell: bash
         env:
-          EXPECTED_BUNDLE_COMMIT: 289523d3c1192fd0d3811998996613d564c91a22
+          EXPECTED_BUNDLE_COMMIT: 9827d79764ce2f285dcf9cc7e8379aa167c6d9da
         run: |
           set -euo pipefail
           mkdir -p release_bundle
