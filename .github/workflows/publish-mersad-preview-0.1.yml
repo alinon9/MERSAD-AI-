@@ -32,7 +32,7 @@ jobs:
           mkdir -p "$VERIFY_DIR"
           git -C "$VERIFY_DIR" init -q
           git -C "$VERIFY_DIR" bundle verify "$GITHUB_WORKSPACE/release_bundle/mersad-preview-0.1.bundle"
-          git clone --quiet "$GITHUB_WORKSPACE/release_bundle/mersad-preview-0.1.bundle" "$SOURCE_DIR"
+          git clone --quiet --branch preview/mersad-ai-lab-0.1-20261105 "$GITHUB_WORKSPACE/release_bundle/mersad-preview-0.1.bundle" "$SOURCE_DIR"
           ACTUAL="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
           if [[ "$ACTUAL" != "$EXPECTED_BUNDLE_COMMIT" ]]; then
             echo "::error::Candidate bundle commit mismatch: expected $EXPECTED_BUNDLE_COMMIT, got $ACTUAL"
