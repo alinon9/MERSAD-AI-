@@ -1,0 +1,192 @@
+name: Build & Verify MERSAD PREVIEW 0.1 Final Windows x64 Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "preview/mersad-ai-lab-0.1-*"
+      - "release/mersad-preview-0.1*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout candidate branch (preserving main untouched)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11 (x64)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install Pinned Windows x64 Dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
+          pip install -r MERSAD_AI_Preview_0.1/requirements.txt -c MERSAD_AI_Preview_0.1/constraints-win-x64.txt pyinstaller==6.11.1
+          if ($LASTEXITCODE -ne 0) { throw "pip install pinned dependencies failed ($LASTEXITCODE)" }
+
+      - name: Phase 1 — Download All 4 Real AI Models, Verify Pinned SHA-256 & Execute Real Inference on LAB Frames
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python MERSAD_AI_Preview_0.1/prefetch.py
+          if ($LASTEXITCODE -ne 0) { throw "prefetch.py failed ($LASTEXITCODE)" }
+          python MERSAD_AI_Preview_0.1/mersad_live.py --verify-models
+          if ($LASTEXITCODE -ne 0) { throw "--verify-models failed ($LASTEXITCODE)" }
+          python -u integration/evaluate_ai_models.py --require-real-models
+          if ($LASTEXITCODE -ne 0) { throw "evaluate_ai_models.py --require-real-models failed ($LASTEXITCODE)" }
+
+      - name: Phase 2 — Extract Original MERSAD LAB (Commit ed7b8f727243da4878e547f08489af581c83291c) & Compare with Clean-Room LAB
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig
+          if ($LASTEXITCODE -ne 0) { throw "Failed to fetch build/mersad-lab-exe-20261031 from origin" }
+          $actualSha = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
+          if ($actualSha -ne "ed7b8f727243da4878e547f08489af581c83291c") {
+            throw "Original LAB commit mismatch: expected ed7b8f727243da4878e547f08489af581c83291c, got $actualSha"
+          }
+          if (Test-Path "MERSAD_LAB_Original_ed7b8f72") { Remove-Item -Recurse -Force "MERSAD_LAB_Original_ed7b8f72" }
+          New-Item -ItemType Directory -Force -Path "MERSAD_LAB_Original_ed7b8f72" | Out-Null
+          git archive refs/remotes/origin/mersad-lab-orig | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
+          if ($LASTEXITCODE -ne 0) { throw "git archive extraction failed" }
+          Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $actualSha -Encoding ASCII
+          python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-unblocked
+          if ($LASTEXITCODE -ne 0) { throw "Phase 2 comparison failed or remained BLOCKED ($LASTEXITCODE)" }
+
+      - name: Phase 3A — Run Full AI (225) & LAB (20) Test Suites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -u MERSAD_AI_Preview_0.1/selftest.py
+          if ($LASTEXITCODE -ne 0) { throw "selftest.py (standard) failed ($LASTEXITCODE)" }
+          $env:MERSAD_BLOCK_SKLEARN="1"
+          python -u MERSAD_AI_Preview_0.1/selftest.py
+          if ($LASTEXITCODE -ne 0) { throw "selftest.py (MERSAD_BLOCK_SKLEARN=1) failed ($LASTEXITCODE)" }
+          Remove-Item Env:\MERSAD_BLOCK_SKLEARN -ErrorAction SilentlyContinue
+          python -u MERSAD_AI_Preview_0.1/verify_integrity.py --check-models
+          if ($LASTEXITCODE -ne 0) { throw "verify_integrity.py --check-models failed ($LASTEXITCODE)" }
+          python -u MERSAD_LAB_Preview_0.1/test_lab.py
+          if ($LASTEXITCODE -ne 0) { throw "test_lab.py failed ($LASTEXITCODE)" }
+
+      - name: Phase 3B — Purge Old Outputs & Build MERSAD_AI.exe, MERSAD_LAB.exe, Portable ZIPs & MERSAD_LAB_Setup_x64.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($d in @("MERSAD_AI_Preview_0.1\build","MERSAD_AI_Preview_0.1\dist","MERSAD_LAB_Preview_0.1\build","MERSAD_LAB_Preview_0.1\dist")) {
+            if (Test-Path $d) { Remove-Item -Recurse -Force $d }
+          }
+          $isccCmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+          if ($null -eq $isccCmd) { throw "FATAL: ISCC.exe (Inno Setup) is missing; MERSAD_LAB_Setup_x64.exe is mandatory" }
+
+          Push-Location MERSAD_AI_Preview_0.1
+          pyinstaller --noconfirm --clean mersad_ai.spec
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
+          Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
+          Copy-Item -Path "dashboard.html","README_AR.md","SYSTEM_REQUIREMENTS.txt","RUN.bat","RUN_LAN.bat","VERIFY_AUDIT.bat","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
+          Compress-Archive -Path "dist\MERSAD_AI\*" -DestinationPath "dist\portable\MERSAD_AI_Portable_x64.zip" -Force
+          Pop-Location
+
+          Push-Location MERSAD_LAB_Preview_0.1
+          pyinstaller --noconfirm --clean mersad_lab.spec
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_lab.spec failed ($LASTEXITCODE)" }
+          Copy-Item -Path "index.html","README_AR.md","PHASE1_STATUS_AR.md","RUN_LAB.bat" -Destination "dist\MERSAD_LAB\" -Force
+          New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
+          Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "dist\portable\MERSAD_LAB_Portable_x64.zip" -Force
+          & $isccCmd.Source "installer\mersad_lab_setup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC.exe failed ($LASTEXITCODE)" }
+          Pop-Location
+
+          foreach ($reqFile in @(
+            "MERSAD_AI_Preview_0.1\dist\MERSAD_AI\MERSAD_AI.exe",
+            "MERSAD_LAB_Preview_0.1\dist\MERSAD_LAB\MERSAD_LAB.exe",
+            "MERSAD_LAB_Preview_0.1\dist\installer\MERSAD_LAB_Setup_x64.exe",
+            "MERSAD_AI_Preview_0.1\dist\portable\MERSAD_AI_Portable_x64.zip",
+            "MERSAD_LAB_Preview_0.1\dist\portable\MERSAD_LAB_Portable_x64.zip"
+          )) {
+            if (-not (Test-Path -LiteralPath $reqFile -PathType Leaf)) {
+              throw "FATAL: Mandatory build output missing: $reqFile"
+            }
+          }
+
+      - name: Phase 3C — Test EXEs & Installer (Install -> Run -> Uninstall) in Arabic Path with Spaces & Scrubbed PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $arabicRoot = Join-Path $env:RUNNER_TEMP "مسار اختبار مرصاد الذكي Preview 0.1"
+          New-Item -ItemType Directory -Force -Path "$arabicRoot\MERSAD_AI" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$arabicRoot\MERSAD_LAB" | Out-Null
+          Copy-Item -Path "MERSAD_AI_Preview_0.1\dist\MERSAD_AI\*" -Destination "$arabicRoot\MERSAD_AI\" -Recurse -Force
+          Copy-Item -Path "MERSAD_LAB_Preview_0.1\dist\MERSAD_LAB\*" -Destination "$arabicRoot\MERSAD_LAB\" -Recurse -Force
+
+          $arabicInstallDir = Join-Path $env:RUNNER_TEMP "تثبيت مختبر مرصاد Preview 0.1"
+          $setupExe = (Resolve-Path "MERSAD_LAB_Preview_0.1\dist\installer\MERSAD_LAB_Setup_x64.exe").Path
+
+          # Scrub Python from PATH so EXEs prove zero dependency on external Python environment
+          $origPath = $env:PATH
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          try {
+            & "$arabicRoot\MERSAD_AI\MERSAD_AI.exe" --verify-models
+            if ($LASTEXITCODE -ne 0) { throw "MERSAD_AI.exe --verify-models failed in Arabic path ($LASTEXITCODE)" }
+            & "$arabicRoot\MERSAD_AI\MERSAD_AI.exe" --verify
+            if ($LASTEXITCODE -ne 0) { throw "MERSAD_AI.exe --verify failed in Arabic path ($LASTEXITCODE)" }
+            & "$arabicRoot\MERSAD_LAB\MERSAD_LAB.exe" --port 0 --self-check
+            if ($LASTEXITCODE -ne 0) { throw "MERSAD_LAB.exe --self-check failed in Arabic path ($LASTEXITCODE)" }
+
+            $pInst = Start-Process -FilePath $setupExe -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"$arabicInstallDir`"") -Wait -PassThru
+            if ($pInst.ExitCode -ne 0) { throw "MERSAD_LAB_Setup_x64.exe install failed ($($pInst.ExitCode))" }
+            if (-not (Test-Path -LiteralPath "$arabicInstallDir\MERSAD_LAB.exe")) { throw "Installed MERSAD_LAB.exe missing" }
+
+            & "$arabicInstallDir\MERSAD_LAB.exe" --port 0 --self-check
+            if ($LASTEXITCODE -ne 0) { throw "Installed MERSAD_LAB.exe --self-check failed ($LASTEXITCODE)" }
+
+            $pUninst = Start-Process -FilePath "$arabicInstallDir\unins000.exe" -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART") -Wait -PassThru
+            if ($pUninst.ExitCode -ne 0) { throw "unins000.exe uninstall failed ($($pUninst.ExitCode))" }
+            Start-Sleep -Seconds 2
+            if (Test-Path -LiteralPath "$arabicInstallDir\MERSAD_LAB.exe") { throw "MERSAD_LAB.exe still exists after uninstall" }
+          } finally {
+            $env:PATH = $origPath
+          }
+
+      - name: Phase 4 — Final Real End-to-End Integration (LAB -> MJPEG -> OpenCV -> YOLOv8n -> Plate -> EasyOCR -> Registry -> Alert -> SQLite -> Audit)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -u integration/test_ai_lab_integration.py --require-real-models
+          if ($LASTEXITCODE -ne 0) { throw "test_ai_lab_integration.py --require-real-models failed ($LASTEXITCODE)" }
+
+      - name: Phase 5 — Assemble MERSAD_PREVIEW_0.1_FINAL & Generate SHA-256 Sums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $finalOut = "MERSAD_PREVIEW_0.1_FINAL_DIST"
+          New-Item -ItemType Directory -Force -Path "$finalOut\MERSAD_AI" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$finalOut\MERSAD_LAB" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$finalOut\Installers_and_Portable" | Out-Null
+          Copy-Item -Path "MERSAD_AI_Preview_0.1\dist\MERSAD_AI\*" -Destination "$finalOut\MERSAD_AI\" -Recurse -Force
+          Copy-Item -Path "MERSAD_LAB_Preview_0.1\dist\MERSAD_LAB\*" -Destination "$finalOut\MERSAD_LAB\" -Recurse -Force
+          Copy-Item -Path "MERSAD_AI_Preview_0.1\dist\portable\MERSAD_AI_Portable_x64.zip" -Destination "$finalOut\Installers_and_Portable\MERSAD_AI_Portable_x64.zip" -Force
+          Copy-Item -Path "MERSAD_LAB_Preview_0.1\dist\portable\MERSAD_LAB_Portable_x64.zip" -Destination "$finalOut\Installers_and_Portable\MERSAD_LAB_Portable_x64.zip" -Force
+          Copy-Item -Path "MERSAD_LAB_Preview_0.1\dist\installer\MERSAD_LAB_Setup_x64.exe" -Destination "$finalOut\Installers_and_Portable\MERSAD_LAB_Setup_x64.exe" -Force
+
+          Get-ChildItem -Path $finalOut -Recurse -File | ForEach-Object {
+            $h = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower()
+            $rel = $_.FullName.Substring((Resolve-Path $finalOut).Path.Length + 1)
+            "$h  $rel"
+          } | Set-Content -Path "$finalOut\SHA256SUMS_WINDOWS_FINAL.txt" -Encoding UTF8
+
+      - name: Upload MERSAD_PREVIEW_0.1_FINAL Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          path: MERSAD_PREVIEW_0.1_FINAL_DIST/

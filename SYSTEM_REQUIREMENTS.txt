@@ -1,0 +1,1 @@
+MERSAD AI V7.1 + MERSAD LAB 1.0 — PREVIEW 0.1 System Requirements\nOS: Windows 10/11 x64\nPython: 3.11 64-bit\nRAM: 8 GB minimum (16 GB recommended)\nDisk: 5 GB free space\n

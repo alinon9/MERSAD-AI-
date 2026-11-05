@@ -25,33 +25,52 @@ jobs:
 
       - name: Install dependencies
         working-directory: MERSAD_LAB_Preview_0.1
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
           pip install -r requirements.txt -c constraints-win-x64.txt pyinstaller==6.10.0
+          if ($LASTEXITCODE -ne 0) { throw "pip install failed ($LASTEXITCODE)" }
 
       - name: Run 20 Functional & Security Checks
         working-directory: MERSAD_LAB_Preview_0.1
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -u test_lab.py
+          if ($LASTEXITCODE -ne 0) { throw "test_lab.py failed ($LASTEXITCODE)" }
 
-      - name: Build MERSAD_LAB.exe with PyInstaller
+      - name: Purge Stale Outputs & Build MERSAD_LAB.exe with PyInstaller
         working-directory: MERSAD_LAB_Preview_0.1
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($d in @("build","dist")) { if (Test-Path $d) { Remove-Item -Recurse -Force $d } }
           pyinstaller --noconfirm --clean mersad_lab.spec
-          dist\\MERSAD_LAB\\MERSAD_LAB.exe --port 0 --self-check
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_lab.spec failed ($LASTEXITCODE)" }
+          if (-not (Test-Path "dist\MERSAD_LAB\MERSAD_LAB.exe")) { throw "MERSAD_LAB.exe missing" }
+          dist\MERSAD_LAB\MERSAD_LAB.exe --port 0 --self-check
+          if ($LASTEXITCODE -ne 0) { throw "MERSAD_LAB.exe --self-check failed ($LASTEXITCODE)" }
 
       - name: Package Portable ZIP and Inno Setup Installer
         working-directory: MERSAD_LAB_Preview_0.1
+        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist\\portable" | Out-Null
-          Copy-Item -Path "RUN_LAB.bat","README_AR.md","PHASE1_STATUS_AR.md" -Destination "dist\\MERSAD_LAB\\" -Force
-          Compress-Archive -Path "dist\\MERSAD_LAB\\*" -DestinationPath "dist\\portable\\MERSAD_LAB_Preview_0.1_Portable_x64.zip" -Force
-          iscc "installer\\mersad_lab_setup.iss"
+          $ErrorActionPreference = "Stop"
+          $iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+          if ($null -eq $iscc) { throw "FATAL: ISCC.exe is required" }
+          New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
+          Copy-Item -Path "RUN_LAB.bat","README_AR.md","PHASE1_STATUS_AR.md" -Destination "dist\MERSAD_LAB\" -Force
+          Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "dist\portable\MERSAD_LAB_Portable_x64.zip" -Force
+          & $iscc.Source "installer\mersad_lab_setup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC.exe failed ($LASTEXITCODE)" }
+          if (-not (Test-Path "dist\installer\MERSAD_LAB_Setup_x64.exe")) { throw "MERSAD_LAB_Setup_x64.exe missing" }
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: MERSAD_LAB_Preview_0.1_Windows_x64
           path: |
-            MERSAD_LAB_Preview_0.1/dist/portable/MERSAD_LAB_Preview_0.1_Portable_x64.zip
-            MERSAD_LAB_Preview_0.1/dist/installer/MERSAD_LAB_Preview_0.1_Setup_x64.exe
+            MERSAD_LAB_Preview_0.1/dist/portable/MERSAD_LAB_Portable_x64.zip
+            MERSAD_LAB_Preview_0.1/dist/installer/MERSAD_LAB_Setup_x64.exe

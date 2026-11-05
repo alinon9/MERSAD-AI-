@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0f19">
+<title>مرصاد AI — لوحة العمليات</title>
+<style>
+:root{--ink:#0a1120;--pan:#111a2e;--pan2:#17233b;--ln:#223153;--tx:#e7edf8;--mu:#8696b3;--sig:#38d0e8;--amb:#f2b23a;--red:#ff5d6c;--grn:#35d39a;--r:10px;--ok:var(--grn);--wn:var(--amb);--er:var(--red);--ac:var(--sig);--bg:var(--ink);--cd:var(--pan);--cd2:var(--pan2);--bd:var(--ln)}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1100px 480px at 85% -12%,#12274d 0,transparent 62%),var(--ink);color:var(--tx);font:15px/1.65 "IBM Plex Sans Arabic","Segoe UI",Tahoma,sans-serif}
+.app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}.col{min-width:0}
+aside{background:#080e1b;border-inline-end:1px solid var(--ln);padding:20px 14px;display:flex;flex-direction:column;gap:22px;position:sticky;top:0;height:100vh}
+.logo{display:flex;align-items:center;gap:11px;font-weight:700;font-size:1.3rem;line-height:1.2}.logo small{display:block;font-weight:400;font-size:.68rem;color:var(--mu);margin-top:2px}
+.sfoot{margin-top:auto;font-size:.72rem;color:var(--mu)}
+nav{display:flex;flex-direction:column;gap:4px}
+nav button{display:flex;gap:10px;align-items:center;background:none;border:0;border-inline-start:3px solid transparent;color:var(--mu);padding:10px 12px;border-radius:var(--r);font:inherit;cursor:pointer;text-align:start}
+nav button svg{width:20px;height:20px;flex:none}nav button:hover{color:var(--tx)}
+nav button.on{background:var(--pan2);color:var(--tx);border-inline-start-color:var(--sig)}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 22px;border-bottom:1px solid var(--ln)}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.ribbon{display:flex;gap:0;overflow-x:auto;border-bottom:1px solid var(--ln);background:#0c1527}
+.ribbon div{padding:10px 22px;border-inline-end:1px solid var(--ln);white-space:nowrap}.ribbon b{font:600 1.35rem "IBM Plex Mono",Consolas,monospace;display:block;line-height:1.2}.ribbon span{font-size:.75rem;color:var(--mu)}
+.ribbon .hot b{color:var(--red)}
+main{max-width:1200px;margin:0 auto;padding:18px 22px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red);margin-inline-end:6px}.dot.on{background:var(--grn);box-shadow:0 0 0 4px #35d39a22}.dot.bad{background:var(--red);box-shadow:0 0 0 4px #ff5d6c33}
+.notice{border-inline-start:3px solid var(--amb);background:#1d1b14;color:#e9c987;border-radius:0 var(--r) var(--r) 0;padding:7px 14px;font-size:.78rem;margin-bottom:16px}
+.g{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px}
+.c{background:var(--pan);border:1px solid var(--ln);border-radius:var(--r);padding:14px 16px;margin-bottom:16px;min-width:0}
+.c h2{font-size:.95rem;margin:0 0 10px;font-weight:600}
+.vid{position:relative;border-radius:8px;overflow:hidden;background:#000}
+#v{width:100%;display:block;min-height:180px}
+.hud{position:absolute;top:10px;inset-inline-start:12px;display:flex;gap:8px;align-items:center;font:600 .72rem "IBM Plex Mono",Consolas,monospace;background:#000a;padding:3px 10px;border-radius:99px;direction:ltr}
+.rec{width:8px;height:8px;border-radius:50%;background:var(--red);animation:blink 1.4s infinite}
+@keyframes blink{50%{opacity:.25}}
+button,.btn{font:inherit;font-size:.85rem;cursor:pointer;border:1px solid var(--ln);background:var(--pan2);color:var(--tx);border-radius:8px;padding:6px 14px;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{border-color:var(--sig)}button:focus-visible,.btn:focus-within,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--sig);outline-offset:2px}
+button.ok{background:var(--grn);border-color:var(--grn);color:#052016;font-weight:700}button.er{color:var(--red)}button:disabled{opacity:.4;cursor:not-allowed}
+.plate{font:700 1.05em "IBM Plex Mono",Consolas,monospace;direction:ltr;display:inline-block;background:#f3eddc;color:#10151f;border:2px solid #10151f;outline:2px solid #f3eddc;border-radius:6px;padding:0 10px;letter-spacing:.14em;cursor:pointer}
+.al{background:var(--pan2);border-radius:var(--r);border-inline-start:5px solid var(--sig);padding:12px 14px;margin-bottom:12px}
+.al.hi{border-inline-start-color:var(--red);animation:glow 2.2s infinite}.al.mid{border-inline-start-color:var(--amb)}
+@keyframes glow{50%{box-shadow:0 0 0 1px var(--red),0 0 22px #ff5d6c40}}
+.al img{width:100%;max-height:150px;object-fit:cover;border-radius:6px;margin:8px 0}.al .t{font-weight:700;font-size:1.02rem}
+.bt{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.mu{color:var(--mu);font-size:.8rem}
+.fd{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--ln);font-size:.85rem}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.bar h2{margin:0;margin-inline-end:auto}
+input,select,textarea{font:inherit;font-size:.9rem;background:var(--ink);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:6px 10px}input[readonly]{opacity:.55}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.86rem}
+th{color:var(--mu);font-weight:600;text-align:start;padding:9px 10px;white-space:nowrap;border-bottom:1px solid var(--ln);font-size:.78rem}
+td{padding:9px 10px;border-bottom:1px solid #1a2744;white-space:nowrap}tr:hover td{background:#14203a}
+.act{display:flex;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:1px 11px;border-radius:99px;font-size:.75rem;border:1px solid var(--ln);background:var(--pan)}
+.chip.ok{color:var(--grn);border-color:#35d39a66}.chip.wn{color:var(--amb);border-color:#f2b23a66}.chip.er{color:var(--red);border-color:#ff5d6c66}.chip.mu{color:var(--mu)}
+dialog{background:var(--pan);color:var(--tx);border:1px solid var(--ln);border-radius:14px;width:min(520px,94vw);padding:18px}dialog::backdrop{background:#000b}
+dialog label{display:block;margin-bottom:10px;font-size:.85rem;color:var(--mu)}
+dialog label input:not([type=checkbox]),dialog select,dialog textarea{display:block;width:100%;margin-top:3px}
+#toast{position:fixed;bottom:84px;inset-inline:16px;max-width:430px;margin-inline:auto;background:var(--pan2);border:1px solid var(--sig);border-radius:10px;padding:9px 16px;display:none;z-index:30;text-align:center}
+ul{margin:4px 0;padding-inline-start:18px}
+@media(max-width:820px){.app{grid-template-columns:1fr}aside{position:fixed;inset:auto 0 0 0;height:auto;flex-direction:row;z-index:20;padding:6px;border-top:1px solid var(--ln);border-inline-end:0}
+.logo,.sfoot{display:none}nav{flex-direction:row;width:100%;justify-content:space-around}nav button{flex-direction:column;gap:2px;font-size:.68rem;padding:6px 8px;border-inline-start:0}
+.g{grid-template-columns:1fr}main{padding:14px 12px 90px}.top{padding:10px 12px}.ribbon div{padding:8px 14px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app"><aside><div class="logo"><svg width="38" height="38" viewBox="0 0 40 40" fill="none"><path d="M20 3l14 8v18l-14 8L6 29V11z" stroke="#38d0e8" stroke-width="2"/><circle cx="20" cy="20" r="6" stroke="#e7edf8" stroke-width="2"/><circle cx="20" cy="20" r="2" fill="#38d0e8"/><path d="M20 20L30 12" stroke="#38d0e8" stroke-width="2" stroke-linecap="round"/></svg><div>مرصاد AI<small>مركز الرصد والتحليل</small></div></div><nav id="nav"><button data-t="ops" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 12l6-6"/></svg>العمليات</button><button data-t="vehicles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16l1.5-5a2 2 0 012-1.5h7a2 2 0 012 1.5L19 16M4 16h16v3H4zM7 19v1.5M17 19v1.5"/></svg>سجل المركبات</button><button data-t="persons"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>سجل الأشخاص</button><button data-t="insights"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>التحليل والتعلّم</button><button data-t="analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h17M8 15v-4M13 15V7M18 15v-6"/></svg>مركز القيادة</button><button data-t="health"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2-6 4 12 2-6h6"/><circle cx="12" cy="12" r="10"/></svg>موثوقية الكاميرات</button><button data-t="calibration"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/><circle cx="12" cy="12" r="5"/></svg>المعايرة والتقييم</button></nav><div class="sfoot">المعرض الوطني الثالث للشباب للاختراع والإبداع 2026<br>جامعة عدن · نموذج أولي</div></aside><div class="col"><header class="top"><div class="chips" id="chips"></div><div><span id="st" class="dot"></span><span id="st-txt" class="mu" style="font-size:.78rem;margin-inline-end:8px">متصل</span><button id="snd">تفعيل الصوت</button></div></header><div class="ribbon" id="rb"></div><main>
+<div class="notice">بيانات تجريبية فقط. لا تُدخل بيانات أشخاص حقيقيين دون موافقتهم الصريحة وتصريح قانوني. وجوه العابرين غير المطابقة في صور الأدلة تُطمس تلقائياً، والقرار النهائي دائماً للضابط البشري.</div>
+
+<section id="t-ops">
+<div class="g">
+<div>
+<div class="c"><div class="bar"><h2>البث المباشر</h2><div id="cam-sw" class="bt" style="margin:0"></div></div><div class="vid"><img id="v" alt="live"><div class="hud"><span class="rec" id="rec-dot"></span><span id="live-lbl">LIVE</span><span id="hcam"></span></div></div></div>
+<div class="c"><h2>آخر عمليات الرصد</h2><div id="fd"><p class="mu">بانتظار الرصد...</p></div></div>
+</div>
+<div>
+<div class="c"><h2>تنبيهات بانتظار القرار</h2><div id="al"></div></div>
+<div class="c" id="fdisp-box"><h2>توجيهات لم تصل للدوريات</h2><div id="fdisp"><p class="mu">لا توجد توجيهات معلّقة أو فاشلة.</p></div></div>
+<div class="c"><h2>الوجوه الآن</h2><div id="fc" class="mu">—</div></div>
+<div class="c"><h2>سجل التدقيق وسلامة الأدلة (SHA-256)</h2><button id="vf">التحقق من السلسلة والأدلة</button><p id="vr" style="font-weight:700"></p></div>
+</div>
+</div>
+</section>
+<section id="t-vehicles" hidden></section>
+<section id="t-persons" hidden></section>
+<section id="t-insights" hidden>
+<div id="ins-demo-banner" class="notice" hidden style="border-color:var(--wn);background:#2b1d07;color:#fcd34d;font-weight:700">⚠️ تنبيه وضع المحاكاة التجريبية (Demo Mode): جميع المؤشرات والمسارات المعروضة أدناه تشمل بيانات محاكاة اصطناعية (src='demo') وليست رصداً ميدانياً حياً.</div>
+<div class="c"><div class="bar"><h2>حالة نموذج التعلّم</h2><label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer"><input type="checkbox" id="ins-demo-mode" onchange="toggleDemoMode(this.checked)"> وضع استعراض بيانات المحاكاة التجريبية (Demo Mode)</label><button onclick="insAct('train')">إعادة التدريب</button><button class="ok" onclick="insAct('seed')">توليد تاريخ تجريبي (30 يوماً)</button><button class="er" onclick="insAct('clear')">حذف البيانات التجريبية</button></div>
+<div id="ins-st" class="mu">...</div><p class="mu">الوضع الافتراضي يعرض ويحلل البيانات الحية فقط (src='live'). عند توليد تاريخ تجريبي، فعّل «وضع استعراض بيانات المحاكاة التجريبية» لاستعراض مسارات وتوقعات المحاكاة دون خلطها بالرصد الحي.</p></div>
+<div class="c"><h2>توقّع حركة المرور خلال 24 ساعة القادمة (تحليل الأنماط والاتجاهات)</h2><div id="ins-fc"></div><div id="ins-pk" class="mu"></div></div>
+<div class="c"><div class="bar"><h2>تتبع المسارات والاتجاهات عبر الكاميرات</h2><input id="path-q" placeholder="أدخل رقم اللوحة الكامل أو الأرقام..." onkeydown="if(event.key==='Enter')tracePlate()"><button class="ok" onclick="tracePlate()">تتبع المسار</button></div>
+<div id="path-res" style="margin-bottom:12px"></div>
+<div class="g"><div><h2 style="font-size:.88rem;color:var(--mu)">أبرز محاور واتجاهات الحركة بين الكاميرات</h2><div class="tw" id="ins-cor"></div></div>
+<div><h2 style="font-size:.88rem;color:var(--mu)">أحدث مسارات المركبات المرصودة</h2><div class="tw" id="ins-pt"></div></div></div></div>
+<div id="ins-cl-slot"><div class="c" id="cl-card-master"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button onclick="resetCameraLinkForm()">+ إضافة رابط كاميرات جديد</button><button class="ok" onclick="autoCalibrateCameraLinks()">⚡ معايرة تلقائية من السجلات</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportCameraLinks(this.files[0]);this.value=''"></label></div></div>
+<p class="mu">إدارة وحفظ أزمنة الانتقال الميدانية بين الكاميرات (وحدة التخزين المعيارية: الثانية). تُربط هذه المعايرة مباشرة بمحرك تتبع المسارات وكشف تعارض الانتقال وتقليل المطابقات الخاطئة.</p>
+<input type="hidden" id="cl-mode" value="upsert">
+<div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
+<input id="cl-from" placeholder="الكاميرا المصدر (مثل CAM1)" style="max-width:155px">
+<input id="cl-to" placeholder="الكاميرا الوجهة (مثل CAM2)" style="max-width:155px">
+<select id="cl-unit" title="وحدة الزمن المدخلة (تُحفظ معيارياً بالثواني)" style="max-width:140px"><option value="sec">الوحدة: ثانية (معياري)</option><option value="min">الوحدة: دقيقة (×60ث)</option></select>
+<input id="cl-min" type="number" min="0.1" step="any" placeholder="الحد الأدنى للزمن *" style="max-width:135px">
+<input id="cl-exp" type="number" min="0.1" step="any" placeholder="الزمن المعتاد *" style="max-width:135px">
+<input id="cl-max" type="number" min="0" step="any" placeholder="الحد الأعلى للزمن" style="max-width:135px">
+<input id="cl-dist" type="number" min="0" step="any" placeholder="المسافة التقريبية (متر)" style="max-width:150px">
+<input id="cl-obs" type="number" min="0" step="1" placeholder="عدد المشاهدات/القياسات" style="max-width:155px">
+<input id="cl-date" type="date" title="تاريخ المعايرة" style="max-width:145px">
+<select id="cl-traffic" title="ظروف المرور" style="max-width:155px"><option value="normal">مرور عادي</option><option value="peak">ساعات الذروة</option><option value="off_peak">خارج الذروة</option><option value="night">فترة ليلية</option></select>
+<select id="cl-msrc" title="مصدر القياس" style="max-width:185px"><option value="manual">يدوي (تقدير المشغّل)</option><option value="field_data">مستمد من بيانات ميدانية</option><option value="computed_logs">محسوب من سجلات فعلية</option></select>
+<input id="cl-via" placeholder="كاميرا وسيطة (via)" style="max-width:140px">
+<input id="cl-notes" placeholder="ملاحظات إضافية..." style="min-width:180px;flex:1">
+<button class="ok" id="cl-save-btn" onclick="saveCameraLink()">حفظ المعايرة</button>
+</div>
+<div class="bar" style="margin-top:8px;gap:8px;justify-content:flex-start">
+<input id="cl-filter-q" placeholder="بحث بالكاميرا أو الملاحظات..." oninput="loadCameraLinks()" style="max-width:220px">
+<select id="cl-filter-status" onchange="loadCameraLinks()" style="max-width:210px"><option value="all">جميع الحالات</option><option value="complete">معايرة مكتملة فقط</option><option value="needs_data">تحتاج بيانات إضافية</option><option value="inferred">الروابط المستنتجة (قفزتان)</option><option value="explicit">الروابط المباشرة فقط</option></select>
+</div>
+<div id="cl-msg" class="mu" style="margin:6px 0"></div>
+<div class="tw" id="cl-table"></div>
+</div></div>
+<div class="c"><h2>أبرز الحالات الشاذة والاشتباهات المكتشفة (تتطلب مراجعة بشرية)</h2><div class="tw" id="ins-an"></div></div>
+</section>
+<section id="t-analytics" hidden>
+<div class="c"><div class="bar"><h2>مركز القيادة والتحليلات التشغيلية</h2><button class="ok" onclick="loadAnalytics()">تحديث البيانات</button><a class="btn" id="analytics-export" href="/api/analytics/export.csv">تصدير ملخص CSV</a></div><p class="mu">البيانات الحية فقط خلال آخر 24 ساعة مقارنةً بالـ24 ساعة السابقة. التوصيات قواعد تشغيلية واضحة وليست قرارات آلية.</p><div id="an-status" class="mu">جارٍ تحميل التحليلات...</div><div id="an-kpis" class="ribbon" style="margin:10px 0"></div></div>
+<div class="g"><div class="c"><h2>اتجاه الرصد — آخر 24 ساعة</h2><div id="an-trend"></div><p id="an-period-compare" class="mu"></p></div><div class="c"><h2>توزيع فئات المركبات</h2><div id="an-classes"></div><h2 style="margin-top:18px">توزيع ثقة قراءة اللوحات</h2><div id="an-confidence"></div></div></div>
+<div class="c"><h2>مؤشرات صحة الكاميرات</h2><div class="tw" id="an-cameras"></div></div>
+<div class="c"><h2>ملخص التنبيهات والتوجيهات</h2><div id="an-alerts" class="ribbon"></div></div>
+<div class="c"><h2>التوصيات التشغيلية</h2><div id="an-recommendations"></div></div>
+</section>
+<section id="t-health" hidden>
+<div class="c"><div class="bar"><h2>موثوقية الكاميرات وسجل الانقطاع</h2><div class="bt" id="health-periods"><button data-period="24h" class="ok">24 ساعة</button><button data-period="7d">7 أيام</button><button data-period="30d">30 يومًا</button></div><a class="btn" id="health-export" href="/api/camera-health/export.csv?period=24h">تصدير CSV</a><button onclick="loadCameraHealth()">تحديث</button></div><p id="health-note" class="mu">تُحسب الموثوقية من فترات الحالة المرصودة فقط؛ لا تُفترض استمرارية الحالة خلال توقف التطبيق.</p><div id="health-summary" class="tw"></div></div>
+<div class="c"><h2>الأحداث الأخيرة لتغير حالة الكاميرا</h2><div class="tw" id="health-events"></div></div>
+</section>
+<section id="t-calibration" hidden>
+<div class="c" id="rd-score-card">
+<div class="bar"><h2>مؤشر الجاهزية الهندسية والميدانية الشامل — System & Field Readiness Scorecard</h2><button onclick="loadReadinessReport()">تحديث مؤشر الجاهزية</button></div>
+<div id="rd-score-box" class="mu">جارٍ فحص جاهزية الكود والأمن والبناء وأدوات المعايرة...</div>
+</div>
+<div id="cal-cl-slot"></div>
+<div id="cal-links-mirror" class="tw" hidden></div>
+
+<div class="c">
+<div class="bar"><h2>2. تقييم ومعايرة اللوحات اليمنية — Yemeni Plate Evaluation</h2>
+<div class="bt" style="margin:0">
+<button onclick="inspectEvalDataset()">فحص مجموعة البيانات</button>
+<button onclick="initFolderGroundTruth()">توليد ground_truth.csv لصور المجلد</button>
+<button class="ok" id="pe-start-btn" onclick="startPlateEval()">بدء التقييم الآلي</button>
+<button class="er" id="pe-cancel-btn" onclick="cancelPlateEval()" disabled>إلغاء التقييم الجاري</button>
+<a class="btn" id="pe-template-csv" href="/api/plate_eval/template?fmt=csv">تحميل قالب CSV</a>
+<a class="btn" id="pe-export-json" href="/api/plate_eval/export?fmt=json">تصدير JSON</a>
+<a class="btn" id="pe-export-csv" href="/api/plate_eval/export?fmt=csv">تصدير CSV</a>
+</div></div>
+<p class="mu">أجرِ التقييم المعياري لقراءة اللوحات اليمنية مباشرة من الواجهة دون الحاجة لكتابة أوامر في الطرفية (يستدعي نفس المحرك البرمجي لـ <code>--evaluate-plates</code> مع الفصل الصارم بين دقة اكتشاف اللوحة، ودقة قراءة المحارف والأرقام، والمطابقة الكاملة للوحة).</p>
+<div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
+<input id="pe-dataset-path" placeholder="مسار مجلد مجموعة البيانات أو ملف ground_truth.csv..." style="min-width:260px;flex:1">
+<button onclick="browseEvalPath('folder','#pe-dataset-path')">اختيار مجلد محلي</button>
+<label class="btn">رفع صور + ground_truth.csv من المتصفح<input type="file" id="pe-upload-files" hidden multiple accept=".csv,.json,.jpg,.jpeg,.png,.bmp,.webp" onchange="uploadEvalDataset(this.files);this.value=''"></label>
+</div>
+<div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start;margin-top:8px">
+<input id="pe-plate-model" placeholder="مسار نموذج مخصص للوحات اليمنية (.pt) اختياري — يكافئ --plate-model PATH" style="min-width:260px;flex:1">
+<button onclick="browseEvalPath('file','#pe-plate-model')">اختيار ملف نموذج (.pt)</button>
+<button onclick="validateEvalModel()">التحقق من توافق النموذج</button>
+<button class="ok" onclick="registerEvalModel()">اعتماد النموذج في السجل الموثوق</button>
+<label style="display:flex;align-items:center;gap:6px;font-size:.84rem;cursor:pointer;padding:4px 8px;border:1px solid var(--ln);border-radius:8px;background:var(--pan2)"><input type="checkbox" id="pe-use-vyolo" checked> تفعيل كاشف المركبات (<code>--use-vehicle-detector</code>)</label>
+</div>
+<div id="pe-inspect-box" class="mu" style="margin:8px 0"></div>
+<div id="pe-progress-wrap" hidden style="margin:8px 0">
+<div class="bar"><span id="pe-progress-txt" class="mu">جارٍ التقييم...</span><b id="pe-progress-pct">0%</b></div>
+<div style="height:8px;border-radius:99px;background:var(--pan2);overflow:hidden"><div id="pe-progress-bar" style="height:100%;width:0%;background:var(--ac);transition:width .2s"></div></div>
+</div>
+<div id="pe-results-box" style="margin-top:10px"></div>
+<h2 style="margin-top:16px;font-size:.88rem;color:var(--mu)">سجل عمليات التقييم الآلي المحفوظة (مفصولة عن الإدخالات اليدوية)</h2>
+<div id="pe-history-table" class="tw"></div>
+</div>
+
+<div class="c">
+<div class="bar"><h2>3. تسجيل نتائج المعايرة اليدوية — Manual Field Calibration Registry</h2>
+<div class="bt" style="margin:0">
+<button onclick="resetManualCalForm()">+ قياس يدوي جديد</button>
+<a class="btn" id="fc-export-json" href="/api/field_calibrations/export?fmt=json">تصدير JSON</a>
+<a class="btn" id="fc-export-csv" href="/api/field_calibrations/export?fmt=csv">تصدير CSV</a>
+<label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportManualCal(this.files[0]);this.value=''"></label>
+</div></div>
+<div id="fc-policy-banner" class="notice" style="border-color:var(--wn);margin-bottom:10px">⚠️ ضابط أساسي: جميع النتائج المسجلة في هذا القسم تُحفظ بوسم <b>«مدخلة يدوياً — غير متحقق منها آلياً»</b> ولا تُستخدم لرفع مؤشرات دقة نماذج الذكاء الاصطناعي الآلية.</div>
+<input type="hidden" id="fc-id" value="">
+<div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
+<input id="fc-from" placeholder="من كاميرا (اختياري)" style="max-width:135px">
+<input id="fc-to" placeholder="إلى كاميرا (اختياري)" style="max-width:135px">
+<input id="fc-transit" type="number" min="0" step="any" placeholder="زمن الانتقال اليدوي (ث)" style="max-width:155px">
+<input id="fc-acc" type="number" min="0" max="100" step="any" placeholder="دقة اللوحات المقاسة (%)" style="max-width:165px">
+<input id="fc-samples" type="number" min="0" step="1" placeholder="عدد العينات" style="max-width:120px">
+<input id="fc-correct" type="number" min="0" step="1" placeholder="القراءات الصحيحة" style="max-width:135px">
+<input id="fc-incorrect" type="number" min="0" step="1" placeholder="القراءات الخاطئة" style="max-width:135px">
+<input id="fc-source" placeholder="وصف مصدر القياس الميداني *" style="min-width:190px;flex:1">
+<input id="fc-date" type="date" title="تاريخ القياس" style="max-width:145px">
+<input id="fc-model" placeholder="النموذج المستخدم (أو رصد بشري)" style="max-width:185px">
+<input id="fc-operator" placeholder="اسم/رمز مدخل القياس" style="max-width:155px">
+<input id="fc-notes" placeholder="ملاحظات..." style="min-width:160px;flex:1">
+<button class="ok" id="fc-save-btn" onclick="saveManualCal()">حفظ القياس اليدوي</button>
+</div>
+<div id="fc-msg" class="mu" style="margin:6px 0"></div>
+<div class="tw" id="fc-table"></div>
+</div>
+</section>
+</main></div></div>
+
+<dialog id="dlg"><h2 id="dlg-t" style="margin-top:0"></h2>
+<form id="dlg-f" onsubmit="return false"></form>
+<p id="dlg-e" style="color:var(--er)"></p>
+<div class="bt"><button class="ok" onclick="saveForm()">حفظ</button><button onclick="$('#dlg').close()">إلغاء</button></div></dialog>
+<div id="toast"></div>
+
+<script>
+const K=new URLSearchParams(location.search).get("k")||"",Q=K?"?k="+encodeURIComponent(K):"";
+const qSep=u=>Q?(u.includes("?")?u+"&"+Q.slice(1):u+Q):u;
+const $=s=>document.querySelector(s),esc=s=>String(s??"").replace(/[&<>"']/g,c=>"&#"+c.charCodeAt(0)+";");
+const AR={"NEW PLATE (first sighting)":"لوحة غير مسجّلة (أول رصد)","UNUSUAL HOUR (learned pattern)":"ساعة غير معتادة (نمط متعلَّم)","TRUCK IN RESTRICTED HOURS":"شاحنة في ساعات المنع","FACE MATCH (demo watchlist)":"تطابق وجه محتمل (قائمة تجريبية) — يتطلب تحققاً بشرياً","VEHICLE: WANTED":"مركبة مطلوبة","VEHICLE: STOLEN":"مركبة مسروقة","POSSIBLE MATCH (visual check)":"تطابق محتمل — تحقق بصري (أحرف متعارضة/ملتبسة أو مسافة تحرير)","ANOMALY (learned pattern)":"شذوذ مكتشف بالتعلّم الآلي","ROUTE ANOMALY (impossible transit)":"اشتباه تعارض مسار مكاني-زماني معاير (يتطلب مراجعة)","ROUTE NOTICE (uncalibrated)":"ملاحظة مسار للعلم (حد افتراضي غير معاير)","VEHICLE: EXPIRED":"ترخيص منتهي","VEHICLE: WATCH":"مركبة تحت المراقبة"};
+const VT={car:"سيارة",truck:"شاحنة",bus:"حافلة",motorcycle:"دراجة نارية",other:"أخرى"};
+const VS={normal:["عادية","ok"],watch:["مراقبة","wn"],wanted:["مطلوبة","er"],stolen:["مسروقة","er"],expired:["منتهية الترخيص","wn"]};
+const PS={normal:["عادي","ok"],watch:["مراقبة تجريبية","wn"]};
+const NO_DISP=["ROUTE NOTICE (uncalibrated)","POSSIBLE MATCH (visual check)"];
+const lab=M=>Object.fromEntries(Object.entries(M).map(([k,v])=>[k,v[0]]));
+const chip=(M,v)=>`<span class="chip ${(M[v]||[0,"mu"])[1]}">${esc((M[v]||[v])[0])}</span>`;
+let al=[],fdisp=[],fd=[],snd=null,CUR=null,CUR_CAM="",DATA={vehicles:[],persons:[]},SESSION_EXPIRED=false;
+function setConnState(mode,msg){
+ const d=$("#st"),lbl=$("#st-txt");
+ if(mode==="online"){SESSION_EXPIRED=false;if(d){d.className="dot on";d.title=msg||"متصل"}if(lbl){lbl.textContent=msg||"متصل";lbl.style.color="var(--mu)"}}
+ else if(mode==="auth_error"){SESSION_EXPIRED=true;const m=msg||"انتهت الجلسة أو رمز الدخول غير صالح — أعد فتح الرابط المعتمد";if(d){d.className="dot bad";d.title=m}if(lbl){lbl.textContent=m;lbl.style.color="var(--er)"}}
+ else{const m=msg||"انقطع الاتصال بالخادم — جاري إعادة المحاولة...";if(d){d.className="dot bad";d.title=m}if(lbl){lbl.textContent=m;lbl.style.color="var(--er)"}}
+}
+async function rJson(u,opts){
+ const r=await fetch(qSep(u),opts);
+ if(r.status===401||r.status===403){
+  const authMsg="انتهت الجلسة أو رمز الدخول غير صالح — أعد فتح الرابط المعتمد";
+  setConnState("auth_error",authMsg);
+  toast(authMsg);
+  const err=new Error(authMsg);err.isAuthError=true;throw err;
+ }
+ if(!r.ok){let errMsg="HTTP "+r.status;try{const j=await r.json();if(j&&j.error)errMsg=j.error}catch(_){}throw new Error(errMsg)}
+ return await r.json();
+}
+const post=(u,b)=>rJson(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
+function toast(t){const e=$("#toast");e.textContent=t;e.style.display="block";clearTimeout(toast.h);toast.h=setTimeout(()=>e.style.display="none",4000)}
+
+/* ---------- registry config ---------- */
+const CFG={
+vehicles:{title:"سجل المركبات",key:"plate",save:"/api/vehicle",del:"/api/vehicle/delete",
+ hint:"المفتاح القياسي هو «الأحرف/المحافظة-الأرقام» (أو الأرقام عند عدم وجود محافظة). المطابقة الكاملة ترفع تنبيهاً مباشراً، وتعارض الأحرف يرفع «تطابق محتمل — تحقق بصري».",
+ cols:[["plate","رقم اللوحة",v=>plate(v)],["governorate","المحافظة"],["model","السيارة"],["color","اللون"],["vtype","النوع",v=>esc(VT[v]||v)],["owner","المالك"],["status","الحالة",v=>chip(VS,v)]],
+ fields:[["plate","رقم اللوحة","text"],["governorate","المحافظة","text"],["model","اسم السيارة (الطراز)","text"],["color","اللون","text"],["vtype","النوع","select",VT],["owner","اسم المالك","text"],["status","الحالة","select",lab(VS)],["notes","ملاحظات","area"]]},
+persons:{title:"سجل الأشخاص",key:"name",save:"/api/person",del:"/api/person/delete",
+ hint:"الصور والبصمة الوجهية لا تُستورد من ملفات. يُسجَّل وجه الشخص مباشرة من الكاميرا ويرتبط بمعرّفه الداخلي المستقل (person_id) وموافقته الشخصية. إلغاء الموافقة أو حذف الشخص يمحو عيّنات وجهه هو فقط.",
+ cols:[["name","الاسم",v=>"<b>"+esc(v)+"</b>"],["ref","الرقم المرجعي"],["category","الفئة"],["status","الحالة",v=>chip(PS,v)],["consent","الموافقة",v=>v?'<span class="chip ok">نعم</span>':'<span class="chip er">لا</span>'],["face_samples","الوجه",v=>v?'<span class="chip ok">مسجّل ('+v+')</span>':'<span class="chip mu">غير مسجّل</span>']],
+ extra:r=>`<button data-a="face" data-id="${r.id||""}" data-r="${esc(r.ref||"")}" data-n="${esc(r.name)}" ${r.consent?"":"disabled title='لا توجد موافقة'"}>تسجيل الوجه</button>`,
+ fields:[["name","الاسم","text"],["ref","الرقم المرجعي (لتمييز الأسماء المتشابهة)","text"],["category","الفئة (متطوع، موظف...)","text"],["status","الحالة","select",lab(PS)],["consent","أقرّ بأن صاحب الاسم وافق صراحةً على تسجيله لغرض العرض","check"],["notes","ملاحظات","area"]]}};
+
+function buildReg(kind){const C=CFG[kind];
+ $("#t-"+kind).innerHTML=`<div class="c"><div class="bar"><h2>${C.title}</h2>
+ <input id="q-${kind}" placeholder="بحث..." oninput="load('${kind}')">
+ <button class="ok" onclick="openForm('${kind}')">+ إضافة يدوي</button>
+ <label class="btn">استيراد Excel / CSV<input type="file" hidden accept=".xlsx,.xlsm,.csv" onchange="doImport('${kind}',this.files[0]);this.value=''"></label>
+ <a class="btn" href="${qSep('/api/template?kind='+kind)}">تحميل القالب</a></div>
+ <p class="mu">${C.hint}</p><div id="rep-${kind}" class="mu"></div><div class="tw" id="tb-${kind}"></div></div>`;load(kind)}
+async function load(kind){const q=$("#q-"+kind)?.value||"";
+ try{DATA[kind]=await rJson(`/api/list?kind=${kind}&q=${encodeURIComponent(q)}`);drawTable(kind)}catch(e){}}
+function drawTable(kind){const C=CFG[kind],rows=DATA[kind];
+ $("#tb-"+kind).innerHTML=`<table><thead><tr>${C.cols.map(c=>`<th>${c[1]}</th>`).join("")}<th></th></tr></thead><tbody>${
+ rows.map((r,i)=>`<tr>${C.cols.map(c=>`<td>${c[2]?c[2](r[c[0]],r):esc(r[c[0]])}</td>`).join("")}<td><div class="act">${C.extra?C.extra(r):""}<button data-a="edit" data-k="${kind}" data-i="${i}">تعديل</button><button class="er" data-a="del" data-k="${kind}" data-i="${i}">حذف</button></div></td></tr>`).join("")
+ ||`<tr><td colspan="9" class="mu">لا توجد سجلات. أضف يدوياً أو استورد ملف Excel.</td></tr>`}</tbody></table>`}
+document.addEventListener("click",async e=>{
+ const pl=e.target.closest(".plate[data-p]");
+ if(pl){const p=pl.dataset.p;document.querySelector("button[data-t=insights]")?.click();setTimeout(()=>tracePlate(p),120);return}
+ const cbtn=e.target.closest("button[data-cam]");
+ if(cbtn){switchCam(cbtn.dataset.cam);return}
+ const b=e.target.closest("button[data-a]");if(!b)return;const a=b.dataset.a,k=b.dataset.k,i=b.dataset.i;
+ if(a=="edit")openForm(k,+i);
+ else if(a=="del"){const r=DATA[k][+i];if(confirm("حذف هذا السجل نهائياً؟"+(k=="persons"?"\nسيُمحى معه أي وجه مسجّل لهذا الشخص فقط.":""))){try{const delKey=k=="persons"&&r.id?"id:"+r.id:r[CFG[k].key];await post(CFG[k].del,{key:delKey});load(k)}catch(err){toast(err.message||"تعذّر حذف السجل")}}}
+ else if(a=="face"){try{const r=await post("/api/enroll",{id:b.dataset.id||undefined,ref:b.dataset.r||"",name:b.dataset.n,cam:CUR_CAM||undefined});toast(r.ok?"انظر إلى الكاميرا وحرّك رأسك قليلاً...":(r.error||"تعذّر البدء"))}catch(err){toast(err.message||"تعذّر بدء تسجيل الوجه")}}});
+function openForm(kind,i){const C=CFG[kind],r=i==null?{}:DATA[kind][i];CUR={kind,id:r.id||null};$("#dlg-e").textContent="";
+ $("#dlg-t").textContent=(i==null?"إضافة — ":"تعديل — ")+C.title;
+ $("#dlg-f").innerHTML=C.fields.map(([k,l,t,o])=>{const v=r[k]??(t=="select"?Object.keys(o)[0]:""),ro=(i!=null&&k==C.key)?"readonly":"";
+ const f=t=="select"?`<select name="${k}">${Object.entries(o).map(([a,b])=>`<option value="${a}" ${a==v?"selected":""}>${esc(b)}</option>`).join("")}</select>`
+  :t=="area"?`<textarea name="${k}" rows="2">${esc(v)}</textarea>`:t=="check"?`<input type="checkbox" name="${k}" ${v?"checked":""}>`:`<input name="${k}" value="${esc(v)}" ${ro}>`;
+ return t=="check"?`<label>${f} ${esc(l)}</label>`:`<label>${esc(l)}${f}</label>`}).join("");$("#dlg").showModal()}
+async function saveForm(){try{const d={};if(CUR&&CUR.id)d.id=CUR.id;[...$("#dlg-f").elements].forEach(e=>d[e.name]=e.type=="checkbox"?e.checked:e.value);
+ const r=await post(CFG[CUR.kind].save,d);if(r.ok){$("#dlg").close();load(CUR.kind);toast("تم الحفظ")}else $("#dlg-e").textContent=r.error||"تعذّر الحفظ"}catch(e){$("#dlg-e").textContent=e.message||"تعذّر الاتصال بالخادم"}}
+async function doImport(kind,file){if(!file)return;const rep=$("#rep-"+kind);rep.textContent="جارٍ الاستيراد...";
+ try{const r=await rJson(`/api/import?kind=${kind}`,{method:"POST",headers:{"X-Filename":encodeURIComponent(file.name)},body:file});
+ const wHtml=(r.warnings&&r.warnings.length)?`<div style="color:var(--wn)">تنبيهات الاستيراد:<ul>${r.warnings.map(x=>"<li>"+esc(x)+"</li>").join("")}</ul></div>`:"";
+ rep.innerHTML=r.ok?`<b style="color:var(--ok)">تم الاستيراد:</b> أُضيف ${r.added} · حُدّث ${r.updated} · تخطّي ${r.skipped}${r.errors.length?"<ul>"+r.errors.map(x=>"<li>"+esc(x)+"</li>").join("")+"</ul>":""}${wHtml}`
+  :`<b style="color:var(--er)">${esc(r.error||"فشل الاستيراد")}</b>`;if(r.ok)load(kind)}catch(e){rep.innerHTML=`<b style="color:var(--er)">${esc(e.message||"فشل الاستيراد")}</b>`}}
+
+/* ---------- operations ---------- */
+function switchCam(c){CUR_CAM=c||"";$("#v").src=qSep("/stream.mjpg"+(CUR_CAM?"?cam="+encodeURIComponent(CUR_CAM):""))}
+switchCam("");
+function beep(){if(!snd)return;const o=snd.createOscillator();o.connect(snd.destination);o.frequency.value=880;o.start();o.stop(snd.currentTime+.25)}
+$("#snd").onclick=()=>{snd=new(window.AudioContext||window.webkitAudioContext)();$("#snd").textContent="الصوت مفعّل";beep()};
+function drawAl(){
+ $("#al").innerHTML=al.map(a=>{const noDisp=a.info_only||NO_DISP.includes(a.msg);
+  return `<div class="al ${sev(a.msg)}"><div class="t">${esc(AR[a.msg]||a.msg)} ${a.repeat_count>1?`<span class="chip wn">تكرر الرصد ${+a.repeat_count} مرة</span>`:""}</div><img src="${qSep('/evidence/'+encodeURIComponent(a.img))}" alt="">
+  <div>${a.msg.startsWith("FACE")?esc(a.subject):plate(a.subject)}</div><div class="mu">${esc(a.detail||"")}</div><div class="mu">${esc(a.cam)} · ${esc(a.ts)}</div>
+  <div class="bt">${noDisp?"":`<button class="ok" onclick="dec(${+a.id},'confirm')">تأكيد وتوجيه الدورية</button>`}<button onclick="dec(${+a.id},'ack')">تسجيل فقط</button><button onclick="dec(${+a.id},'dismiss')">تجاهل (تحقق خاطئ)</button></div></div>`}).join("")
+ ||'<p class="mu">لا توجد تنبيهات معلّقة. النظام لا يتخذ أي إجراء قسري بمفرده.</p>';
+ document.title=(al.length?"("+al.length+") ":"")+"مرصاد AI"}
+function drawFdisp(){
+ $("#fdisp").innerHTML=fdisp.map(f=>{
+  const stLbl=f.dispatch_status=="in_flight"||f.dispatch_status=="pending"?"قيد المحاولة...":f.dispatch_status=="uncertain"?"نتيجة غير محسومة (مهلة شبكة)":"فشل الإرسال ("+f.attempts+" محاولات)";
+  return `<div class="al mid"><div class="t">⚠️ توجيه لم يصل (#${+f.id}) — ${esc(AR[f.msg]||f.msg)}</div>
+  <div>${f.msg.startsWith("FACE")?esc(f.subject):plate(f.subject)} · <span class="chip ${f.dispatch_status=='in_flight'||f.dispatch_status=='pending'||f.dispatch_status=='uncertain'?'wn':'er'}">${esc(stLbl)}</span></div>
+  <div class="mu">${esc(f.last_error||"")} · ${esc(f.cam)} · ${esc(f.ts)}</div>
+  <div class="bt"><button class="ok" onclick="retryDisp(${+f.id})">إعادة الإرسال للدورية الآن</button></div></div>`}).join("")
+ ||'<p class="mu">لا توجد توجيهات معلّقة أو فاشلة.</p>'}
+function drawFd(){$("#fd").innerHTML=fd.map(s=>`<div class="fd"><span>${esc(s.ts)} · ${plate(s.plate)} · ${esc(VT[s.vclass]||"—")} ${s.model?"· "+esc(s.model):""} ${s.match_note&&s.match_note!="مطابقة كاملة"?"· <span class='chip wn'>"+esc(s.match_note)+"</span>":""} · ${esc(s.cam)}${s.direction?" · <span class='mu'>"+esc(s.direction)+"</span>":""}</span><span>${s.status&&s.status!="normal"?chip(VS,s.status):""} <span class="mu">ثقة ${Math.round(s.conf*100)}%</span></span></div>`).join("")}
+async function dec(id,action){
+ try{
+  if(action=="confirm")toast("تم اعتماد القرار — قيد إرسال التوجيه إلى الدوريات...");
+  const r=await post("/api/decision",{id,action});
+  if(!r.ok)toast("تعذّر تنفيذ القرار أو غير متاح لهذا النوع من التنبيهات");
+ }catch(e){toast(e.message||"تعذّر الاتصال بالخادم لتنفيذ القرار")}
+}
+async function retryDisp(id){
+ try{
+  toast("جارٍ طلب إعادة إرسال التوجيه...");
+  const r=await post("/api/retry_dispatch",{id});
+  if(r.dispatch_status=="sent")toast("تم إيصال التوجيه إلى الدوريات");
+  else if(r.error)toast(r.error);
+  else toast("المحاولة قيد التنفيذ أو مجدولة للإعادة التلقائية");
+ }catch(e){toast(e.message||"تعذّر الاتصال بالخادم لإعادة التوجيه")}
+}
+const es=new EventSource(qSep("/events"));
+es.onopen=()=>{if(!SESSION_EXPIRED)setConnState("online","متصل")};es.onerror=()=>{if(!SESSION_EXPIRED)setConnState("net_error","انقطع الاتصال بالخادم — جاري إعادة المحاولة...")};
+es.onmessage=e=>{const m=JSON.parse(e.data);
+ if(m.type=="init"){al=m.alerts||[];fdisp=m.failed_dispatches||[];drawAl();drawFdisp()}
+ else if(m.type=="alert"){al.push(m);drawAl();beep();navigator.vibrate&&navigator.vibrate([300,100,300])}
+ else if(m.type=="alert_updated"){const item=al.find(a=>a.id==m.id);if(item){item.repeat_count=m.repeat_count;item.ts=m.ts;drawAl()}}
+ else if(m.type=="resolved"){al=al.filter(a=>a.id!=m.id);drawAl()}
+ else if(m.type=="failed_dispatches"){fdisp=m.items||[];drawFdisp()}
+ else if(m.type=="sighting"){fd.unshift(m);fd=fd.slice(0,10);drawFd()}
+ else if(m.type=="faces"){$("#fc").textContent=m.n+" وجه"+(m.names.length?" · "+m.names.join("، "):"")}
+ else if(m.type=="dispatched"){toast(m.ok?"تم تأكيد وصول التوجيه إلى الدوريات":"تعذّر تأكيد التوجيه للدوريات — محفوظ في «توجيهات لم تصل»")}
+ else if(m.type=="people"){if(!$("#t-persons").hidden)load("persons")}
+ else if(m.type=="enroll"){toast(m.n<0?(m.error||"انتهت المهلة: لم يظهر وجه"):m.warning?("⚠️ "+m.warning):m.n>=5?"تم تسجيل الوجه بنجاح":"جارٍ التسجيل "+m.n+"/5 — حرّك رأسك قليلاً")}};
+$("#vf").onclick=async()=>{try{const r=await rJson("/api/verify");const bad=r.result.startsWith("TAMPER");$("#vr").textContent=bad?"تم اكتشاف تلاعب: "+r.result:"السلسلة والأدلة سليمة — "+r.result;$("#vr").style.color=bad?"var(--er)":"var(--ok)"}catch(e){$("#vr").textContent=e.message;$("#vr").style.color="var(--er)"}};
+$("#nav").onclick=e=>{const b=e.target.closest("button[data-t]");if(!b)return;const t=b.dataset.t;document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("on",x.dataset.t==t));
+ ["ops","vehicles","persons","insights","analytics","health","calibration"].forEach(x=>{if($("#t-"+x))$("#t-"+x).hidden=x!=t});
+ if(t=="insights")loadIns();else if(t=="analytics")loadAnalytics();else if(t=="health")loadCameraHealth();else if(t=="calibration")loadCalibrationTab();else if(t!="ops"){if(!$("#t-"+t).innerHTML)buildReg(t);else load(t)}};
+
+/* ---------- learning, trends & path tracking ---------- */
+const fmt=ts=>new Date(ts*1000).toLocaleString("ar",{dateStyle:"short",timeStyle:"short"});
+function chart(f){const W=720,H=220,p=20,bw=(W-2*p)/f.length,mx=Math.max(1,...f.map(x=>x.hi)),y=v=>H-26-(v/mx)*(H-50);
+ return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">`+f.map((x,i)=>{const X=p+i*bw;
+  return `<rect x="${X+3}" y="${y(x.mean)}" width="${bw-6}" height="${H-26-y(x.mean)}" fill="var(--ac)" opacity=".85" rx="3"/><line x1="${X+bw/2}" x2="${X+bw/2}" y1="${y(x.hi)}" y2="${y(x.lo)}" stroke="var(--wn)" stroke-width="2"/>${i%3==0?`<text x="${X+bw/2}" y="${H-8}" fill="var(--mu)" font-size="11" text-anchor="middle">${x.label}</text>`:""}`}).join("")+`</svg>`}
+let DEMO_MODE=false;
+function toggleDemoMode(on){DEMO_MODE=Boolean(on);if($("#ins-demo-mode"))$("#ins-demo-mode").checked=DEMO_MODE;if($("#ins-demo-banner"))$("#ins-demo-banner").hidden=!DEMO_MODE;loadIns();if(($("#path-q")?.value||"").trim())tracePlate()}
+let CL_CACHE=[];
+function resetCameraLinkForm(){
+ ["#cl-from","#cl-to","#cl-min","#cl-exp","#cl-max","#cl-dist","#cl-obs","#cl-via","#cl-notes"].forEach(s=>{if($(s))$(s).value=""});
+ if($("#cl-unit"))$("#cl-unit").value="sec";
+ if($("#cl-date"))$("#cl-date").value=new Date().toISOString().slice(0,10);
+ if($("#cl-traffic"))$("#cl-traffic").value="normal";
+ if($("#cl-msrc"))$("#cl-msrc").value="manual";
+ if($("#cl-mode"))$("#cl-mode").value="create";
+ if($("#cl-save-btn"))$("#cl-save-btn").textContent="إضافة وحفظ المعايرة";
+ if($("#cl-msg"))$("#cl-msg").innerHTML='<span class="chip mu">وضع إضافة رابط جديد — أدخل الكاميرا المصدر والوجهة وأزمنة الانتقال ثم اضغط حفظ.</span>';
+}
+function mountCameraLinksCard(targetTab){
+ const card=$("#cl-card-master"),slot=targetTab==="calibration"?$("#cal-cl-slot"):$("#ins-cl-slot");
+ if(card&&slot&&card.parentElement!==slot)slot.appendChild(card);
+}
+function editCameraLink(fc,tc){
+ const item=CL_CACHE.find(x=>x.from_cam===fc&&x.to_cam===tc&&!x.inferred);
+ if(!item)return;
+ if($("#t-calibration")&&!$("#t-calibration").hidden)mountCameraLinksCard("calibration");
+ else if($("#t-insights")&&!$("#t-insights").hidden)mountCameraLinksCard("insights");
+ else{document.querySelector("button[data-t=calibration]")?.click();mountCameraLinksCard("calibration")}
+ if($("#cl-from"))$("#cl-from").value=item.from_cam||"";
+ if($("#cl-to"))$("#cl-to").value=item.to_cam||"";
+ if($("#cl-unit"))$("#cl-unit").value="sec";
+ if($("#cl-min"))$("#cl-min").value=item.min_sec??"";
+ if($("#cl-exp"))$("#cl-exp").value=item.expected_sec??"";
+ if($("#cl-max"))$("#cl-max").value=item.max_sec?item.max_sec:"";
+ if($("#cl-dist"))$("#cl-dist").value=item.distance_m?item.distance_m:"";
+ if($("#cl-obs"))$("#cl-obs").value=item.observations_count?item.observations_count:"";
+ if($("#cl-date"))$("#cl-date").value=item.calibration_date||"";
+ if($("#cl-traffic"))$("#cl-traffic").value=item.traffic_condition||"normal";
+ if($("#cl-msrc"))$("#cl-msrc").value=item.measurement_source||"manual";
+ if($("#cl-via"))$("#cl-via").value=item.via||"";
+ if($("#cl-notes"))$("#cl-notes").value=item.notes||"";
+ if($("#cl-mode"))$("#cl-mode").value="upsert";
+ if($("#cl-save-btn"))$("#cl-save-btn").textContent="تحديث المعايرة المحفوظة";
+ if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip wn">تعديل الرابط ${esc(fc)} ➔ ${esc(tc)}</span>`;
+ $("#cl-min")?.focus();
+}
+async function loadCameraLinks(){
+ const box=$("#cl-table"),mirror=$("#cal-links-mirror");if(!box&&!mirror)return;
+ if($("#cl-export-json"))$("#cl-export-json").href=qSep("/api/camera_links/export?fmt=json");
+ if($("#cl-export-csv"))$("#cl-export-csv").href=qSep("/api/camera_links/export?fmt=csv");
+ try{
+  const fq=encodeURIComponent(($("#cl-filter-q")?.value||"").trim());
+  const fst=encodeURIComponent($("#cl-filter-status")?.value||"all");
+  const r=await rJson(`/api/camera_links?q=${fq}&status=${fst}`);
+  if(!r.ok)throw new Error(r.error||"تعذّر تحميل روابط الكاميرات");
+  const explicit=r.links||[],inferred=r.inferred_links||[],all=[...explicit,...inferred];
+  CL_CACHE=explicit;
+  const html=`<table><thead><tr><th>من كاميرا</th><th>إلى كاميرا</th><th>الحد الأدنى (ث)</th><th>الزمن المعتاد (ث)</th><th>الحد الأعلى (ث)</th><th>المسافة (م)</th><th>القياسات</th><th>مصدر القياس</th><th>المرور / التاريخ</th><th>الوسيط (via)</th><th>حالة اكتمال المعايرة</th><th>إجراء</th></tr></thead><tbody>${
+   all.map(l=>{
+    const stChip=l.inferred?'<span class="chip wn">مستنتج (قفزتان)</span>':l.calibration_status==="complete"?'<span class="chip ok">معايرة مكتملة</span>':l.calibrated?'<span class="chip wn">أساسية — تحتاج بيانات إضافية</span>':'<span class="chip mu">افتراضي غير معاير</span>';
+    return `<tr><td><b>${esc(l.from_cam)}</b></td><td><b>${esc(l.to_cam)}</b></td><td>${Number(l.min_sec)}</td><td>${Number(l.expected_sec)}</td><td>${l.max_sec?Number(l.max_sec):"—"}</td><td>${l.distance_m?Number(l.distance_m):"—"}</td><td>${l.observations_count||0}</td><td>${esc(l.measurement_source_ar||l.measurement_source||"—")}</td><td>${esc(l.traffic_condition_ar||"")}${l.calibration_date?" · "+esc(l.calibration_date):""}</td><td>${esc(l.via||"—")}</td><td>${stChip}</td><td>${l.inferred?"—":`<div class="act"><button data-fc="${esc(l.from_cam)}" data-tc="${esc(l.to_cam)}" onclick="editCameraLink(this.dataset.fc,this.dataset.tc)">تعديل</button><button class="er" data-fc="${esc(l.from_cam)}" data-tc="${esc(l.to_cam)}" onclick="delCameraLink(this.dataset.fc,this.dataset.tc)">حذف</button></div>`}</td></tr>`
+   }).join("")
+   ||'<tr><td colspan="12" class="mu">لا توجد روابط كاميرات معايرة مطابقة حالياً (تُستخدم القيمة الافتراضية 90 ثانية غير المعايرة).</td></tr>'
+  }</tbody></table>`;
+  if(box)box.innerHTML=html;
+  if(mirror)mirror.innerHTML=html;
+ }catch(e){if(box)box.innerHTML=`<p class="mu">${esc(e.message)}</p>`;if(mirror)mirror.innerHTML=`<p class="mu">${esc(e.message)}</p>`}
+}
+async function saveCameraLink(){
+ try{
+  const from_cam=($("#cl-from")?.value||"").trim(),to_cam=($("#cl-to")?.value||"").trim(),time_unit=$("#cl-unit")?.value||"sec",min_sec=$("#cl-min")?.value,expected_sec=$("#cl-exp")?.value,max_sec=$("#cl-max")?.value,distance_m=$("#cl-dist")?.value,observations_count=$("#cl-obs")?.value,calibration_date=$("#cl-date")?.value||"",traffic_condition=$("#cl-traffic")?.value||"normal",measurement_source=$("#cl-msrc")?.value||"manual",via=($("#cl-via")?.value||"").trim(),notes=($("#cl-notes")?.value||"").trim(),mode=$("#cl-mode")?.value||"upsert";
+  const r=await post("/api/camera_links",{from_cam,to_cam,time_unit,min_sec,expected_sec,max_sec,distance_m,observations_count,calibration_date,traffic_condition,measurement_source,via,notes,mode});
+  if(!r.ok){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(r.error||"فشل الحفظ")}</span>`;return}
+  const stTxt=r.link?.calibration_status_ar||"تم الحفظ";
+  if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip ok">تم حفظ المعايرة ${esc(from_cam)} ➔ ${esc(to_cam)} (${esc(stTxt)})</span>`+(r.warning?` <span class="chip wn">${esc(r.warning)}</span>`:"");
+  if($("#cl-mode"))$("#cl-mode").value="upsert";
+  if($("#cl-save-btn"))$("#cl-save-btn").textContent="حفظ المعايرة";
+  await loadCameraLinks();await loadIns();
+ }catch(e){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر حفظ الرابط")}</span>`}
+}
+async function delCameraLink(from_cam,to_cam){
+ try{
+  if(typeof window.confirm==="function"&&!window.confirm(`هل أنت متأكد من حذف معايرة الرابط ${from_cam} ➔ ${to_cam}؟`))return;
+  const r=await post("/api/camera_links/delete",{from_cam,to_cam});
+  if(!r.ok){toast(r.error||"فشل حذف الرابط");return}
+  toast(`تم حذف الرابط ${from_cam} ➔ ${to_cam}`);
+  await loadCameraLinks();await loadIns();
+ }catch(e){toast(e.message||"تعذّر حذف الرابط")}
+}
+async function doImportCameraLinks(file){
+ if(!file)return;
+ try{
+  if($("#cl-msg"))$("#cl-msg").textContent="جارٍ استيراد روابط الكاميرات...";
+  const r=await rJson("/api/camera_links/import",{method:"POST",headers:{"X-Filename":encodeURIComponent(file.name)},body:file});
+  if(!r.ok){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(r.error||"فشل الاستيراد")}</span>`;return}
+  if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip ok">تم الاستيراد: أُضيف ${r.added} · حُدّث ${r.updated} · تخطّي ${r.skipped}</span>`;
+  await loadCameraLinks();await loadIns();
+ }catch(e){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(e.message||"فشل استيراد الروابط")}</span>`}
+}
+async function loadIns(){
+ try{
+  mountCameraLinksCard("insights");
+  if($("#ins-demo-banner"))$("#ins-demo-banner").hidden=!DEMO_MODE;
+  const url=DEMO_MODE?"/api/insights?demo=1":"/api/insights";
+  const r=await rJson(url),m=r.model||{};
+  const demoNote=(!DEMO_MODE&&m.demo_available>0)?` · <span class="chip wn">يوجد ${m.demo_available} سجل محاكاة تجريبي مخفي — فعّل «وضع استعراض بيانات المحاكاة التجريبية» لعرضه</span>`:"";
+  $("#ins-st").innerHTML=m.ready?`<span class="chip ${r.includes_demo?'wn':'ok'}">النموذج جاهز (${esc(m.type||m.model_type||"")}) — ${r.includes_demo?'وضع تجريبي (Demo)':'رصد حي فقط (Live)'}</span> تدرّب على <b>${m.n}</b> رصد (${m.live} حقيقي · ${m.demo} تجريبي) · التوقيت ${esc(m.timezone||"")} · آخر تدريب ${fmt(m.trained)}${demoNote}`:`<span class="chip wn">غير مدرَّب (${esc(m.type||"—")}) — ${r.includes_demo?'وضع تجريبي':'رصد حي فقط'}</span> يلزم ${m.min_required||50} رصداً على الأقل (المتوفر حالياً: ${m.n||0}).${demoNote}`;
+  const f=r.forecast;$("#ins-fc").innerHTML=f?chart(f.hours):'<p class="mu">لا توجد بيانات كافية للتوقّع في الوضع الحالي.</p>';
+  $("#ins-pk").innerHTML=f?`ساعات الذروة المتوقعة: ${f.peaks.map(x=>`<span class="chip wn">${x}</span>`).join(" ")} · الأعمدة = المتوسط المتوقع، والخط البرتقالي = ${esc(f.band_description_ar||"نطاق التشتت التجريبي (المتوسط ± 1.28×الانحراف المعياري)")} · مستوى الحركة الحالي ×${f.level}`:"";
+  const cor=r.corridors||[],pts=r.paths||[];
+  $("#ins-cor").innerHTML=`<table><thead><tr><th>المسار (الاتجاه)</th><th>عدد المركبات</th><th>متوسط الانتقال</th><th>حالة المعايرة</th></tr></thead><tbody>${cor.map(c=>`<tr><td><b>${esc(c.route)}</b></td><td>${c.count}</td><td>${c.avg_min} د</td><td>${c.calibrated?'<span class="chip ok">معاير من المستخدم</span>':'<span class="chip wn">افتراضي تجريبي غير معاير</span>'}</td></tr>`).join("")||'<tr><td colspan="4" class="mu">لا توجد انتقالات مسجّلة بين الكاميرات بعد.</td></tr>'}</tbody></table>`;
+  $("#ins-pt").innerHTML=`<table><thead><tr><th>اللوحة</th><th>المسار المرصود</th><th>مرات الرصد</th><th>الحالة</th></tr></thead><tbody>${pts.map(p=>`<tr><td>${plate(p.plate)}</td><td><b>${esc(p.route)}</b></td><td>${p.sightings}</td><td>${p.conflict?'<span class="chip er">اشتباه تعارض</span>':'<span class="chip ok">طبيعي</span>'}</td></tr>`).join("")||'<tr><td colspan="4" class="mu">لا توجد مسارات متعدّدة الكاميرات بعد.</td></tr>'}</tbody></table>`;
+  $("#ins-an").innerHTML=`<table><thead><tr><th>الوقت</th><th>اللوحة</th><th>الكاميرا</th><th>النوع</th><th>سبب الاشتباه</th><th>المصدر</th></tr></thead><tbody>${(r.anomalies||[]).map(a=>`<tr><td>${fmt(a.ts)}</td><td>${plate(a.plate)}</td><td>${esc(a.cam)}</td><td>${esc(VT[a.vclass]||a.vclass)}</td><td style="white-space:normal">${esc(a.why)}</td><td>${a.src=="demo"?'<span class="chip mu">تجريبي</span>':'<span class="chip ok">حي</span>'}</td></tr>`).join("")||'<tr><td colspan="6" class="mu">لا توجد حالات.</td></tr>'}</tbody></table>`;
+  await loadCameraLinks();
+ }catch(e){if($("#ins-st"))$("#ins-st").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تحميل بيانات التعلّم والمسارات")}</span>`}
+}
+function renderSingleTraj(t,lims){
+ return `<div class="c" style="background:var(--pan2);margin-bottom:8px"><div class="bar"><b>مسار اللوحة ${plate(t.plate)} (${t.total} نقطة رصد):</b> <span class="chip ok" style="direction:ltr">${esc(t.route)}</span> ${t.calibrated?'<span class="chip ok">كاميرات معايرة</span>':'<span class="chip wn">قيم افتراضية تجريبية غير معايرة</span>'} ${t.includes_demo?'<span class="chip wn">بيانات محاكاة تجريبية (Demo)</span>':'<span class="chip ok">رصد حي (Live)</span>'} ${t.missing_hops&&t.missing_hops.length?`<span class="chip wn">نقطة وسيطة غير مرصودة: ${esc(t.missing_hops.join("، "))}</span>`:""} ${t.clock_skew_detected?'<span class="chip wn">تنبيه: رُصد اختلاف في ترتيب التوقيت</span>':""} ${t.conflicts&&t.conflicts.length?`<span class="chip er">${esc(t.conflicts[0].why||t.conflicts[0])}</span>`:""}</div>
+ ${lims?`<p class="mu" style="margin:4px 0 8px">${esc(lims)}</p>`:""}
+ <div class="tw"><table><thead><tr><th>#</th><th>الوقت</th><th>الكاميرا</th><th>الاتجاه / الانتقال</th><th>الفاصل الزمني</th><th>النوع</th><th>الثقة</th><th>المصدر</th><th>الحالة</th></tr></thead><tbody>${
+  (t.steps||[]).map(s=>`<tr><td>#${s.id||"—"}</td><td>${fmt(s.ts)}</td><td><b>${esc(s.cam)}</b></td><td>${esc(s.direction)}${s.missing_via?` <span class="chip wn">عبر ${esc(s.missing_via)}؟</span>`:""}</td><td>${s.dt_min!=null?s.dt_min+" د ("+s.dt_sec+" ث)":"أول رصد"}</td><td>${esc(VT[s.vclass]||s.vclass)}</td><td>${Math.round((s.conf||0)*100)}%</td><td>${s.src==="demo"?'<span class="chip wn">تجريبي</span>':'<span class="chip ok">حي</span>'}</td><td>${s.conflict?'<span class="chip er">اشتباه تعارض</span>':'<span class="chip ok">سليم</span>'}</td></tr>`).join("")
+ }</tbody></table></div></div>`}
+async function tracePlate(p){
+ const q=(p||$("#path-q")?.value||"").trim();if(!q)return;
+ if($("#path-q"))$("#path-q").value=q;
+ try{
+  const demoParam=DEMO_MODE?"&demo=1":"";
+  const r=await rJson(`/api/path?plate=${encodeURIComponent(q)}${demoParam}`);
+  if(!r.ok){$("#path-res").innerHTML=`<span class="chip er">${esc(r.error)}</span>`;return}
+  if(!r.found){
+   if(r.has_demo_only){
+    $("#path-res").innerHTML=`<div class="notice" style="border-color:var(--wn)">${esc(r.demo_hint_ar||"هذه اللوحة موجودة في سجل المحاكاة التجريبي فقط.")} <button class="ok" onclick="toggleDemoMode(true)">تفعيل وضع استعراض المحاكاة التجريبية وعرض المسار</button></div>`;
+   }else{
+    $("#path-res").innerHTML=`<p class="mu">لا توجد نقاط رصد حية مسجّلة للوحة <b>${esc(r.plate||q)}</b>.</p>`;
+   }
+   return;
+  }
+  if(r.ambiguous_query&&r.candidate_paths){
+   const cands=r.candidates||Object.keys(r.candidate_paths);
+   $("#path-res").innerHTML=`<div class="notice">${esc(r.limitations)}</div>`+cands.map(k=>renderSingleTraj(r.candidate_paths[k])).join("");
+   return;
+  }
+  $("#path-res").innerHTML=renderSingleTraj(r,r.limitations);
+ }catch(e){if($("#path-res"))$("#path-res").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تتبع المسار")}</span>`}
+}
+async function insAct(a){
+ $("#ins-st").textContent="جارٍ التنفيذ...";
+ try{
+  const r=await post("/api/insights/"+a,{include_demo:DEMO_MODE});
+  if(!r.ok&&r.error)toast(r.error);
+  if(a==="clear"&&DEMO_MODE)toggleDemoMode(false);
+  else await loadIns();
+ }catch(e){toast(e.message||"تعذّر تنفيذ الإجراء");await loadIns()}
+}
+drawAl();drawFdisp();
+const HI=["VEHICLE: WANTED","VEHICLE: STOLEN","ROUTE ANOMALY (impossible transit)"],MD=["VEHICLE: EXPIRED","VEHICLE: WATCH","TRUCK IN RESTRICTED HOURS","ANOMALY (learned pattern)","POSSIBLE MATCH (visual check)"];
+function sev(m){return HI.includes(m)||m.startsWith("FACE")?"hi":MD.includes(m)?"mid":""}
+function plate(p){return `<span class="plate" title="اضغط لتتبع مسار اللوحة" data-p="${esc(p)}">${esc(p)}</span>`}
+async function loadStats(){try{const s=await rJson("/api/stats");
+ setConnState("online","متصل");
+ $("#hcam").textContent=" · "+(CUR_CAM||s.cam)+" · "+s.fps+" fps";
+ const R=(n,l,h)=>`<div class="${h?"hot":""}"><b>${n}</b><span>${l}</span></div>`;
+ $("#rb").innerHTML=R(s.det24,"رصد خلال 24 ساعة")+R(s.trucks24,"شاحنات")+R(s.pending,"تنبيهات بانتظار القرار",s.pending>0)+R(s.failed_dispatches||0,"توجيهات لم تصل",(s.failed_dispatches||0)>0)+R(s.alerts,"تنبيهات اليوم")+R(s.confirmed,"مؤكّدة")+R(s.dismissed,"تحقق خاطئ")+R(s.vehicles,"مركبات مسجّلة")+R(s.persons,"أشخاص مسجّلون");
+ const cams=s.cameras||{},camNames=Object.keys(cams);
+ if(camNames.length>1){
+  $("#cam-sw").innerHTML=camNames.map(cn=>`<button data-cam="${esc(cn)}" class="${(CUR_CAM||camNames[0])==cn?'ok':''}">${esc(cn)} (${cams[cn].status})</button>`).join("");
+ }else{$("#cam-sw").innerHTML=""}
+ const C=(cls,dotOn,t)=>`<span class="chip ${cls}"><span class="dot ${dotOn?"on":""}" style="margin:0"></span>${t}</span>`;
+ const camChips=camNames.length?camNames.map(cn=>{const st=cams[cn].status;return C(st=="online"?"ok":st=="reconnecting"?"wn":"er",st=="online",`${esc(cn)}: ${st=="online"?"متصل":st=="reconnecting"?"يعيد الاتصال...":"منقطع"}`)}).join("")
+  :C(s.fps>0?"ok":"mu",s.fps>0,"الكاميرا "+(s.fps>0?"تعمل":"متوقفة"));
+ const tgChip=!s.telegram?C("mu",false,"تيليجرام غير مضبوط"):s.telegram_connected?C("ok",true,"تيليجرام متصل"):C("er",false,"تيليجرام غير متصل");
+ $("#chips").innerHTML=camChips+C(s.learning?"ok":"mu",s.learning,"نموذج التعلّم "+(s.learning?"جاهز":"غير مدرَّب"))+tgChip+`<span class="chip">سلسلة التدقيق: ${s.chain} سجلاً</span>`}catch(e){if(!e||!e.isAuthError)setConnState("net_error","انقطع الاتصال بالخادم — جاري إعادة المحاولة...")}}
+
+/* ---------- V7 operations analytics ---------- */
+let HEALTH_PERIOD="24h";
+const fmtNum=n=>Number(n||0).toLocaleString("ar-YE");
+const safeStatus=s=>({online:["متصلة","ok"],reconnecting:["تعيد الاتصال","wn"],offline:["منقطعة","er"],unknown:["غير معروفة","mu"],connecting:["تتصل","wn"]}[s]||[s||"غير معروفة","mu"]);
+const metric=(value,label,kind="")=>`<div class="c" style="margin:0;min-width:0"><b style="font-size:1.35rem;display:block;color:${kind==="er"?"var(--er)":kind==="wn"?"var(--wn)":"var(--ac)"}">${esc(value)}</b><span class="mu">${esc(label)}</span></div>`;
+function drawBars(items,labelKey,valueKey){const arr=items||[],mx=Math.max(1,...arr.map(x=>Number(x[valueKey]||0)));if(!arr.length)return '<p class="mu">لا توجد بيانات كافية بعد.</p>';return `<div style="display:grid;gap:8px">${arr.map(x=>{const v=Number(x[valueKey]||0),pct=Math.max(0,Math.min(100,v/mx*100));return `<div><div class="bar"><span>${esc(x[labelKey]||"غير معروف")}</span><b>${fmtNum(v)}</b></div><div style="height:7px;border-radius:99px;background:var(--pan2);overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--ac);border-radius:99px"></div></div></div>`}).join("")}</div>`}
+function drawTrend(items){const arr=items||[],mx=Math.max(1,...arr.map(x=>Number(x.count||0))),W=720,H=205,p=18,bw=(W-2*p)/Math.max(arr.length,1);return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="اتجاه الرصد خلال 24 ساعة" style="width:100%;height:auto">${arr.map((x,i)=>{const h=Math.max(2,Number(x.count||0)/mx*135),xx=p+i*bw,yy=158-h;return `<rect x="${xx+2}" y="${yy}" width="${Math.max(1,bw-4)}" height="${h}" rx="3" fill="var(--ac)" opacity=".88"><title>${esc(x.label)}: ${Number(x.count||0)} رصد</title></rect>${i%3===0?`<text x="${xx+bw/2}" y="184" fill="var(--mu)" font-size="11" text-anchor="middle">${esc(x.label)}</text>`:""}`}).join("")}</svg>`}
+async function loadAnalytics(){const out=$("#an-status");out.textContent="جارٍ تحميل التحليلات...";const analyticsExport=$("#analytics-export");if(analyticsExport)analyticsExport.href=qSep("/api/analytics/export.csv");try{const r=await rJson("/api/analytics",{cache:"no-store"});if(!r.ok)throw new Error(r.error||"تعذّر تحميل البيانات");const s=r.sightings||{},a=r.alerts||{};out.textContent="تحديث: "+new Date((r.generated_at||Date.now()/1000)*1000).toLocaleString("ar-YE");
+ const pctLabel=s.change_percent==null?"—":((s.change_percent>0?"+":"")+Number(s.change_percent)+"%");
+ $("#an-kpis").innerHTML=metric(fmtNum(s.current_24h),"الرصد الحي آخر 24 ساعة")+metric(fmtNum(s.previous_24h),"الرصد في الفترة السابقة")+metric((s.delta>0?"+":"")+fmtNum(s.delta),"التغيّر العددي",s.delta>0?"wn":"")+metric(pctLabel,"التغيّر النسبي",s.change_percent!=null&&Math.abs(s.change_percent)>30?"wn":"");
+ $("#an-trend").innerHTML=drawTrend(r.trend);$("#an-period-compare").textContent=`${s.current_24h||0} رصد حالي مقابل ${s.previous_24h||0} في الـ24 ساعة السابقة. النسب تتأثر بحجم العينة.`;
+ $("#an-classes").innerHTML=drawBars((r.vehicle_classes||[]).map(x=>({name:({car:"سيارة",truck:"شاحنة",bus:"حافلة",motorcycle:"دراجة نارية",other:"أخرى",unknown:"غير محدد"}[x.class]||x.class),count:x.count})),"name","count");
+ const cf=r.confidence||{};$("#an-confidence").innerHTML=drawBars([{name:"مرتفعة · 85% فأعلى",count:cf.high||0},{name:"متوسطة · 65–84%",count:cf.medium||0},{name:"منخفضة · أقل من 65%",count:cf.low||0},{name:"غير متاحة",count:cf.unknown||0}],"name","count");
+ const cams=r.camera_health||[];$("#an-cameras").innerHTML=`<table><thead><tr><th>الكاميرا</th><th>الحالة</th><th>FPS</th><th>الإطارات</th><th>الكشوفات</th><th>الأخطاء</th><th>إعادة الاتصال/الفشل</th><th>متوسط ثقة OCR</th></tr></thead><tbody>${cams.map(c=>{const st=safeStatus(c.status);return `<tr><td>${esc(c.camera)}</td><td><span class="chip ${st[1]}">${esc(st[0])}</span></td><td>${esc(c.fps??"—")}</td><td>${fmtNum(c.frames)}</td><td>${fmtNum(c.detections)}</td><td>${fmtNum(c.errors)}</td><td>${fmtNum(c.reconnect_count)}</td><td>${c.mean_ocr_confidence==null?"—":Math.round(c.mean_ocr_confidence*100)+"%"}</td></tr>`}).join("")||'<tr><td colspan="8" class="mu">لا تتوفر بيانات كاميرات حالية.</td></tr>'}</tbody></table>`;
+ $("#an-alerts").innerHTML=metric(fmtNum(a.last_24h),"تنبيهات آخر 24 ساعة")+metric(fmtNum(a.pending),"قيد الانتظار",a.pending?"wn":"")+metric(fmtNum(a.confirmed),"تم تأكيدها")+metric(fmtNum(a.dismissed),"مرفوضة بعد المراجعة")+metric(fmtNum(a.dispatch_pending),"توجيهات معلّقة",a.dispatch_pending?"wn":"")+metric(fmtNum(a.dispatch_failed),"توجيهات فاشلة",a.dispatch_failed?"er":"");
+ const rec=r.recommendations||[];$("#an-recommendations").innerHTML=rec.map(x=>`<div class="fd"><span class="chip ${x.level==="critical"?"er":x.level==="warning"?"wn":"mu"}">${x.level==="critical"?"عاجل":x.level==="warning"?"تحذير":"معلومة"}</span> <b>${esc(x.camera||"النظام")}</b><p style="margin:4px 0">${esc(x.message)}</p></div>`).join("")||'<p class="mu">لا توجد توصيات تشغيلية حاليًا.</p>';
+ }catch(e){out.textContent="تعذّر تحميل التحليلات: "+(e.message||"خطأ اتصال")}}
+function durationLabel(seconds){if(seconds==null)return "—";let s=Math.max(0,Math.round(Number(seconds)||0));const d=Math.floor(s/86400);s%=86400;const h=Math.floor(s/3600);s%=3600;const m=Math.floor(s/60);return (d?d+" يوم ":"")+(h? h+" س ":"")+m+" د"}
+async function loadCameraHealth(){const out=$("#health-summary");out.innerHTML='<p class="mu">جارٍ تحميل سجل الكاميرات...</p>';$("#health-export").href=qSep('/api/camera-health/export.csv?period='+encodeURIComponent(HEALTH_PERIOD));try{const r=await rJson('/api/camera-health?period='+encodeURIComponent(HEALTH_PERIOD),{cache:"no-store"});if(!r.ok)throw new Error(r.error||"تعذّر تحميل السجل");$("#health-note").textContent=r.note||"";out.innerHTML=`<table><thead><tr><th>الكاميرا</th><th>الحالة الآن</th><th>التشغيل المرصود</th><th>الانقطاع المرصود</th><th>الموثوقية ضمن الفترات المرصودة</th><th>تغطية النافذة</th><th>انقطاعات</th><th>عمليات استعادة</th><th>آخر تغيير</th></tr></thead><tbody>${(r.cameras||[]).map(c=>{const st=safeStatus(c.status);return `<tr><td><b>${esc(c.camera)}</b></td><td><span class="chip ${st[1]}">${esc(st[0])}</span></td><td>${durationLabel(c.online_seconds)}</td><td>${durationLabel(c.downtime_seconds)}</td><td>${c.uptime_percent==null?"غير كافية":c.uptime_percent+"%"}</td><td>${c.coverage_percent}%</td><td>${fmtNum(c.outages)}</td><td>${fmtNum(c.recoveries)}</td><td>${c.last_change?new Date(c.last_change*1000).toLocaleString("ar-YE"):"—"}</td></tr>`}).join("")||'<tr><td colspan="9" class="mu">لا يوجد سجل بعد. تظهر الإحصاءات عندما تتغير حالات الكاميرات أثناء التشغيل.</td></tr>'}</tbody></table>`;
+ $("#health-events").innerHTML=`<table><thead><tr><th>الوقت</th><th>الكاميرا</th><th>الحالة السابقة</th><th>الحالة الجديدة</th><th>السبب</th></tr></thead><tbody>${(r.events||[]).map(e=>{const a=safeStatus(e.previous_status),b=safeStatus(e.status);return `<tr><td>${new Date(e.ts*1000).toLocaleString("ar-YE")}</td><td>${esc(e.camera)}</td><td>${esc(a[0])}</td><td><span class="chip ${b[1]}">${esc(b[0])}</span></td><td>${esc(({startup:"بدء تشغيل البرنامج",camera_reconnected:"إعادة اتصال",frame_received:"استقبال إطار",read_failed:"فشل قراءة",stream_stalled:"توقف الإطارات",offline_timeout:"تجاوز مهلة الانقطاع",application_stop:"إيقاف البرنامج",status_unknown:"حالة غير معروفة"}[e.reason]||e.reason||"—"))}</td></tr>`}).join("")||'<tr><td colspan="5" class="mu">لا توجد تغييرات حالة ضمن هذه الفترة.</td></tr>'}</tbody></table>`;
+ }catch(e){out.innerHTML=`<p class="mu">تعذّر تحميل سجل صحة الكاميرات: ${esc(e.message||"خطأ اتصال")}</p>`}}
+$("#health-periods")?.addEventListener("click",e=>{const b=e.target.closest("button[data-period]");if(!b)return;HEALTH_PERIOD=b.dataset.period;$("#health-periods").querySelectorAll("button").forEach(x=>x.classList.toggle("ok",x===b));loadCameraHealth()});
+
+/* ---------- Stage 11: Yemeni Plate Evaluation & Manual Field Calibration UI ---------- */
+let PE_POLL_TIMER=null,FC_CACHE=[];
+async function loadReadinessReport(){
+ const box=$("#rd-score-box");if(!box)return;
+ try{
+  const r=await rJson("/api/readiness");
+  if(!r.ok)throw new Error(r.error||"تعذّر تحميل مؤشر الجاهزية");
+  const p=r.pillars||{},c1=p.code_and_security||{},c2=p.windows_build_and_packaging||{},c3=p.field_calibration_and_eval_tooling||{},fs=c3.field_data_stats||{};
+  box.innerHTML=`<div class="ribbon" style="margin:6px 0">
+   <div><b style="color:var(--ok)">${r.overall_engineering_readiness_pct??100}%</b><span>الجاهزية الهندسية والبرمجية الشاملة</span></div>
+   <div><b style="color:var(--ok)">${c1.score_pct??100}%</b><span>${esc(c1.label_ar||"الكود والأمن")}</span></div>
+   <div><b style="color:var(--ok)">${c2.score_pct??100}%</b><span>${esc(c2.label_ar||"بناء وتوزيع Windows EXE")}</span></div>
+   <div><b style="color:var(--ok)">${c3.score_pct??100}%</b><span>${esc(c3.label_ar||"منظومة المعايرة والتقييم")}</span></div>
+   <div><b>${fs.complete_camera_links_count||0} / ${fs.explicit_camera_links_count||0}</b><span>روابط كاميرات مكتملة المعايرة</span></div>
+   <div><b>${fs.automated_plate_eval_runs_count||0}</b><span>عمليات تقييم آلي موثّقة للوحات</span></div>
+  </div>`;
+ }catch(e){box.innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تحميل مؤشر الجاهزية")}</span>`}
+}
+async function autoCalibrateCameraLinks(){
+ try{
+  if($("#cl-msg"))$("#cl-msg").innerHTML='<span class="chip wn">جارٍ تحليل سجلات الرصد وحساب أزمنة الانتقال تلقائياً...</span>';
+  const r=await post("/api/camera_links/auto_calibrate",{include_demo:DEMO_MODE,min_observations:3});
+  if(!r.ok){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(r.error||"تعذّر حساب المعايرة التلقائية")}</span>`;return}
+  if(!r.applied_count){
+   if($("#cl-msg"))$("#cl-msg").innerHTML='<span class="chip wn">لا توجد انتقالات كافية (≥ 3 مشاهدات لكل زوج كاميرات) في السجل الحالي؛ يمكنك توليد تاريخ تجريبي أو إدخال المعايرة يدوياً.</span>';
+   return;
+  }
+  if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip ok">تم حساب وتطبيق المعايرة التلقائية بنجاح لـ <b>${r.applied_count}</b> رابط كاميرات من سجلات الرصد الفعلية!</span>`;
+  await loadCameraLinks();await loadIns();await loadReadinessReport();
+ }catch(e){if($("#cl-msg"))$("#cl-msg").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تنفيذ المعايرة التلقائية")}</span>`}
+}
+async function registerEvalModel(){
+ try{
+  const plate_model=($("#pe-plate-model")?.value||"").trim();
+  if(!plate_model){toast("أدخل أو اختر مسار ملف النموذج (.pt) أولاً");return}
+  const r=await post("/api/plate_eval/register_model",{plate_model});
+  if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"فشل اعتماد النموذج")}</span>`;return}
+  if($("#pe-plate-model")&&r.path)$("#pe-plate-model").value=r.path;
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip ok">تم فحص واعتماد النموذج وتوقيع بصمته (SHA-256: ${esc((r.sha256||"").slice(0,16))}...) في سجل النماذج الموثوقة: ${esc(r.model_name)}</span>`;
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر اعتماد النموذج")}</span>`}
+}
+async function initFolderGroundTruth(){
+ try{
+  const dataset_path=($("#pe-dataset-path")?.value||"").trim();
+  if(!dataset_path){toast("حدد مسار مجلد الصور أولاً");return}
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML='<span class="chip wn">جارٍ مسح صور المجلد وتوليد ملف ground_truth.csv...</span>';
+  const r=await post("/api/plate_eval/init_ground_truth",{dataset_path,prefill_ocr:true,overwrite:false});
+  if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"تعذّر توليد ملف ground_truth.csv")}</span>`;return}
+  if($("#pe-dataset-path")&&r.dataset_path)$("#pe-dataset-path").value=r.dataset_path;
+  renderInspectResult(r.inspection);
+  toast(`تم تجهيز ground_truth.csv (${r.total_rows} صورة: أُضيف ${r.added_count} وحُفظ ${r.preserved_cnt||r.preserved_count||0})`);
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر توليد ملف ground_truth.csv")}</span>`}
+}
+async function loadCalibrationTab(){
+ try{
+  mountCameraLinksCard("calibration");
+  if($("#pe-template-csv"))$("#pe-template-csv").href=qSep("/api/plate_eval/template?fmt=csv");
+  if($("#pe-export-json"))$("#pe-export-json").href=qSep("/api/plate_eval/export?fmt=json");
+  if($("#pe-export-csv"))$("#pe-export-csv").href=qSep("/api/plate_eval/export?fmt=csv");
+  if($("#fc-export-json"))$("#fc-export-json").href=qSep("/api/field_calibrations/export?fmt=json");
+  if($("#fc-export-csv"))$("#fc-export-csv").href=qSep("/api/field_calibrations/export?fmt=csv");
+  await loadReadinessReport();
+  await loadCameraLinks();
+  await loadPlateEvalHistory();
+  await pollPlateEvalStatus();
+  await loadManualCalibrations();
+ }catch(e){toast(e.message||"تعذّر تحميل تبويب المعايرة")}
+}
+async function browseEvalPath(mode,targetSel){
+ try{
+  const r=await post("/api/browse_path",{mode});
+  if(r.ok&&r.path&&$(targetSel)){$(targetSel).value=r.path;if(targetSel==="#pe-dataset-path")await inspectEvalDataset();else await validateEvalModel()}
+  else if(r.error&&!r.cancelled)toast(r.error);
+ }catch(e){toast(e.message||"تعذّر فتح نافذة اختيار المسار")}
+}
+async function uploadEvalDataset(fileList){
+ if(!fileList||!fileList.length)return;
+ try{
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML='<span class="chip wn">جارٍ قراءة وتجهيز ملفات التقييم...</span>';
+  const filesData=[];
+  for(const f of fileList){
+   const b64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(f)});
+   filesData.push({name:f.name,content_base64:b64});
+  }
+  const chunks=[];
+  let curChunk=[],curBytes=0;
+  for(const item of filesData){
+   const sz=(item.content_base64||"").length;
+   if(curChunk.length>0&&(curBytes+sz>2400000||curChunk.length>=6)){
+    chunks.push(curChunk);curChunk=[];curBytes=0;
+   }
+   curChunk.push(item);curBytes+=sz;
+  }
+  if(curChunk.length>0)chunks.push(curChunk);
+  const batch_id="batch_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+  let lastResp=null;
+  for(let i=0;i<chunks.length;i++){
+   if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip wn">جارٍ رفع الدفعة (${i+1}/${chunks.length})...</span>`;
+   const r=await post("/api/plate_eval/upload_dataset",{batch_id,finalize:i===chunks.length-1,files:chunks[i]});
+   if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"فشل رفع ملفات التقييم")}</span>`;return}
+   lastResp=r;
+  }
+  if(lastResp){
+   if($("#pe-dataset-path"))$("#pe-dataset-path").value=lastResp.dataset_path||"";
+   if(lastResp.inspection)renderInspectResult(lastResp.inspection);
+  }
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر رفع الملفات")}</span>`}
+}
+function renderInspectResult(insp){
+ const box=$("#pe-inspect-box");if(!box||!insp)return;
+ if(!insp.ok){box.innerHTML=`<span class="chip er">${esc(insp.error||"المسار غير صالح")}</span>`;return}
+ box.innerHTML=`<span class="chip ok">المسار صالح للقراءة: ${esc(insp.dataset_path)}</span> · ملفات الصور الصالحة: <b>${insp.valid_files_count}</b> · الملفات غير الصالحة/المفقودة: <b>${insp.invalid_files_count}</b>`+(insp.invalid_files&&insp.invalid_files.length?` <span class="chip wn">أمثلة مفقودة/تالفة: ${esc(insp.invalid_files.map(x=>x.filename).join("، "))}</span>`:"");
+}
+async function inspectEvalDataset(){
+ try{
+  const dataset_path=($("#pe-dataset-path")?.value||"").trim(),plate_model=($("#pe-plate-model")?.value||"").trim();
+  const r=await post("/api/plate_eval/inspect",{dataset_path,plate_model});
+  renderInspectResult(r);
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر فحص المسار")}</span>`}
+}
+async function validateEvalModel(){
+ try{
+  const plate_model=($("#pe-plate-model")?.value||"").trim();
+  const r=await post("/api/plate_eval/validate_model",{plate_model});
+  if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=r.ok?`<span class="chip ok">النموذج صالح: ${esc(r.model_name||r.reason||"افتراضي")}</span>`:`<span class="chip er">${esc(r.error||"نموذج غير صالح")}</span>`;
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر فحص النموذج")}</span>`}
+}
+function renderPlateEvalReport(rep){
+ const box=$("#pe-results-box");if(!box)return;
+ if(!rep){box.innerHTML="";return}
+ if(!rep.ok){box.innerHTML=`<div class="notice" style="border-color:var(--er)"><b style="color:var(--er)">لم يكتمل التقييم (${esc(rep.status||"خطأ")}):</b> ${esc(rep.error||rep.reason||"")}</div>`;return}
+ const m=rep.metrics||{};
+ box.innerHTML=`<div class="c" style="background:var(--pan2);margin:0">
+  <div class="bar"><b>نتائج التقييم الآلي الموثّقة (${esc(rep.evaluation_date||"")}):</b> <span class="chip ok">محسوبة فعلياً بواسطة محرك التقييم</span> <span class="chip">${esc(rep.model_used||rep.detector_mode||"")}</span></div>
+  <p class="mu">المسار: <b>${esc(rep.dataset_path)}</b> · العينات المقيّمة الصالحة: <b>${rep.valid_files_count??rep.total_samples}</b> · الملفات التالفة/المفقودة المستبعدة: <b>${rep.invalid_files_count||0}</b> · متوسط زمن المعالجة: <b>${m.mean_latency_ms||0} ms/صورة</b></p>
+  <div class="g" style="margin:10px 0">
+   <div class="c" style="margin:0"><h2 style="color:var(--ac)">أولاً: دقة اكتشاف اللوحة والمركبة (Detection Metrics)</h2>
+    <p style="margin:4px 0">اللوحات المكتشفة: <b>${m.detected_count??0}</b> من <b>${rep.total_samples}</b> (فشل الاكتشاف: <b>${m.failed_detection_count??0}</b> · TP: <b>${m.true_positive_boxes??m.detected_count??0}</b> · FP: <b>${m.false_positive_boxes??0}</b>)</p>
+    <p style="margin:4px 0">استدعاء الاكتشاف (Recall): <b>${((m.detection_recall||0)*100).toFixed(1)}%</b> · دقة الاكتشاف (Precision): <b>${((m.detection_precision||0)*100).toFixed(1)}%</b> · معيار التوازن (F1): <b>${((m.detection_f1||0)*100).toFixed(1)}%</b> · متوسط التداخل (IoU): <b>${m.mean_iou!=null?m.mean_iou:"غير متاح"}</b></p>
+   </div>
+   <div class="c" style="margin:0"><h2 style="color:var(--wn)">ثانياً: دقة قراءة أحرف وأرقام اللوحة (Character & Digit OCR)</h2>
+    <p style="margin:4px 0">دقة قراءة المحارف (1 - CER): <b>${((m.char_accuracy_rate||0)*100).toFixed(1)}%</b> (معدل خطأ المحارف CER: <b>${m.cer??0}</b>)</p>
+    <p style="margin:4px 0">دقة مطابقة الأرقام الأساسية (Digits Match): <b>${((m.digits_match_rate||0)*100).toFixed(1)}%</b> (${m.digits_match_count??0}/${rep.total_samples})</p>
+   </div>
+  </div>
+  <div class="c" style="margin:0 0 10px 0"><h2 style="color:var(--ok)">ثالثاً: المطابقة الكاملة لخط الأنابيب مقابل OCR المعزول (End-to-End vs Cropped OCR)</h2>
+   <p style="margin:4px 0">المطابقة الكاملة لخط الأنابيب (End-to-End Exact Match): <b style="font-size:1.15rem;color:var(--ok)">${(((m.end_to_end_exact_match_rate??m.exact_match_rate)||0)*100).toFixed(1)}%</b> (<b>${m.end_to_end_exact_match_count??m.exact_match_count??0}</b> من <b>${rep.total_samples}</b> · فشل القراءة الكاملة: <b>${m.failed_ocr_count??0}</b>)</p>
+   <p style="margin:4px 0" class="mu">دقة قراءة OCR على الصندوق المقصوص بمعزل عن الكاشف (Cropped OCR Exact Match): <b>${(((m.cropped_ocr_exact_match_rate??m.exact_match_rate)||0)*100).toFixed(1)}%</b> (<b>${m.cropped_ocr_exact_match_count??m.exact_match_count??0}</b> من <b>${rep.total_samples}</b>)</p>
+  </div>
+  <div class="tw"><table><thead><tr><th>الصورة</th><th>اللوحة المرجعية</th><th>اللوحة المقروءة</th><th>اكتشاف اللوحة</th><th>IoU</th><th>دقة المحارف</th><th>مطابقة الأرقام</th><th>المطابقة الكاملة</th><th>الزمن (ms)</th></tr></thead><tbody>${
+   (rep.samples||[]).slice(0,50).map(s=>`<tr><td>${esc(s.filename)}</td><td>${plate(s.expected_plate)}</td><td>${s.predicted_plate?plate(s.predicted_plate):'<span class="mu">—</span>'}</td><td>${s.detected?'<span class="chip ok">مكتشفة</span>':'<span class="chip er">فشل اكتشاف</span>'}</td><td>${s.iou!=null?s.iou:"—"}</td><td>${Math.round((s.char_accuracy??0)*100)}%</td><td>${s.digits_match?'<span class="chip ok">نعم</span>':'<span class="chip er">لا</span>'}</td><td>${s.exact_match?'<span class="chip ok">مطابقة كاملة</span>':'<span class="chip er">غير مطابقة</span>'}</td><td>${s.latency_ms}</td></tr>`).join("")
+  }</tbody></table></div>
+ </div>`;
+}
+async function pollPlateEvalStatus(){
+ try{
+  const st=await rJson("/api/plate_eval/status");
+  const wrap=$("#pe-progress-wrap"),startBtn=$("#pe-start-btn"),cancelBtn=$("#pe-cancel-btn");
+  if(st.running){
+   if(wrap)wrap.hidden=false;
+   if(startBtn)startBtn.disabled=true;
+   if(cancelBtn)cancelBtn.disabled=false;
+   if($("#pe-progress-txt"))$("#pe-progress-txt").textContent=`جارٍ تقييم الصورة (${st.progress_current}/${st.progress_total}): ${st.current_file||""}`;
+   if($("#pe-progress-pct"))$("#pe-progress-pct").textContent=(st.progress_percent||0)+"%";
+   if($("#pe-progress-bar"))$("#pe-progress-bar").style.width=(st.progress_percent||0)+"%";
+   clearTimeout(PE_POLL_TIMER);
+   PE_POLL_TIMER=setTimeout(pollPlateEvalStatus,500);
+  }else{
+   if(wrap)wrap.hidden=st.status==="idle";
+   if(startBtn)startBtn.disabled=false;
+   if(cancelBtn)cancelBtn.disabled=true;
+   if(st.last_report){renderPlateEvalReport(st.last_report);await loadPlateEvalHistory();await loadManualCalibrations()}
+   else if(st.error&&$("#pe-results-box"))$("#pe-results-box").innerHTML=`<span class="chip er">${esc(st.error)}</span>`;
+  }
+ }catch(e){}
+}
+async function startPlateEval(){
+ try{
+  const dataset_path=($("#pe-dataset-path")?.value||"").trim(),plate_model=($("#pe-plate-model")?.value||"").trim(),use_vehicle_detector=Boolean($("#pe-use-vyolo")?.checked);
+  const r=await post("/api/plate_eval/start",{dataset_path,plate_model,use_vehicle_detector});
+  if(!r.ok){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(r.error||"تعذّر بدء التقييم")}</span>`;return}
+  toast("بدأ التقييم الآلي للوحات اليمنية...");
+  await pollPlateEvalStatus();
+ }catch(e){if($("#pe-inspect-box"))$("#pe-inspect-box").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر بدء التقييم")}</span>`}
+}
+async function cancelPlateEval(){
+ try{
+  const r=await post("/api/plate_eval/cancel",{});
+  if(r.ok)toast("تم إرسال طلب إلغاء التقييم الجاري...");
+  else toast(r.error||"لا توجد عملية جارية");
+  await pollPlateEvalStatus();
+ }catch(e){toast(e.message||"تعذّر إلغاء التقييم")}
+}
+async function loadPlateEvalHistory(){
+ const box=$("#pe-history-table");if(!box)return;
+ try{
+  const r=await rJson("/api/plate_eval/history");
+  const runs=r.runs||[];
+  box.innerHTML=`<table><thead><tr><th>#</th><th>التاريخ</th><th>مجموعة البيانات</th><th>النموذج</th><th>العينات (صالحة/غير صالحة)</th><th>استدعاء الاكتشاف (Recall)</th><th>دقة المحارف (1-CER)</th><th>مطابقة الأرقام</th><th>المطابقة الكاملة للوحة</th><th>الحالة</th></tr></thead><tbody>${
+   runs.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.eval_date)}</td><td>${esc(x.dataset_path)}</td><td>${esc(x.model_used)}</td><td>${x.valid_files_count} / ${x.invalid_files_count}</td><td>${((x.detection_recall||0)*100).toFixed(1)}%</td><td>${((x.char_accuracy_rate||0)*100).toFixed(1)}%</td><td>${((x.digits_match_rate||0)*100).toFixed(1)}%</td><td><b>${((x.exact_match_rate||0)*100).toFixed(1)}%</b></td><td><span class="chip ok">محسوب آلياً</span></td></tr>`).join("")
+   ||'<tr><td colspan="10" class="mu">لا توجد عمليات تقييم آلية مسجّلة بعد.</td></tr>'
+  }</tbody></table>`;
+ }catch(e){box.innerHTML=`<p class="mu">${esc(e.message)}</p>`}
+}
+function resetManualCalForm(){
+ ["#fc-id","#fc-from","#fc-to","#fc-transit","#fc-acc","#fc-samples","#fc-correct","#fc-incorrect","#fc-source","#fc-model","#fc-operator","#fc-notes"].forEach(s=>{if($(s))$(s).value=""});
+ if($("#fc-date"))$("#fc-date").value=new Date().toISOString().slice(0,10);
+ if($("#fc-save-btn"))$("#fc-save-btn").textContent="حفظ القياس اليدوي";
+ if($("#fc-msg"))$("#fc-msg").innerHTML="";
+}
+function editManualCal(id){
+ const it=FC_CACHE.find(x=>x.id===Number(id));if(!it)return;
+ if($("#fc-id"))$("#fc-id").value=it.id;
+ if($("#fc-from"))$("#fc-from").value=it.from_cam||"";
+ if($("#fc-to"))$("#fc-to").value=it.to_cam||"";
+ if($("#fc-transit"))$("#fc-transit").value=it.transit_sec||"";
+ if($("#fc-acc"))$("#fc-acc").value=it.measured_plate_accuracy!=null?it.measured_plate_accuracy:"";
+ if($("#fc-samples"))$("#fc-samples").value=it.samples_count||"";
+ if($("#fc-correct"))$("#fc-correct").value=it.correct_reads||"";
+ if($("#fc-incorrect"))$("#fc-incorrect").value=it.incorrect_reads||"";
+ if($("#fc-source"))$("#fc-source").value=it.source_description||"";
+ if($("#fc-date"))$("#fc-date").value=it.measurement_date||"";
+ if($("#fc-model"))$("#fc-model").value=it.model_used||"";
+ if($("#fc-operator"))$("#fc-operator").value=it.operator_name||"";
+ if($("#fc-notes"))$("#fc-notes").value=it.notes||"";
+ if($("#fc-save-btn"))$("#fc-save-btn").textContent="تحديث القياس اليدوي";
+ if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip wn">تعديل القياس اليدوي #${it.id}</span>`;
+}
+async function loadManualCalibrations(){
+ const box=$("#fc-table");if(!box)return;
+ try{
+  const r=await rJson("/api/field_calibrations");
+  if(!r.ok)throw new Error(r.error||"تعذّر تحميل سجل المعايرة اليدوية");
+  FC_CACHE=r.items||[];
+  if($("#fc-policy-banner")&&r.policy_notice_ar)$("#fc-policy-banner").innerHTML="⚠️ "+esc(r.policy_notice_ar);
+  box.innerHTML=`<table><thead><tr><th>#</th><th>التصنيف والاعتماد</th><th>بين الكاميرتين</th><th>زمن الانتقال اليدوي (ث)</th><th>الدقة اليدوية المقدرة</th><th>العينات (صحيحة/خاطئة)</th><th>مصدر القياس</th><th>التاريخ</th><th>النموذج / الأداة</th><th>المدخل</th><th>ملاحظات</th><th>إجراء</th></tr></thead><tbody>${
+   FC_CACHE.map(x=>`<tr><td>#${x.id}</td><td><span class="chip wn">${esc(x.verification_label_ar||"مدخلة يدوياً — غير متحقق منها")}</span></td><td>${x.from_cam||x.to_cam?`${esc(x.from_cam||"—")} ➔ ${esc(x.to_cam||"—")}`:"—"}</td><td>${x.transit_sec?Number(x.transit_sec)+" ث":"—"}</td><td>${x.measured_plate_accuracy!=null?x.measured_plate_accuracy+"%":"—"}</td><td>${x.samples_count||0} (${x.correct_reads||0}✓ / ${x.incorrect_reads||0}✗)</td><td>${esc(x.source_description)}</td><td>${esc(x.measurement_date)}</td><td>${esc(x.model_used)}</td><td>${esc(x.operator_name)}</td><td>${esc(x.notes||"—")}</td><td><div class="act"><button onclick="editManualCal(${+x.id})">تعديل</button><button class="er" onclick="delManualCal(${+x.id})">حذف</button></div></td></tr>`).join("")
+   ||'<tr><td colspan="12" class="mu">لا توجد قياسات معايرة يدوية مسجّلة بعد.</td></tr>'
+  }</tbody></table>`;
+ }catch(e){box.innerHTML=`<p class="mu">${esc(e.message)}</p>`}
+}
+async function saveManualCal(){
+ try{
+  const payload={
+   id:$("#fc-id")?.value||undefined,
+   from_cam:($("#fc-from")?.value||"").trim(),
+   to_cam:($("#fc-to")?.value||"").trim(),
+   transit_sec:$("#fc-transit")?.value,
+   measured_plate_accuracy:$("#fc-acc")?.value,
+   samples_count:$("#fc-samples")?.value,
+   correct_reads:$("#fc-correct")?.value,
+   incorrect_reads:$("#fc-incorrect")?.value,
+   source_description:($("#fc-source")?.value||"").trim(),
+   measurement_date:$("#fc-date")?.value||"",
+   model_used:($("#fc-model")?.value||"").trim(),
+   operator_name:($("#fc-operator")?.value||"").trim(),
+   notes:($("#fc-notes")?.value||"").trim()
+  };
+  const r=await post("/api/field_calibrations",payload);
+  if(!r.ok){if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip er">${esc(r.error||"فشل حفظ القياس اليدوي")}</span>`;return}
+  resetManualCalForm();
+  if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip ok">تم حفظ القياس اليدوي #${r.id} بوسم «${esc(r.verification_label_ar)}»</span>`;
+  await loadManualCalibrations();
+ }catch(e){if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip er">${esc(e.message||"تعذّر حفظ القياس اليدوي")}</span>`}
+}
+async function delManualCal(id){
+ try{
+  if(typeof window.confirm==="function"&&!window.confirm(`حذف سجل المعايرة اليدوية #${id}؟`))return;
+  const r=await post("/api/field_calibrations/delete",{id});
+  if(!r.ok){toast(r.error||"تعذّر الحذف");return}
+  toast(`تم حذف سجل المعايرة اليدوية #${id}`);
+  await loadManualCalibrations();
+ }catch(e){toast(e.message||"تعذّر حذف السجل")}
+}
+async function doImportManualCal(file){
+ if(!file)return;
+ try{
+  if($("#fc-msg"))$("#fc-msg").textContent="جارٍ استيراد القياسات اليدوية...";
+  const r=await rJson("/api/field_calibrations/import",{method:"POST",headers:{"X-Filename":encodeURIComponent(file.name)},body:file});
+  if(!r.ok){if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip er">${esc(r.error||"فشل الاستيراد")}</span>`;return}
+  if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip ok">تم استيراد ${r.added} قياس يدوي (تخطّي ${r.skipped}) — مصنفة كمدخلة يدوياً غير متحقق منها</span>`;
+  await loadManualCalibrations();
+ }catch(e){if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip er">${esc(e.message||"فشل الاستيراد")}</span>`}
+}
+
+loadStats();setInterval(loadStats,4000);
+</script>
+</body>
+</html>

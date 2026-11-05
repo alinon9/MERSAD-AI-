@@ -79,6 +79,18 @@ class VirtualCamera:
         cv2.rectangle(img, (vx1, vy1), (vx2, vy2), (210, 180, 140), 2)
         # Windshield & headlights
         cv2.rectangle(img, (vx1 + 35, vy1 + 18), (vx2 - 35, vy1 + 85), (85, 110, 130), -1)
+        # Shaded synthetic driver face in windshield (for YuNet -> SFace face detection/alignment pipeline)
+        fcx, fcy = vx1 + 95, vy1 + 52
+        cv2.ellipse(img, (fcx, fcy - 10), (22, 16), 0, 180, 360, (32, 28, 25), -1)  # hair
+        cv2.ellipse(img, (fcx, fcy), (19, 24), 0, 0, 360, (168, 192, 218), -1)       # face oval
+        cv2.line(img, (fcx - 11, fcy - 8), (fcx - 4, fcy - 9), (45, 38, 32), 2)       # left eyebrow
+        cv2.line(img, (fcx + 4, fcy - 9), (fcx + 11, fcy - 8), (45, 38, 32), 2)       # right eyebrow
+        cv2.ellipse(img, (fcx - 7, fcy - 4), (4, 2), 0, 0, 360, (245, 245, 245), -1)  # left eye
+        cv2.ellipse(img, (fcx + 7, fcy - 4), (4, 2), 0, 0, 360, (245, 245, 245), -1)  # right eye
+        cv2.circle(img, (fcx - 7, fcy - 4), 2, (25, 20, 18), -1)                      # left pupil
+        cv2.circle(img, (fcx + 7, fcy - 4), 2, (25, 20, 18), -1)                      # right pupil
+        cv2.line(img, (fcx, fcy - 3), (fcx, fcy + 5), (135, 155, 180), 2)             # nose bridge
+        cv2.ellipse(img, (fcx, fcy + 11), (6, 2), 0, 0, 180, (95, 90, 145), 2)        # mouth
         cv2.circle(img, (vx1 + 40, vy2 - 55), 16, (215, 245, 255), -1)
         cv2.circle(img, (vx2 - 40, vy2 - 55), 16, (215, 245, 255), -1)
 
