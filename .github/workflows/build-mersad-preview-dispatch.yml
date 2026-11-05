@@ -52,7 +52,25 @@ jobs:
           git archive --format=tar refs/remotes/origin/mersad-lab-orig --output=$archive
           if ($LASTEXITCODE -ne 0) { throw "Unable to archive original LAB source" }
           tar -xf $archive -C $dest
-          if ($LASTEXITCODE -ne 0) { throw "Unable to extract original LAB source" }
+          if ($LASTEXITCODE -ne 0) { throw "Unable to extract original LAB source parts" }
+
+          # Reassemble the original LAB source archive from the nine tracked parts.
+          $encodedParts = @()
+          for ($i = 1; $i -le 9; $i++) {
+            $partName = "mersad_lab_source_part_{0:D2}.txt" -f $i
+            $partPath = Join-Path $dest ("ci\" + $partName)
+            if (!(Test-Path -LiteralPath $partPath -PathType Leaf)) { throw "Missing original LAB source part: $partPath" }
+            $encodedParts += (Get-Content -LiteralPath $partPath -Raw).Trim()
+          }
+          $encoded = $encodedParts -join ""
+          if (($encoded.Length % 4) -ne 0) { throw "Original LAB source archive has invalid base64 length" }
+          $zipBytes = [Convert]::FromBase64String($encoded)
+          $sourceZip = Join-Path $env:RUNNER_TEMP "mersad-original-lab-source.zip"
+          [IO.File]::WriteAllBytes($sourceZip, $zipBytes)
+          Expand-Archive -LiteralPath $sourceZip -DestinationPath $dest -Force
+          if (!(Get-ChildItem -LiteralPath $dest -Recurse -Filter "*.py" -File | Select-Object -First 1)) {
+            throw "Original LAB source archive did not produce Python source files"
+          }
           Set-Content -Path (Join-Path $dest "COMMIT_SHA.txt") -Value $actual -Encoding ASCII
 
       - name: Build, test, package, and verify the complete release
