@@ -70,7 +70,7 @@ $pip = (Resolve-Path ".venv_final\Scripts\pip.exe").Path
 $pyinst = Join-Path (Split-Path $py) "pyinstaller.exe"
 
 Write-Host "[Phase 1A] Installing pinned Windows x64 dependencies..."
-& $pip install --upgrade pip
+& $py -m pip install --upgrade pip
 Assert-ExitCode "pip upgrade"
 & $pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
 Assert-ExitCode "pip install CPU torch==2.5.1"
