@@ -231,6 +231,13 @@
       "summary": "Windows unified CI workflow lacked CPU PyTorch wheel index and check_install.py --verify-pip-deps",
       "test_id": "PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
       "status": "PASS"
+    },
+    {
+      "id": "BUG-12",
+      "severity": "High",
+      "summary": "PUSH_CANDIDATE script targeted historical branch preview/mersad-ai-lab-0.1-20261105 (9491bcd) instead of release/mersad-preview-0.1 (25131918), lacked remote SHA verification via git ls-remote, and did not fail-fast when gh CLI was missing/unauthenticated",
+      "test_id": "deploy_and_run_github_actions.py --self-test (8/8 PASS)",
+      "status": "PASS"
     }
   ],
   "integration_14_checks_detail": [

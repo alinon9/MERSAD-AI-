@@ -27,7 +27,7 @@ MERSAD_PREVIEW_0.1/
 │   ├── prefetch.py                          # أداة تنزيل النماذج والتحقق الصارم من بصمات SHA-256
 │   ├── check_install.py                     # أداة فحص جاهزية التثبيت والبيئة والنماذج
 │   ├── verify_integrity.py                  # أداة التحقق الجنائي من سلامة ملفات النظام
-│   ├── selftest.py                          # حزمة الاختبارات الآلية الشاملة (225 اختباراً)
+│   ├── selftest.py                          # حزمة الاختبارات الآلية الشاملة (232 اختباراً)
 │   ├── mersad_ai.spec & BUILD_EXE.bat       # إعدادات وسكربت بناء MERSAD_AI.exe عبر PyInstaller
 │   ├── setup.bat, RUN.bat, RUN_LAN.bat      # سكربتات الإعداد والتشغيل على Windows 10/11 x64
 │   ├── SYSTEM_REQUIREMENTS_AR.md            # متطلبات النظام والعتاد والنماذج

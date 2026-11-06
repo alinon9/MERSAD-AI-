@@ -1,0 +1,1859 @@
+{
+  "release_version": "MERSAD AI & MERSAD LAB — Preview 0.1",
+  "branch": "release/mersad-preview-0.1",
+  "commits": {
+    "mersad_ai_code_release_commit": "25131918a981ac2ac37923d4c738d9f93cdcbc5b",
+    "mersad_ai_tag": "v0.1.0-preview-code",
+    "mersad_ai_rollback_tags": {
+      "rollback-preview01-f66ecea": "f66ecea30069b6e8fd5b5783db94ca75d4a1db32",
+      "rollback-stable-49e400c": "49e400c0ec45dd3933227f1e988244e5ba50ec05",
+      "rollback-stable-9491bcd": "9491bcd0d610c51ce76b599591db5c9f0b84cd44",
+      "rollback-stage15-64b0dde": "64b0dde9013c973261da37e21861c642679cf5eb",
+      "main_untouched": "25c9e5bba30dc8f921675e12c23a53571be895c1"
+    },
+    "mersad_lab_code_release_commit": "e9284356f4d1a8205946d5893121c6f8a2f22012",
+    "mersad_lab_rollback_tag": {
+      "rollback-stable-lab": "1c56dcbf77d62b8d89863e04f215e12f162e9555"
+    }
+  },
+  "final_verdict": "READY WITH LIMITATIONS",
+  "field_readiness_claimed": false,
+  "verdict_summary_ar": "جاهز للعرض التجريبي مع قيود بيئية موثقة (READY WITH LIMITATIONS — الجاهزية الميدانية منفصلة عن جاهزية المعاينة؛ بناء وتشغيل ملفات .exe الخمسة على Windows 10/11 x64 وتحميل واختبار أوزان النماذج الأربعة الثقيلة مسجلة بصراحة كـ NOT TESTED في حاوية Linux المعزولة)",
+  "reconciliation_explanation": {
+    "selftest_historical_vs_current": "Historical progression: 136 PASS (PATCHED_SOURCE 3bf86f1e) -> 201 PASS (Stage 15 64b0dde9) -> 225 PASS (Initial Merge 49e400c0) -> 230 PASS (Commit 4ffc147, BUG-01..06) -> 231 PASS (Commit f66ecea, BUG-07) -> CURRENT FINAL: 232 PASS (Commit 25131918a981ac2ac37923d4c738d9f93cdcbc5b, adding test #232 PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP for BUG-09..11).",
+    "integration_historical_vs_current": "Historical condensed run had 8 checks (7 PASS for INT-E2E-01..07 + 1 NOT_TESTED for PHASE4-GATE-01). CURRENT FINAL run in integration/test_ai_lab_integration.py unifies all 12 functional integration scenarios (INT-SCEN-01..12 encompassing INT-E2E-01..07 = 12 PASS) + 2 explicit environment/hardware gates (PHASE4-GATE-01 = NOT_TESTED, INT-HW-RTSP-USB = NOT_TESTED) = 14 total checks."
+  },
+  "unified_decision_matrix": [
+    {
+      "id": "MAT-01",
+      "suite": "MERSAD AI selftest.py (Standard Mode)",
+      "status": "PASS",
+      "passed": 232,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt & logs/05_preview01_ai_selftest_std_232_pass.log"
+    },
+    {
+      "id": "MAT-02",
+      "suite": "MERSAD AI selftest.py (MERSAD_BLOCK_SKLEARN=1 StatForest Mode)",
+      "status": "PASS",
+      "passed": 232,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "reports_and_logs/mersad_ai_selftest_no_sklearn_log.txt & logs/06_preview01_ai_selftest_nosklearn_232_pass.log"
+    },
+    {
+      "id": "MAT-03",
+      "suite": "MERSAD AI verify_integrity.py",
+      "status": "PASS",
+      "passed": 18,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "reports_and_logs/mersad_ai_verify_integrity_log.txt"
+    },
+    {
+      "id": "MAT-04",
+      "suite": "MERSAD LAB test_lab.py (8 Functional + 12 Security/Stress)",
+      "status": "PASS",
+      "passed": 20,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt & logs/09_preview01_lab_20_checks_pass.log"
+    },
+    {
+      "id": "MAT-05",
+      "suite": "End-to-End Integration Scenarios (INT-SCEN-01..12 on Real Engine + Tesseract 5 LSTM)",
+      "status": "PASS",
+      "passed": 12,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "reports_and_logs/ai_lab_integration_log.txt"
+    },
+    {
+      "id": "MAT-06",
+      "suite": "Auxiliary Tesseract 5 LSTM Pixel OCR Ground-Truth Benchmark (4 Synthetic + 4 Live MJPEG, ExactMatch=100%, CER=0.0%)",
+      "status": "PASS",
+      "passed": 8,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "reports_and_logs/model_inference_log.txt"
+    },
+    {
+      "id": "MAT-07",
+      "suite": "Live Security Penetration Suite & 203 SQLite AST Queries",
+      "status": "PASS",
+      "passed": 10,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 0,
+      "log_source": "RELEASE_DELIVERABLES/PREVIEW_0.1/SECURITY_AUDIT.md"
+    },
+    {
+      "id": "MAT-08",
+      "suite": "Primary 4 Heavy AI Models Ground-Truth Acceptance (YuNet, SFace, YOLOv8n, EasyOCR — Synth & Live)",
+      "status": "NOT_TESTED",
+      "passed": 0,
+      "failed": 0,
+      "not_tested": 8,
+      "blocked": 0,
+      "log_source": "reports_and_logs/model_inference_results.json"
+    },
+    {
+      "id": "MAT-09",
+      "suite": "Primary Real Models E2E Gate (PHASE4-GATE-01)",
+      "status": "NOT_TESTED",
+      "passed": 0,
+      "failed": 0,
+      "not_tested": 1,
+      "blocked": 0,
+      "log_source": "reports_and_logs/ai_lab_integration_results.json"
+    },
+    {
+      "id": "MAT-10",
+      "suite": "Physical RTSP IP Camera & USB Webcam Hardware Capture (INT-HW-RTSP-USB) & 2-Hour Soak",
+      "status": "NOT_TESTED",
+      "passed": 0,
+      "failed": 0,
+      "not_tested": 2,
+      "blocked": 0,
+      "log_source": "reports_and_logs/ai_lab_integration_results.json"
+    },
+    {
+      "id": "MAT-11",
+      "suite": "Native Windows x64 Release Outputs (MERSAD_AI.exe, MERSAD_LAB.exe, MERSAD_LAB_Setup_x64.exe, MERSAD_AI_Portable_x64.zip, MERSAD_LAB_Portable_x64.zip)",
+      "status": "NOT_TESTED",
+      "passed": 0,
+      "failed": 0,
+      "not_tested": 5,
+      "blocked": 0,
+      "log_source": "BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1 & release-mersad-preview-0.1-windows.yml"
+    },
+    {
+      "id": "MAT-12",
+      "suite": "Original MERSAD LAB (Commit ed7b8f727243da4878e547f08489af581c83291c) Forensic Comparison",
+      "status": "BLOCKED",
+      "passed": 0,
+      "failed": 0,
+      "not_tested": 0,
+      "blocked": 1,
+      "log_source": "reports_and_logs/original_vs_cleanroom_lab_comparison.json"
+    }
+  ],
+  "totals_across_matrix": {
+    "total_checks": 549,
+    "passed": 532,
+    "failed": 0,
+    "not_tested": 16,
+    "blocked": 1,
+    "executed_pass_rate_pct": 100.0,
+    "overall_matrix_pass_pct": 96.9
+  },
+  "bugs_closed_in_final_release": [
+    {
+      "id": "BUG-01",
+      "severity": "Critical/High",
+      "summary": "wire() overwrote bus.post['/api/cameras/add|remove']",
+      "test_id": "PREVIEW01-WIRE-CAMERAS-POST",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-02",
+      "severity": "High",
+      "summary": "remove_camera_runtime() OpenCV cap.release() Use-After-Free SIGSEGV",
+      "test_id": "PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-03",
+      "severity": "Medium/High",
+      "summary": "compare_original_vs_cleanroom_lab.py relative --cleanroom-dir path failure",
+      "test_id": "PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-04",
+      "severity": "Medium",
+      "summary": "Windows unified build script dist RUN.bat launchers, opencv-python-headless guard & pyinstaller==6.11.1",
+      "test_id": "PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-05",
+      "severity": "Medium",
+      "summary": "TesseractOCRReader OMP_THREAD_LIMIT=1 multi-camera contention guard",
+      "test_id": "PREVIEW01-OMP-THREAD-LIMIT",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-06",
+      "severity": "Low/Medium",
+      "summary": "Explicit requires_human_review=True & verification_policy=HUMAN_VERIFICATION_REQUIRED in bus.alerts",
+      "test_id": "PREVIEW01-ALERT-HUMAN-REVIEW-FLAG",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-07",
+      "severity": "Critical/Blocker",
+      "summary": "Phase 2 --require-unblocked aborted Windows build before Phase 3B when Original LAB is placeholder",
+      "test_id": "PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-08",
+      "severity": "Medium",
+      "summary": "MersadEngineController._supervisor_loop idle tick overwrote brightness/resolution/last_plate telemetry",
+      "test_id": "INT-SCEN-05 & INT-SCEN-08",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-09",
+      "severity": "High",
+      "summary": "evaluate_ai_models.py granted PASS for 4-frame inference without ground-truth IoU/CER/ExactMatch/Positive-Negative face gates",
+      "test_id": "PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-10",
+      "severity": "High",
+      "summary": "Windows CI workflows lacked explicit Inno Setup 6 path resolution and automatic Chocolatey installation",
+      "test_id": "PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-11",
+      "severity": "Medium/High",
+      "summary": "Windows unified CI workflow lacked CPU PyTorch wheel index and check_install.py --verify-pip-deps",
+      "test_id": "PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-12",
+      "severity": "High",
+      "summary": "PUSH_CANDIDATE script targeted historical branch preview/mersad-ai-lab-0.1-20261105 (9491bcd) instead of release/mersad-preview-0.1 (25131918), lacked remote SHA verification via git ls-remote, and did not fail-fast when gh CLI was missing/unauthenticated",
+      "test_id": "deploy_and_run_github_actions.py --self-test (8/8 PASS)",
+      "status": "PASS"
+    }
+  ],
+  "integration_14_checks_detail": [
+    {
+      "id": "PHASE4-GATE-01",
+      "check": "PHASE4-GATE-01: Primary pipeline `LAB -> MJPEG -> OpenCV -> YOLOv8n -> Plate -> EasyOCR -> Registry -> Alert -> SQLite -> Audit`",
+      "status": "NOT_TESTED",
+      "category": "PRIMARY_REAL_MODELS_E2E",
+      "detail": "Blocked in offline Linux sandbox (Tesseract NOT substituted for EasyOCR acceptance): YOLOv8n load failed: ModuleNotFoundError: No module named 'ultralytics'; EasyOCR load failed: ModuleNotFoundError: No module named 'easyocr'"
+    },
+    {
+      "id": "INT-HW-RTSP-USB",
+      "check": "INT-HW-RTSP-USB: Physical RTSP IP camera & USB webcam hardware capture",
+      "status": "NOT_TESTED",
+      "category": "PHYSICAL_CAMERA_HARDWARE",
+      "detail": "No physical USB/RTSP camera attached in sandbox (usb_0_status=FAIL, released=True); software RTSP redaction verified ('rtsp://admin:***@192.168.1.50:554/h264')"
+    },
+    {
+      "id": "INT-SCEN-01",
+      "check": "INT-SCEN-01: Start MERSAD AI server, SQLite database & token auth guard",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "unauth_status=403, auth_status=200, journal_mode=wal"
+    },
+    {
+      "id": "INT-SCEN-02",
+      "check": "INT-SCEN-02: Start MERSAD LAB server & initialize 4 virtual cameras",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "health=healthy, virtual_cameras=4"
+    },
+    {
+      "id": "INT-SCEN-03",
+      "check": "INT-SCEN-03: Add virtual cameras LAB_CAM1 & LAB_CAM2 via m.wire() -> spawn real AI reader & inference threads (INT-E2E-01)",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "LAB_CAM1 worker_spawned=True, LAB_CAM2 worker_spawned=True"
+    },
+    {
+      "id": "INT-SCEN-04",
+      "check": "INT-SCEN-04: Stream live MJPEG test video from MERSAD LAB",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "status=200, frames_delivered=4, bytes=99426"
+    },
+    {
+      "id": "INT-SCEN-05",
+      "check": "INT-SCEN-05: Feed video stream into CV engine & compute real-time frame quality metrics",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "LAB_CAM1 frames=76, detections=4, brightness=75.72, res=640x480"
+    },
+    {
+      "id": "INT-SCEN-06",
+      "check": "INT-SCEN-06: Autonomous vehicle/plate detection, pixel OCR & mandatory human-review alert governance (INT-E2E-02)",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "Sightings=[('LAB_CAM1', 'عدن-12345', 0.95), ('LAB_CAM2', 'صنعاء-48210', 0.96)], alerts=2, requires_human_review=True, ocr_engine=Tesseract-5-LSTM-Real-Pixel-OCR"
+    },
+    {
+      "id": "INT-SCEN-07",
+      "check": "INT-SCEN-07: Multi-frame trajectory tracking & alert deduplication across continuous frames (INT-E2E-03)",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "LAB_CAM1 frames 77->91, alerts for عدن-12345: 1 (expected 1)"
+    },
+    {
+      "id": "INT-SCEN-08",
+      "check": "INT-SCEN-08: Deliver live detection, camera health, analytics & blurred evidence to Dashboard API",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "stats=200, cameras=200, analytics=200, last_plate=عدن-12345, evidence_jpeg=True"
+    },
+    {
+      "id": "INT-SCEN-09",
+      "check": "INT-SCEN-09: Persist sightings, alerts, camera status history & audit records in SQLite",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "sightings=2, alerts=2, camera_status_history=4, audit=11"
+    },
+    {
+      "id": "INT-SCEN-10",
+      "check": "INT-SCEN-10: Save logs, analytics CSV export & verify HMAC-SHA256 audit chain and secret redaction",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "csv_bytes=1080, log_bytes=755, token_leaked=False, verify='Audit chain OK (11 records)'"
+    },
+    {
+      "id": "INT-SCEN-12",
+      "check": "INT-SCEN-12: Camera disconnect isolation (LAB_CAM2 online) & automatic reconnection recovery (INT-E2E-04 & INT-E2E-05)",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "disconnect_state=reconnecting, LAB_CAM2_continuity=online, reconnected_state=online, reconnect_count=1"
+    },
+    {
+      "id": "INT-SCEN-11",
+      "check": "INT-SCEN-11: Stream health (FROZEN/OCCLUDED), safe active camera removal, engine stop/restart & audit persistence (INT-E2E-06 & INT-E2E-07)",
+      "status": "PASS",
+      "category": "INDEPENDENT_TESSERACT_E2E",
+      "detail": "frozen=FROZEN_STREAM, cam2_removed=True, audit_rows=13->14, verify='Audit chain OK (14 records)'"
+    }
+  ],
+  "mersad_lab_20_checks_detail": [
+    {
+      "status": "PASS",
+      "id": "LAB-01",
+      "description": "Camera JPEG rendering -- modes=normal,lowlight,lowres,noise,occluded,frozen,delay verified",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-02",
+      "description": "MJPEG streaming -- status=200, frames_received=4, bytes=99915",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-03",
+      "description": "Health endpoint -- version=MERSAD LAB 1.0 — PREVIEW 0.1, cameras=4, rss_mb=240.74",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-04",
+      "description": "Invalid camera mode rejection -- HTTP 400 returned with valid_modes list",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-05",
+      "description": "Offline camera HTTP 503 -- frame=503, stream=503",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-06",
+      "description": "OpenCV/FFmpeg virtual camera reading -- frames_read=4, shape=(480, 640, 3)",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-07",
+      "description": "Image quality upload -- grade=ممتازة (Excellent), sharpness=1205.32, brightness=76.53",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-08",
+      "description": "Video quality upload -- sampled_frames=10, grade=ممتازة (Excellent), elapsed=0.031s",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-01",
+      "description": "Access control & token validation -- bad_token=401, missing_token=401, valid_token=200",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-02",
+      "description": "Host & Origin validation -- evil_host=403, evil_origin=403",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-03",
+      "description": "CSRF & unexpected local access blocked -- null_origin=403, cross_site=403, text_plain=403",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-04",
+      "description": "Dynamic XSS escaping & CSP headers -- escaped_title=&lt;script&gt;alert(&#x27;XSS&#x27;)..., CSP present",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-05",
+      "description": "Zero innerHTML usage in index.html -- 0 unsafe DOM sinks; uses textContent/createElement exclusively",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-06",
+      "description": "Abnormal file size rejection -- HTTP 413 returned for oversized payload",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-07",
+      "description": "Corrupt video graceful rejection -- corrupt_video_status=400, post_health=200",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-08",
+      "description": "Memory & CPU pressure bounds -- rss_before=258.41MB, rss_after=258.41MB, delta=+0.00MB",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-09",
+      "description": "Concurrent upload throttling (HTTP 429) -- statuses=[429, 429, 429, 200, 200, 200] (200=3, 429=3)",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-10",
+      "description": "Video processing timeout (HTTP 504) -- status=504, sampled_before_timeout=1",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-11",
+      "description": "Start/stop stability & CLI self-check -- 3 start/stop cycles + subprocess --self-check exit=0",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "LAB-SEC-12",
+      "description": "Zero hanging processes/threads/ports on close -- port 42481 released, lingering_threads=0",
+      "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
+    }
+  ],
+  "mersad_ai_232_checks_detail": [
+    {
+      "status": "PASS",
+      "id": "UNIT",
+      "description": "normalize Eastern & Persian Arabic numerals to ASCII",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#2",
+      "description": "distinct lettered plates do NOT merge into same ID",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-1",
+      "description": "all 4 realistic OCR variants ('91234','عدن 91234','ع91234','عدن٩١٢٣٤') match registry '91234'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-1#2",
+      "description": "exact match vs digits-only match carries appropriate match_type & reduced conf_factor",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-1#3",
+      "description": "two plates with same digits & different letters are NOT merged and disambiguate or flag ambiguous",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B",
+      "description": "contradictory letters ('صنعاء-81234' vs 'عدن-81234') downgrade to 'POSSIBLE MATCH (visual check)' (NOT high priority)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B#2",
+      "description": "OCR confusion '12O45' & edit-distance-1 '12945' match wanted '12045' with 'تقريبي' tag, while normal '60045' does not match '60945'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-1#4",
+      "description": "imported vehicle with governorate in separate column matches OCR 'عدن 65432' with full confidence",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-C",
+      "description": "CSV import with (65432,عدن,مطلوبة) & (65432,صنعاء,عادية) saves 2 distinct records & protects wanted from silent downgrade",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#3",
+      "description": "stale OCR reads expire after window_sec without false confirmation",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#4",
+      "description": "3 consistent reads within window confirm plate & infer direction",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#5",
+      "description": "cooldown prevents duplicate alert on consecutive frames",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#6",
+      "description": "returning vehicle after cooldown is re-confirmed cleanly",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-1#5",
+      "description": "noisy letter sequence ['عدن 12345','ع 12345','عدن 12345'] from same track confirms on 3rd read & picks 'عدن-12345'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A",
+      "description": "'أب-4444' and 'جد-4444' stay in separate vote buckets and do NOT falsely confirm on 3 mixed reads",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#7",
+      "description": "face embedding validation rejects wrong dimension or zero norm",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UNIT#8",
+      "description": "face embedding validation normalizes 128-D vector to unit length",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "VIDEO",
+      "description": "empty or None frames handled safely without crash",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-8",
+      "description": "detect_vehicles passes classes=[2, 3, 5, 7] filter to YOLO model",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "VIDEO#2",
+      "description": "dynamic YOLO class mapping resolves custom class names ('lorry' -> 'truck') & passes classes=[0, 4]",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-8#2",
+      "description": "class-filtered detect_vehicles benchmark completed quickly (200 calls in 29.5ms)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "DB",
+      "description": "legacy database migrated non-destructively (v1..v5) with automatic backup & canonical vehicle key",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-4",
+      "description": "default topology is honestly marked uncalibrated & has no unverified 'via' hop",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-4#2",
+      "description": "user-configured camera_links row is marked calibrated=True",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STATS",
+      "description": "insufficient data (<50) and NULL/invalid timestamps handled safely without false forecast",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH",
+      "description": "Scenario 1: CAM1 -> CAM2 -> CAM3 logical transit",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#2",
+      "description": "Scenario 2: simultaneous appearance at two cameras flagged as reviewable suspicion",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#3",
+      "description": "Scenario 3: impossible transit includes IDs, cams, timestamps, dt, min_expected, source & confidence",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#4",
+      "description": "Scenario 4: missing intermediate camera (CAM2) detected on CAM1 -> CAM3 jump (from user topology)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#5",
+      "description": "Scenario 5: clock skew / out-of-order ingestion detected and chronologically sorted",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#6",
+      "description": "Scenario 6: duplicate sightings within 15s at same camera merged",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#7",
+      "description": "Scenario 7: non-existent plate returns found=False with empty steps",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PATH#8",
+      "description": "Scenario 8: uncalibrated camera marked calibrated=False with limitation note",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#2",
+      "description": "'112345'@CAM1 and '12345'@CAM2 do NOT collide in check_route or plate_path",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#3",
+      "description": "'أب-4444' and 'جد-4444' stay separate in check_route, full-plate search, and digits-only search",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-4#3",
+      "description": "src='demo' sightings are strictly excluded from live check_route",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-4#4",
+      "description": "changing --cam within the same single-camera session does not produce false route conflict",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC",
+      "description": "Telegram bot token and RTSP password are redacted from error messages and logs",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-G",
+      "description": "file token & RTSP credentials migrated to .mersad_secrets.json, cleared from mersad_config.json, and not lost on save_cfg",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-G#2",
+      "description": "preexisting env token takes precedence over file token and is never written to mersad_config.json",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P3-9",
+      "description": "save_cfg does not write environment TELEGRAM_TOKEN in plaintext to mersad_config.json",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-K",
+      "description": "two persons with identical name & different ref coexist via internal ID, and pseud() uses keyed HMAC",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-K#2",
+      "description": "bystander face bounding boxes are blurred in evidence frames while rest of image is untouched",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-L",
+      "description": "demo sightings do not prevent first live sighting from triggering 'NEW PLATE (first sighting)'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-M",
+      "description": "requirements.txt pins exact versions, MODELS & EASYOCR_SHA256 use pinned commit + SHA-256, and setup.bat replaces headless OpenCV",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "UI",
+      "description": "dashboard.html uses safe data-p attribute and includes 'توجيهات لم تصل للدوريات' & camera switcher",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "BUILD",
+      "description": "BUILD_EXE.bat includes all local hidden imports, dashboard.html, and model copy step",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-5",
+      "description": "RUN_LAN.bat exists and enables --host 0.0.0.0 with HTTP security notice",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-J",
+      "description": "with wire() initialized: 127.0.0.1 serves 200 on loopback & refuses connection on LAN IP (127.0.0.2), while 0.0.0.0 serves 200 on LAN IP",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-E",
+      "description": "2 concurrent OS processes x 50 alerts = 100 unique alerts, 0 errors, intact audit chain, & exactly one Telegram listener owner",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-6",
+      "description": "multi-process shared DB synchronizes alerts across processes",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-D",
+      "description": "3 cameras run equal detections, serve per-camera /stream.mjpg?cam=, survive injected detect exception, and CAM2 reconnects after drop",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "API",
+      "description": "unauthenticated request rejected with HTTP 403",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#2",
+      "description": "path traversal on /evidence/ rejected with HTTP 403/404",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P3-9#2",
+      "description": "GET /?k=t returns 302 with HttpOnly cookie & Location: /, and GET / with cookie succeeds",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT",
+      "description": "live MJPEG video stream active",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "API#2",
+      "description": "dashboard stats API works on initial database before seeding",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-API",
+      "description": "authenticated /api/analytics returns 24 hourly bins and aggregate-only metrics",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-API#2",
+      "description": "authenticated /api/camera-health supports selectable reporting periods",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-SEC",
+      "description": "new analytics and camera-history API endpoints reject invalid tokens",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-API#3",
+      "description": "privacy-safe analytics CSV export has UTF-8 BOM and attachment headers",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-API#4",
+      "description": "camera reliability CSV export has UTF-8 BOM and attachment headers",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "API#3",
+      "description": "registry: add vehicle (API)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "API#4",
+      "description": "registry: add person with consent",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#2",
+      "description": "face enrollment from camera (5 validated 128-D samples)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#3",
+      "description": "wanted-vehicle alert (Arabic OCR 'عدن ١٢٣٤٥' matches registry '12345')",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#4",
+      "description": "face-match alert after consecutive matches",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#5",
+      "description": "alert carries vehicle details & digits-only match note",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "API#5",
+      "description": "evidence JPEG image served safely",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-I",
+      "description": "repeated wanted alert for same pending plate increments repeat_count without creating duplicate alert",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#6",
+      "description": "phone alert reaches operations room with photo",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#7",
+      "description": "phone alert text: priority, plate, camera, human-confirmation note",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#8",
+      "description": "phone alert has 3 decision buttons",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#3",
+      "description": "patrols NOT notified before human confirmation",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#4",
+      "description": "stranger's button press is rejected",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-3",
+      "description": "Telegram callback answered immediately (0.20s < 1.2s) & camera frames kept advancing during slow dispatch",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#9",
+      "description": "operator taps confirm -> patrols receive dispatch after network delay",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#10",
+      "description": "dispatch to patrols has no buttons",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#11",
+      "description": "tap answered and inline buttons removed",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "DB#2",
+      "description": "tap recorded in audit & alerts table marked dispatch_status='sent'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#5",
+      "description": "second tap says already decided (no duplicate dispatch)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-2",
+      "description": "failed patrol dispatch sets dispatch_status='failed', appears in failed_dispatches, and schedules retry",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-2#2",
+      "description": "automatic backoff retry delivers patrol dispatch once network recovers & clears failed_dispatches",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-F",
+      "description": "confirmed alert with attempts=0 (crashed before first attempt) is picked up and sent by retry loop",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-4#5",
+      "description": "uncalibrated route conflict raises 'ROUTE NOTICE (uncalibrated)' (🔵 للعلم) with NO patrol dispatch buttons",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-F#2",
+      "description": "server rejects decide('confirm') on INFO_ONLY / uncalibrated route notice alert",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#6",
+      "description": "revoking person consent immediately erases stored face embeddings",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STATS#2",
+      "description": "learning: seed demo history + train (works with or without sklearn)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STATS#3",
+      "description": "learning: 24h forecast, empirical band metadata, corridors & anomalies",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P3-9#3",
+      "description": "summary()['model'] includes explicit 'type' field ('IsolationForest' or 'StatForest')",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "API#6",
+      "description": "/api/path returns trajectory & structured spatio-temporal conflict for plate 99991",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-H",
+      "description": "/api/archive_evidence ignores low retention_days parameter (enforces >=7d floor) & protects pending alert evidence",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#7",
+      "description": "deleting a person erases the record cleanly",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#8",
+      "description": "audit chain & all evidence JPEG hashes verified intact",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P2-7",
+      "description": "archive_old_evidence moves resolved file to evidence_archive/, logs actor, and verify() passes",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-H#2",
+      "description": "verify() detects tampering or deletion of archived evidence inside evidence_archive/",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#9",
+      "description": "verify() detects modified unarchived evidence image on disk",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "INT#12",
+      "description": "session closed cleanly and recorded in audit log",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#4",
+      "description": "homonymous persons get distinct person_ids; unconsented person embeddings are NEVER loaded or matched",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#5",
+      "description": "changing watchlist status of one homonymous person does not alter the other person status",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#6",
+      "description": "revoking consent of one homonymous person erases ONLY their embeddings & preserves the other person",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#7",
+      "description": "deleting one homonymous person by ID preserves the other person record & embeddings (and ambiguous name delete is blocked)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-A#8",
+      "description": "legacy face row with person_id=0 and ambiguous name is quarantined and excluded from matching",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B#3",
+      "description": "active non-expired in_flight lease is NOT reset by _sync_alerts_from_db(reset_stuck_in_flight=True) or stolen by second process",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B#4",
+      "description": "expired in_flight lease is recovered and sent once, and subsequent duplicate dispatch is blocked",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B#5",
+      "description": "network timeout during dispatch records dispatch_status='uncertain' (dispatched=0) and prevents blind auto-resend",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B#6",
+      "description": "legacy confirmed alert with attempts=0 & next_retry_ts=0 is scheduled and dispatched cleanly without resending sent alerts",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P0-B#7",
+      "description": "2 OS processes: Process 2 startup does NOT reset or duplicate Process 1 active in_flight dispatch",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-C",
+      "description": "service stays alive when all cameras are offline at boot, and recovers camera after >3 failed reconnect attempts",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-C#2",
+      "description": "slow RTSP camera (frames=1) does NOT block fast camera (frames=18) from completing in 0.52s",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-D",
+      "description": "HMAC key created with 0600, persists across restart, refuses corrupt key overwrite, and fails closed without static fallback",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-D#2",
+      "description": "interrupted secrets save preserves previous .mersad_secrets.json (0600) and cleans up temporary file",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "P1-E",
+      "description": "archive recovery protects pending alerts & unlogged copies, rejects hash mismatch, and completes valid interrupted archive with intact verify()",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "SEC#10",
+      "description": "final audit chain & all active/archived evidence verified after Round 4 tests",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "R5-DEPS",
+      "description": "requirements.txt, constraints-win-x64.txt, setup.bat, BUILD_EXE.bat, mersad_ai.spec & Windows CI workflow are aligned",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "R5-ENV",
+      "description": "venv/.ready rejects legacy 'ok', cleans stale stamp on failure, verifies models, and detects modified requirements.txt or corrupt model",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "R5-MODELS",
+      "description": "safe model downloader enforces timeout, Content-Length, SHA-256, & PyTorch ZIP structure, retries transient errors, and preserves existing valid models",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "R5-PATHS",
+      "description": "read-only install dir with Arabic & spaces automatically falls back to writable user data dir and persists DB & keys across restarts",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "R5-DIAG",
+      "description": "check_install.py --json classifies CORE_LOGIC, PYTHON_ENV, REQUIRED_LIB, OPTIONAL_LIB, BUILD_REQ, & MODEL status",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-ANALYTICS",
+      "description": "24h live-only aggregate report, previous-period comparison, 24-slot trend, confidence bands, alerts and recommendations",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-PRIVACY",
+      "description": "analytics CSV excludes plate values and demo records and neutralizes spreadsheet formulas",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-CAMERA-HISTORY",
+      "description": "camera transitions persist without duplicate polling noise; uptime is calculated only from observed session intervals",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-CAMERA-EXPORT",
+      "description": "camera health report exports summary/event rows and does not expose personal data",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-EMPTY-DB",
+      "description": "analytics gracefully handles an empty/legacy database",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7.1-VERIFY-MODELS",
+      "description": "--verify-models CLI checks all 4 AI model families and returns accurate exit codes",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7.1-DASH-EXPORT-TOKEN",
+      "description": "dashboard.html binds #analytics-export href with qSep('/api/analytics/export.csv') for cookie-less auth",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7.1-PACKAGING-HARDENING",
+      "description": "PyInstaller spec, BUILD_EXE.bat, CI workflow & runtime enforce offline mode and exclude unused optional submodules",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7.1-WIN-ACL",
+      "description": "atomic_write_secret_bytes restricts Windows file ACLs via icacls /inheritance:r",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE1-GAP02",
+      "description": "migrate_db rolls back & verifies DELETE on WAL failure, forbids MEMORY/OFF, and raises on disk-full/read-only",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE1-GAP03",
+      "description": "check_install.py --json & mersad_live.py --verify-models preserve cwd and create zero DB/log/evidence files",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE1-GAP06",
+      "description": "2 concurrent subprocesses running seed_demo/clear_demo & live sightings/alerts complete with 0 lock errors",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE1-GAP01",
+      "description": "--verify-pip-deps accepts verified opencv-python==4.11.0.86 GUI replacement & rejects any real dependency conflict",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE2-GAP05-MIGRATION",
+      "description": "registry.migrate_db upgrades v1..v5 camera_links with via column, records migration 6, and is idempotent",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE2-GAP05-TOPOLOGY",
+      "description": "configure_topology is deterministic (frozen 2-hop, sorted tie-break) & /api/camera_links enforces validation",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE2-GAP04",
+      "description": "seed_demo() never pollutes live summary/forecast/plate_path; demo data requires explicit include_demo=True",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE2-GAP07",
+      "description": "check_install.py --camera --json verifies camera open/read, guarantees cap.release(), and redacts RTSP passwords",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE3-GAP09",
+      "description": "vehicle alerts blur 100% of faces (normal, watch & unenrolled); face alerts blur all non-target faces; YuNet default threshold is 0.65",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE3-GAP10",
+      "description": "enroll_step enforces camera binding, >=40px face size, competing-face rejection, and aborts after 5 inconsistent samples",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE3-GAP11",
+      "description": "hybrid audit chain verifies legacy SHA-256 + h1 HMAC-SHA256 without rewriting history, blocks downgrade attacks, and detects missing key",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE3-GAP15",
+      "description": "parse_curfew validates HH-HH / HH:00-HH:00 safely, video loop has no blocking input() on 'e', and FPS is isolated",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE4-GAP08",
+      "description": "24 display frames & 12 MJPEG updates completed in 13.7ms (<120ms) while 250ms OCR ran asynchronously",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE4-GAP12",
+      "description": "Bus._lock protects concurrent state, abrupt SSE/MJPEG disconnects clean up without BrokenPipe crash, & resolve_dashboard_path works",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE4-GAP13",
+      "description": "lookup_vehicle on 5,005 rows scans ONLY 5 wanted/stolen rows in 1.81ms (<25ms)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE4-GAP14",
+      "description": "dashboard.html detects HTTP 401/403 session expiry & connection loss in #st/#st-txt and passes JS syntax check",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE4-GAP16",
+      "description": "resolve_compute_device selects cuda:0 when available, falls back to CPU with warning when unavailable, and passes device to YOLO & EasyOCR",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE5-GAP17",
+      "description": "evaluate_plates_dataset computes exact_match_rate, digits_match_rate, CER, recall & IoU accurately, and safely reports missing datasets",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE5-GAP18",
+      "description": "mersad_ai.spec, BUILD_EXE.bat & windows-build.yml hiddenimports and PowerShell $env:RUNNER_TEMP isolation are aligned",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE6-GAP01",
+      "description": "FACE_DETECT_INTERVAL caches st['face_entries'] on intermediate frames (50% fewer SFace runs) while preserving 100% vehicle alert face blur",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE6-GAP02",
+      "description": "all reads/writes of bus.alerts & bus.failed_dispatches in mersad_live.py are protected by with bus._lock:",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE6-GAP03",
+      "description": "dashboard.html passes cam:CUR_CAM||undefined to /api/enroll, displays m.error & m.warning, and passes node --check",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE6-GAP04",
+      "description": "_ENROLL_LOCK protects enrollment state and re-enrollment replaces prior samples (5 fresh samples, old vectors removed)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE6-GAP05",
+      "description": "per-camera FH key prevents cross-camera frame_idx interference while preserving global FA cooldown, and prune_history cleans old rows",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE7-GAP06",
+      "description": "evaluate_plates_dataset(..., vyolo=...) crops detected vehicles first, translates plate coords, and achieves IoU>=0.85 & exact_match=1.0",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE7-GAP07",
+      "description": "RUN.bat, RUN_LAN.bat, and CHECK.bat enforce check_install.py --strict, python.exe paths, and errorlevel exit checks",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE7-GAP08",
+      "description": "all 7 documentation & report files document the unified V7.1 test count (193 PASS) and --evaluate-plates tool",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE8-OBS01",
+      "description": "registry.parse_file closes openpyxl read_only workbook inside try...finally without leaking handles",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE8-OBS02",
+      "description": "insights._STATE_LOCK & _TRAIN_LOCK serialize concurrent train/score_live/summary and feat() never mutates M['cams']",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE8-OBS03",
+      "description": "mersad_live._FACE_STATE_LOCK protects KNOWN, FH, and FA across concurrent refresh_known/match_face_embedding/face_step",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE8-OBS04",
+      "description": "server.py returns structured JSON on HTTP 400 & 413, reads bus.post under bus._lock, and dashboard rJson extracts error JSON",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE8-OBS05",
+      "description": "all async UI functions in dashboard.html are protected by try/catch and pass node --check syntax verification",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE9-OBS01",
+      "description": "check_camera_source restores source_with_credentials from .mersad_secrets.json while redacting password in output",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE9-OBS02",
+      "description": "mersad_live._RUNTIME_STATE_LOCK protects STATUS, WHY, AID, EVID & INS.M across concurrent threads",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE9-OBS03",
+      "description": "zero unclosed bare open() calls across all 9 production modules, wb.close() in registry.template(), and JSON 404 on unknown /api/* routes",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE9-OBS04",
+      "description": "camera_history._CURRENT is protected by _LOCK and CAMERA_HISTORY.prune_history is wired at startup and periodic maintenance",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE9-OBS05",
+      "description": "all 7 documentation & report files are unified on 193 PASS with zero stale 155 PASS references",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE10-REL01",
+      "description": "windows-build.yml generates and verifies dist\\MERSAD_AI\\RUN.bat, RUN_LAN.bat, and VERIFY_AUDIT.bat matching BUILD_EXE.bat",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE10-REL02",
+      "description": "all 7 documentation files are unified on 193 PASS & Stages 1–14 with zero stale stage/archive references",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE10-REL03",
+      "description": "evaluate_plates_dataset output schema uses canonical 'vehicle_stage_enabled' key without duplicate 'vehicle_Stage_enabled'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-CAL-CRUD",
+      "description": "Camera Link Calibration supports unit conversion to seconds, rich metadata, validation, duplicate protection, search/filter & restart persistence",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-CAL-EXPORT-IMPORT",
+      "description": "Camera links export and re-import cleanly in both JSON and CSV formats preserving all metadata",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-CAL-ENGINE-IMPACT",
+      "description": "saved calibration eliminates false positives when dt>=min_sec, flags calibrated impossible transit with speed_kmh when dt<min_sec, and marks excessive_delay when dt>max_sec",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-PE-INSPECT-MODEL",
+      "description": "inspect_plate_dataset counts valid vs corrupt/missing files and validate_plate_model_path verifies .pt structure safely",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-PE-RUN-CANCEL-METRICS",
+      "description": "in-app plate evaluation separates detection recall/precision, char accuracy (1-CER), digits match & exact match, supports cancellation, and persists runs",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-MANUAL-CAL-ISOLATION",
+      "description": "Manual calibration records are badged 'manual_unverified', support CRUD/export/import, and never inflate automated AI evaluation runs",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE11-UI-API-E2E",
+      "description": "HTTP endpoints for dataset upload, evaluation status, manual calibrations & dashboard UI sections work end-to-end",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE12-AUDIT001-PICKLE-RCE-BLOCK",
+      "description": "static pickle bytecode scanner blocks RCE payloads, rejects UNC/traversal/outside-models paths, and enforces HMAC-signed trusted SHA-256 manifest",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE12-AUDIT002-PATH-TRAVERSAL-BLOCK",
+      "description": "inspect_plate_dataset and evaluate_plates_dataset block '../', nested traversal, absolute paths, UNC shares, and symlinks without reading outside images",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE12-AUDIT003-EVAL-METRICS-INTEGRITY",
+      "description": "evaluate_plates_dataset separates detection_precision, detection_recall, detection_f1, end_to_end_exact_match_rate, and cropped_ocr_exact_match_rate without counting failed detection as E2E match",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE12-AUDIT004-SHARED-ENGINES-MEMORY",
+      "description": "start_plate_eval_job reuses registered reader and vyolo instances without duplicate loading and serializes concurrent OCR/YOLO calls safely",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE12-AUDIT005-SUBPROCESS-BROWSE-DIALOG",
+      "description": "browse_local_path never imports tkinter in the HTTP server thread, enforces non-blocking _BROWSE_DIALOG_LOCK, and runs --internal-browse-dialog in a child process",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE12-DOC-PARITY",
+      "description": "dashboard.html renders all 5 separated evaluation metrics (Recall, Precision, F1, End-to-End Exact Match, Cropped OCR Exact Match) and passes node --check",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE13-AUDIT009-AUTH-RATELIMIT",
+      "description": "server.py enforces per-IP authentication rate limiting (15 failures -> HTTP 429 JSON with Retry-After) and clears on success",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE13-AUDIT006-CHUNKED-UPLOAD-PRUNE",
+      "description": "stage_uploaded_eval_files merges multi-chunk uploads by batch_id and prune_eval_uploads cleans expired/excess batches",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE13-AUDIT007-CAL-PHYSICS-BOUNDS",
+      "description": "save_camera_link rejects physically impossible implied speeds (<0.5 or >260 km/h) and requires >=3 observations with bounds for complete status",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE13-AUDIT008-012-UI-EXPORT",
+      "description": "/api/plate_eval/export serves JSON and CSV with 5 metrics, and dashboard.html mounts camera link form directly inside #t-calibration without forced tab switch",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE13-AUDIT011-BUILD-SPEC-PRESERVATION",
+      "description": "BUILD_EXE.bat invokes pyinstaller.exe with mersad_ai.spec directly instead of overwriting the spec via mersad_live.py",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE13-AUDIT010-UNIQUE-TEST-IDS",
+      "description": "100% of test identifiers recorded in RESULTS are unique (zero duplicate [ID] codes across all 187 tests)",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE14-01-SQLITE-MOUNT-FALLBACK",
+      "description": "_is_sqlite_usable_dir detects non-SQLite/read-only mounts and mersad_live.py --verify succeeds directly from any mount without manual MERSAD_DATA_DIR",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE14-02-PORTABLE-TRUSTED-MODELS",
+      "description": "register_plate_model_api signs clean .pt models + writes .sha256 sidecar, and bootstrap_bundled_trusted_models re-seals portable models on new machines",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE14-03-AUTO-CALIBRATE-FROM-LOGS",
+      "description": "suggest_camera_links_from_sightings derives min_sec, expected_sec, max_sec & observations_count from live sightings and persists complete calibration",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE14-04-INIT-GROUND-TRUTH-AND-TEMPLATE",
+      "description": "init_ground_truth_for_folder initializes ground_truth.csv with detected bboxes & OCR prefill while preserving existing labels, and exports CSV template",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE14-05-READINESS-SCORECARD-API-CLI",
+      "description": "build_readiness_report(), GET /api/readiness, and --readiness-report CLI achieve 100.0% across code/security, Windows build config, and field tooling",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE14-06-DOC-AND-UI-PARITY",
+      "description": "dashboard.html includes Stage 14 readiness scorecard & auto-calibration controls, passes node --check, and all 193 test IDs are 100% unique",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP01-MODEL-TRUST-BOUNDARY",
+      "description": "HTTP /api/plate_eval/register_model blocks copying .pt files from outside models/ and enforces trusted directory boundary",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP02-PICKLE-STRICT-ALLOWLIST",
+      "description": "_scan_pt_pickle_safety enforces strict allowlist blocking unallowed stdlib modules (xmlrpc.client) and builtins.getattr",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP03-CSRF-AND-HEADERS",
+      "description": "server.py blocks Cross-Port CSRF (Origin mismatch & cookie-only text/plain POST) with HTTP 403 and emits CSP & Referrer-Policy headers",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP04-SOCKET-TIMEOUT-AND-SUBS",
+      "description": "server.H enforces 15s socket timeout and Bus.add_sub caps concurrent SSE subscribers at max_subs=32",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP05-EPHEMERAL-APPDIR-WARNING",
+      "description": "build_readiness_report exposes runtime_models_and_deps_readiness_pct, field_data_calibration_readiness_pct, deployment_classification & ephemeral_storage_warning",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP06-GT-HUMAN-VERIFIED-AND-CSV-SAFE",
+      "description": "init_ground_truth_for_folder avoids fake عدن-00000, writes human_verified=0 column, sanitizes CSV cells, and flags unverified_rows_count",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP07-PROTECT-MANUAL-CALIBRATION",
+      "description": "suggest_camera_links_from_sightings(apply_directly=True) skips overwriting complete field_data/manual links and preserves measured distance_m",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "STAGE15-GAP08-GITHUB-CLOUD-AND-LOCAL-EXE-BUILD-SUITE",
+      "description": "PUSH_TO_GITHUB_AND_BUILD.bat (clone/fetch worktree, default-branch workflow registration, headSha run binding, strict exit-code checks), windows-build.yml artifact staging, and model trust documentation are verified",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-SQLITE-FALLBACK",
+      "description": "WAL failure safely falls back to DELETE journal mode for disk-backed SQLite",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-SQLITE-MEMORY",
+      "description": "in-memory SQLite keeps its native journal mode",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-SQLITE-UNC",
+      "description": "UNC database paths avoid WAL upfront and select DELETE journaling",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-IPC-LOCK-FAILURE",
+      "description": "failed inter-process lock setup leaves re-entrant state clean for subsequent DB work",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-RUNTIME-MODEL-PREFLIGHT",
+      "description": "missing bundled models are detected as a clear startup failure instead of downloading at runtime",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-MODEL-CLI",
+      "description": "standalone model checker returns nonzero and explains missing models instead of hanging or downloading",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-FROZEN-RESOURCE-PRIORITY",
+      "description": "frozen EXE prefers bundled models/resources over stale writable APPDIR assets",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-EASYOCR-MISSING",
+      "description": "missing EasyOCR model files fail early with actionable guidance and no runtime download",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-EASYOCR-OFFLINE",
+      "description": "valid local EasyOCR models verified by SHA-256 initialize the Reader with download_enabled=False",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-EASYOCR-CORRUPT",
+      "description": "corrupt/tampered EasyOCR .pth and self-minted yolov8n.pt.sha256 sidecar fail closed against pinned SHA-256",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-RTSP-TIMEOUTS",
+      "description": "RTSP/HTTP opens use bounded FFmpeg timeouts; local camera indices remain compatible",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "V7-CSV-AUTH-LINK",
+      "description": "analytics CSV export anchor gets the same query-token helper as authenticated API calls",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-FACE-INTERVAL",
+      "description": "FACE_DETECT_INTERVAL is strictly respected on empty scenes without running YuNet on 100% of frames",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-SKIP-EMPTY-VYOLO",
+      "description": "when vyolo returns 0 vehicles and skip_empty_vyolo is active, full-frame Canny/OCR scan is skipped",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-EVAL-SKIP-UNVERIFIED",
+      "description": "evaluate_plates_dataset skips UNVERIFIED_PLATE (human_verified=0) rows from verified accuracy denominator",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-LOOKUP-OCR-FIXED-GOV-PRIO",
+      "description": "lookup_vehicle with OCR char disambiguation (I->1 / O->0) selects matching governorate & wanted priority",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-CSRF-ORIGIN-NULL-AND-IMPORT",
+      "description": "server.py blocks Origin: null and cookie-only text/plain POST to /api/import with HTTP 403",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-FRAME-QUALITY-FROZEN-OCCLUDED",
+      "description": "assess_frame_quality computes brightness/contrast/sharpness and flags CAMERA_OCCLUDED_OR_DARK",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-DYNAMIC-CAMERAS-API",
+      "description": "add_camera_runtime, list_cameras_runtime, and remove_camera_runtime manage virtual cameras dynamically",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-CAM-FEAT-NORMALIZED",
+      "description": "insights.feat() normalizes camera index within [0.0, 1.0] eliminating ordinal anomaly bias on CAM10",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-GT-CSV-QUOTE-STRIP",
+      "description": "_parse_ground_truth_entries strips leading formula-guard apostrophe from '-12345' and '-cam1.jpg'",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-XLSX-ROW-CAP",
+      "description": "registry.parse_file enforces row ceiling (10,000 rows) when iterating .xlsx workbooks",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-DEGRADED-PREVIEW-FLAG",
+      "description": "mersad_live.py supports --allow-degraded-preview CLI flag and exits with code 1 on unhandled crash",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-VERIFY-INTEGRITY-TOOL",
+      "description": "verify_integrity.py validates all required MERSAD AI Preview 0.1 files and computes SHA-256 hashes",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-WIRE-CAMERAS-POST",
+      "description": "wire() registers and preserves /api/cameras/add and /api/cameras/remove in bus.post without overwrite",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT",
+      "description": "remove_camera_runtime waits for reader thread exit before calling cap.release() under lock",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-ALERT-HUMAN-REVIEW-FLAG",
+      "description": "raise_alert & _sync_alerts_from_db include explicit requires_human_review=True and verification_policy=HUMAN_VERIFICATION_REQUIRED",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-OMP-THREAD-LIMIT",
+      "description": "mersad_live sets OMP_THREAD_LIMIT=1 for multi-camera Tesseract OCR stability",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS",
+      "description": "Unified Windows release script generates EXE distribution launchers and removes opencv-python-headless",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
+      "description": "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    },
+    {
+      "status": "PASS",
+      "id": "PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
+      "description": "evaluate_ai_models enforces ground-truth CER/ExactMatch/IoU/Face gates and Windows CI enforces Inno Setup & CPU PyTorch",
+      "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
+    }
+  ]
+}

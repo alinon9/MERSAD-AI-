@@ -127,7 +127,7 @@
 ## 5. ملخص الإجراءات المطلوبة والتوصيات الختامية
 
 1. **اعتماد الشجرة الموحدة `MERSAD_PREVIEW_0.1_FINAL` كمصدر وحيد (`Single Source of Truth`)**:
-   - يجب اعتماد الملفات الموجودة في `MERSAD_PREVIEW_0.1_FINAL/` (الفرع الجنائي `preview/mersad-ai-lab-0.1-20261105` عند الالتزام `9491bcd0d610c51ce76b599591db5c9f0b84cd44`) وإهمال النسخة غير المدمجة في `stage15_local_repo/` لأن الأخيرة تفتقر إلى تحديثات `PATCHED_V7_1` وإصلاحات `PREVIEW 0.1` الاثني عشر.
+   - يجب اعتماد الملفات الموجودة في `MERSAD_PREVIEW_0.1_FINAL/` (فرع الإصدار النهائي `release/mersad-preview-0.1` عند التزام الكود `25131918a981ac2ac37923d4c738d9f93cdcbc5b` للنظام الرئيسي و`e9284356f4d1a8205946d5893121c6f8a2f22012` للمختبر) وإهمال النسخة غير المدمجة في `stage15_local_repo/` لأن الأخيرة تفتقر إلى تحديثات `PATCHED_V7_1` وإصلاحات `PREVIEW 0.1` الاثني عشر.
 2. **استكمال بوابة البناء والتشغيل على نظام `Windows 10/11 x64` متصل بالإنترنت**:
    - رفع حزمة التاريخ الجنائي `reports_and_logs/mersad_preview_0_1_verifiable_history.bundle` إلى المستودع وتشغيل `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.bat` لتنزيل أوزان النماذج الأربعة (`yolov8n.pt`, `EasyOCR`, `yunet.onnx`, `sface.onnx`) وبناء واختبار `MERSAD_AI.exe` و`MERSAD_LAB.exe` و`MERSAD_LAB_Setup_x64.exe` فعلياً على Windows.
 3. **التحصينات الميدانية الاختيارية قبل الانتقال من `Preview` إلى `Production`**:
