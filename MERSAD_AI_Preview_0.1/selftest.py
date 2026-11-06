@@ -5370,6 +5370,47 @@ def run_patched_v7_1_and_preview_0_1_tests():
         check("PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
               "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",
               p2_ok, p2_detail)
+
+        # 31. PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP (BUG-09, BUG-10, BUG-11 Regression):
+        # Verify evaluate_ai_models.py enforces ground-truth CER/ExactMatch/IoU/Positive-Negative gates (never granting PASS merely for 4 frames)
+        # and Windows CI workflows explicitly install CPU PyTorch, --verify-pip-deps, and Inno Setup (choco install innosetup).
+        eval_mod_path = os.path.join(os.path.dirname(SRC), "integration", "evaluate_ai_models.py")
+        ci_yml_path = os.path.join(os.path.dirname(SRC), ".github", "workflows", "release-mersad-preview-0.1-windows.yml")
+        gate_ok = True
+        gate_detail = {}
+        if os.path.isfile(eval_mod_path) and os.path.isfile(ci_yml_path):
+            import importlib.util as _ilu
+            spec_ev = _ilu.spec_from_file_location("eval_ai_mod_test", eval_mod_path)
+            ev_mod = _ilu.module_from_spec(spec_ev)
+            spec_ev.loader.exec_module(ev_mod)
+            # 1) Wrong OCR predictions on 4 frames must FAIL ground-truth gate (even though 4 non-empty strings were returned)
+            bad_ocr = ev_mod.compute_ocr_ground_truth_metrics([
+                {"expected": "عدن-12345", "predicted": "عدن-99999"},
+                {"expected": "صنعاء-48210", "predicted": "صنعاء-00000"},
+                {"expected": "تعز-73901", "predicted": "تعز-11111"},
+                {"expected": "حضرموت-55120", "predicted": "حضرموت-22222"},
+            ])
+            # 2) Accurate OCR predictions on 4 frames must PASS ground-truth gate
+            good_ocr = ev_mod.compute_ocr_ground_truth_metrics([
+                {"expected": "عدن-12345", "predicted": "عدن-12345"},
+                {"expected": "صنعاء-48210", "predicted": "صنعاء-48210"},
+                {"expected": "تعز-73901", "predicted": "تعز-73901"},
+                {"expected": "حضرموت-55120", "predicted": "حضرموت-55120"},
+            ])
+            ci_yml_s = open(ci_yml_path, encoding="utf-8").read()
+            gate_ok = (
+                bad_ocr["passes_acceptance_gate"] is False
+                and good_ocr["passes_acceptance_gate"] is True
+                and good_ocr["exact_match_rate"] == 1.0
+                and good_ocr["mean_cer"] == 0.0
+                and "choco install innosetup" in ci_yml_s
+                and "https://download.pytorch.org/whl/cpu" in ci_yml_s
+                and "--verify-pip-deps" in ci_yml_s
+            )
+            gate_detail = {"bad_ocr_pass": bad_ocr["passes_acceptance_gate"], "good_ocr_pass": good_ocr["passes_acceptance_gate"]}
+        check("PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
+              "evaluate_ai_models enforces ground-truth CER/ExactMatch/IoU/Face gates and Windows CI enforces Inno Setup & CPU PyTorch",
+              gate_ok, gate_detail)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

@@ -45,7 +45,18 @@ if ($null -ne $isccCmd) {
 } elseif (Test-Path "${env:ProgramFiles}\Inno Setup 6\ISCC.exe") {
     $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
 } else {
-    throw "FATAL: ISCC.exe (Inno Setup 6 Compiler) is not installed or not in PATH. MERSAD_LAB_Setup_x64.exe is mandatory."
+    Write-Host "[Setup] ISCC.exe not found in default paths; attempting automatic install via Chocolatey/Winget..."
+    $chocoCmd = Get-Command "choco.exe" -ErrorAction SilentlyContinue
+    if ($null -ne $chocoCmd) {
+        & $chocoCmd.Source install innosetup -y --no-progress
+    }
+    if (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") {
+        $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+    } elseif (Test-Path "${env:ProgramFiles}\Inno Setup 6\ISCC.exe") {
+        $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+    } else {
+        throw "FATAL: ISCC.exe (Inno Setup 6 Compiler) is not installed or not in PATH. MERSAD_LAB_Setup_x64.exe is mandatory."
+    }
 }
 Write-Host "  [OK] Found Inno Setup Compiler: $isccPath"
 
@@ -61,11 +72,15 @@ $pyinst = Join-Path (Split-Path $py) "pyinstaller.exe"
 Write-Host "[Phase 1A] Installing pinned Windows x64 dependencies..."
 & $pip install --upgrade pip
 Assert-ExitCode "pip upgrade"
+& $pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+Assert-ExitCode "pip install CPU torch==2.5.1"
 & $pip install -r "MERSAD_AI_Preview_0.1\requirements.txt" -c "MERSAD_AI_Preview_0.1\constraints-win-x64.txt" pyinstaller==6.11.1
 Assert-ExitCode "pip install pinned requirements"
 & $pip uninstall -y opencv-python-headless
 & $pip install --force-reinstall --no-deps opencv-python==4.11.0.86
 Assert-ExitCode "enforce GUI opencv-python==4.11.0.86"
+& $py "MERSAD_AI_Preview_0.1\check_install.py" --verify-pip-deps
+Assert-ExitCode "check_install.py --verify-pip-deps"
 
 Write-Host "[Phase 1B] Downloading 4 AI Models (YuNet, SFace, YOLOv8n, EasyOCR) & Verifying Pinned SHA-256..."
 & $py "MERSAD_AI_Preview_0.1\prefetch.py"
@@ -94,7 +109,7 @@ if (Test-Path ".git") {
 & $py "tools\compare_original_vs_cleanroom_lab.py" --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
 Assert-ExitCode "compare_original_vs_cleanroom_lab.py --require-cleanroom-pass (Clean-Room 20/20 PASS verified; Original LAB recorded as PASS or BLOCKED)"
 
-Write-Host "[Phase 3A] Running 231 AI Selftests (Standard + Blocked Sklearn) & 20 LAB Functional/Security Tests..."
+Write-Host "[Phase 3A] Running 232 AI Selftests (Standard + Blocked Sklearn) & 20 LAB Functional/Security Tests..."
 & $py -u "MERSAD_AI_Preview_0.1\selftest.py"
 Assert-ExitCode "MERSAD AI selftest.py (standard)"
 $env:MERSAD_BLOCK_SKLEARN = "1"

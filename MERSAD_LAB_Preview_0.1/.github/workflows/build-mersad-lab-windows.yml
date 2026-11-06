@@ -6,6 +6,7 @@ on:
     branches:
       - "build/mersad-lab-exe-*"
       - "preview/mersad-ai-lab-*"
+      - "release/mersad-preview-0.1*"
 
 permissions:
   contents: read
@@ -30,7 +31,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
           if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
-          pip install -r requirements.txt -c constraints-win-x64.txt pyinstaller==6.10.0
+          pip install -r requirements.txt -c constraints-win-x64.txt pyinstaller==6.11.1
           if ($LASTEXITCODE -ne 0) { throw "pip install failed ($LASTEXITCODE)" }
 
       - name: Run 20 Functional & Security Checks
@@ -59,11 +60,21 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
-          if ($null -eq $iscc) { throw "FATAL: ISCC.exe is required" }
+          if ($null -ne $iscc) {
+            $isccPath = $iscc.Source
+          } elseif (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") {
+            $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          } elseif (Test-Path "${env:ProgramFiles}\Inno Setup 6\ISCC.exe") {
+            $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          } else {
+            choco install innosetup -y --no-progress
+            $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $isccPath)) { throw "FATAL: ISCC.exe is required" }
+          }
           New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
           Copy-Item -Path "RUN_LAB.bat","README_AR.md","PHASE1_STATUS_AR.md" -Destination "dist\MERSAD_LAB\" -Force
           Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "dist\portable\MERSAD_LAB_Portable_x64.zip" -Force
-          & $iscc.Source "installer\mersad_lab_setup.iss"
+          & $isccPath "installer\mersad_lab_setup.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC.exe failed ($LASTEXITCODE)" }
           if (-not (Test-Path "dist\installer\MERSAD_LAB_Setup_x64.exe")) { throw "MERSAD_LAB_Setup_x64.exe missing" }
 

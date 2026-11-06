@@ -25,17 +25,29 @@ jobs:
           python-version: "3.11"
           architecture: "x64"
 
-      - name: Install Pinned Windows x64 Dependencies
+      - name: Install Pinned Windows x64 Dependencies & Verify Inno Setup 6
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
           if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
+          pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { throw "pip install CPU torch==2.5.1 failed ($LASTEXITCODE)" }
           pip install -r MERSAD_AI_Preview_0.1/requirements.txt -c MERSAD_AI_Preview_0.1/constraints-win-x64.txt pyinstaller==6.11.1
           if ($LASTEXITCODE -ne 0) { throw "pip install pinned dependencies failed ($LASTEXITCODE)" }
           pip uninstall -y opencv-python-headless
           pip install --force-reinstall --no-deps opencv-python==4.11.0.86
           if ($LASTEXITCODE -ne 0) { throw "enforce GUI opencv-python failed ($LASTEXITCODE)" }
+          python MERSAD_AI_Preview_0.1/check_install.py --verify-pip-deps
+          if ($LASTEXITCODE -ne 0) { throw "check_install.py --verify-pip-deps failed ($LASTEXITCODE)" }
+
+          # Verify or install Inno Setup 6 (ISCC.exe) explicitly on GitHub Actions runner
+          $isccCheck = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+          if ($null -eq $isccCheck -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") -and -not (Test-Path "${env:ProgramFiles}\Inno Setup 6\ISCC.exe")) {
+            Write-Host "[Setup] Installing Inno Setup 6 via Chocolatey..."
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed ($LASTEXITCODE)" }
+          }
 
       - name: Phase 1 — Download All 4 Real AI Models, Verify Pinned SHA-256 & Execute Real Inference on LAB Frames
         shell: pwsh
@@ -68,7 +80,7 @@ jobs:
           python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
           if ($LASTEXITCODE -ne 0) { throw "Clean-Room LAB verification failed in Phase 2 ($LASTEXITCODE)" }
 
-      - name: Phase 3A — Run Full AI (231) & LAB (20) Test Suites
+      - name: Phase 3A — Run Full AI (232) & LAB (20) Test Suites
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -91,7 +103,15 @@ jobs:
             if (Test-Path $d) { Remove-Item -Recurse -Force $d }
           }
           $isccCmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
-          if ($null -eq $isccCmd) { throw "FATAL: ISCC.exe (Inno Setup) is missing; MERSAD_LAB_Setup_x64.exe is mandatory" }
+          if ($null -ne $isccCmd) {
+            $isccPath = $isccCmd.Source
+          } elseif (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") {
+            $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          } elseif (Test-Path "${env:ProgramFiles}\Inno Setup 6\ISCC.exe") {
+            $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          } else {
+            throw "FATAL: ISCC.exe (Inno Setup 6) is missing; MERSAD_LAB_Setup_x64.exe is mandatory"
+          }
 
           Push-Location MERSAD_AI_Preview_0.1
           pyinstaller --noconfirm --clean mersad_ai.spec
@@ -111,7 +131,7 @@ jobs:
           Copy-Item -Path "index.html","README_AR.md","PHASE1_STATUS_AR.md","RUN_LAB.bat" -Destination "dist\MERSAD_LAB\" -Force
           New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
           Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "dist\portable\MERSAD_LAB_Portable_x64.zip" -Force
-          & $isccCmd.Source "installer\mersad_lab_setup.iss"
+          & $isccPath "installer\mersad_lab_setup.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC.exe failed ($LASTEXITCODE)" }
           Pop-Location
 
