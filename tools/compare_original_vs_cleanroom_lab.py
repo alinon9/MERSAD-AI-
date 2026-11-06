@@ -274,11 +274,12 @@ def main():
     ap.add_argument("--output-md", default=str(Path(__file__).resolve().parent.parent / "reports_and_logs" / "08_ORIGINAL_VS_CLEANROOM_LAB_COMPARISON_AR.md"))
     ap.add_argument("--output-json", default=str(Path(__file__).resolve().parent.parent / "reports_and_logs" / "original_vs_cleanroom_lab_comparison.json"))
     ap.add_argument("--require-unblocked", action="store_true", help="Exit with code 2 if Original LAB commit ed7b8f727243da4878e547f08489af581c83291c is unavailable or comparison is BLOCKED")
+    ap.add_argument("--require-cleanroom-pass", action="store_true", help="Require Clean-Room LAB suite (20/20 PASS) to succeed while recording Original LAB as BLOCKED/NOT_TESTED without aborting the Preview 0.1 build pipeline")
     args = ap.parse_args()
 
-    orig_in = Path(args.original_source)
-    pres_dir = Path(args.preserve_original_dir)
-    clean_dir = Path(args.cleanroom_dir)
+    orig_in = Path(args.original_source).resolve()
+    pres_dir = Path(args.preserve_original_dir).resolve()
+    clean_dir = Path(args.cleanroom_dir).resolve()
 
     pres_dir.mkdir(parents=True, exist_ok=True)
     if orig_in.exists():

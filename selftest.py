@@ -606,8 +606,8 @@ def run_security_lan_and_multiprocess_tests():
     # P2-M: Supply chain pinned versions & SHA-256 verification
     req_txt = open(os.path.join(WORK, "requirements.txt"), encoding="utf-8").read()
     setup_txt = open(os.path.join(WORK, "setup.bat"), encoding="utf-8").read()
-    check("P2-M", "requirements.txt pins exact versions, MODELS uses pinned commit + SHA-256, and setup.bat replaces headless OpenCV",
-          req_txt.count("==") >= 6 and m.ZOO_COMMIT in m.ZOO and len(m.MODEL_SHA256) == 2
+    check("P2-M", "requirements.txt pins exact versions, MODELS & EASYOCR_SHA256 use pinned commit + SHA-256, and setup.bat replaces headless OpenCV",
+          req_txt.count("==") >= 6 and m.ZOO_COMMIT in m.ZOO and len(m.MODEL_SHA256) == 3 and len(m.EASYOCR_SHA256) >= 3
           and "opencv-python-headless" in setup_txt)
 
     # UI contract check
@@ -1520,16 +1520,24 @@ def run_round5_tests():
         os.makedirs(os.path.join(m_dir, "easyocr"), exist_ok=True)
         fake_yunet = b"\x08\x07\x12\x04onnx" + (b"Y" * 210_000)
         fake_sface = b"\x08\x07\x12\x04onnx" + (b"S" * 30_100_000)
+        fake_yolo = _make_valid_pytorch_zip_bytes(6_050_000)
+        fake_craft = b"PK\x03\x04" + b"C" * 600_000
+        fake_arabic = b"PK\x03\x04" + b"A" * 600_000
         orig_y_sha = m.MODEL_SHA256["yunet.onnx"]
         orig_s_sha = m.MODEL_SHA256["sface.onnx"]
+        orig_v_sha = m.MODEL_SHA256["yolov8n.pt"]
+        orig_e_sha = dict(m.EASYOCR_SHA256)
         m.MODEL_SHA256["yunet.onnx"] = hashlib.sha256(fake_yunet).hexdigest()
         m.MODEL_SHA256["sface.onnx"] = hashlib.sha256(fake_sface).hexdigest()
+        m.MODEL_SHA256["yolov8n.pt"] = hashlib.sha256(fake_yolo).hexdigest()
+        m.EASYOCR_SHA256["craft_mlt_25k.pth"] = hashlib.sha256(fake_craft).hexdigest()
+        m.EASYOCR_SHA256["arabic.pth"] = hashlib.sha256(fake_arabic).hexdigest()
         try:
             open(os.path.join(m_dir, "yunet.onnx"), "wb").write(fake_yunet)
             open(os.path.join(m_dir, "sface.onnx"), "wb").write(fake_sface)
-            open(os.path.join(m_dir, "yolov8n.pt"), "wb").write(_make_valid_pytorch_zip_bytes(6_050_000))
-            open(os.path.join(m_dir, "easyocr", "craft_mlt_25k.pth"), "wb").write(b"PK\x03\x04" + b"C" * 600_000)
-            open(os.path.join(m_dir, "easyocr", "arabic.pth"), "wb").write(b"PK\x03\x04" + b"A" * 600_000)
+            open(os.path.join(m_dir, "yolov8n.pt"), "wb").write(fake_yolo)
+            open(os.path.join(m_dir, "easyocr", "craft_mlt_25k.pth"), "wb").write(fake_craft)
+            open(os.path.join(m_dir, "easyocr", "arabic.pth"), "wb").write(fake_arabic)
 
             ok_w_pass, _ = chk_mod.write_ready_stamp(ready_f, root_dir=env_dir, require_models=True, require_all_libs=False)
             ok_ver_pass, _ = chk_mod.verify_ready_stamp(ready_f, root_dir=env_dir, require_models=True, require_all_libs=False)
@@ -1546,6 +1554,9 @@ def run_round5_tests():
         finally:
             m.MODEL_SHA256["yunet.onnx"] = orig_y_sha
             m.MODEL_SHA256["sface.onnx"] = orig_s_sha
+            m.MODEL_SHA256["yolov8n.pt"] = orig_v_sha
+            m.EASYOCR_SHA256.clear()
+            m.EASYOCR_SHA256.update(orig_e_sha)
 
         check("R5-ENV", "venv/.ready rejects legacy 'ok', cleans stale stamp on failure, verifies models, and detects modified requirements.txt or corrupt model",
               (not ok_new) and (not ok_leg) and (not ok_w_fail) and stale_removed
@@ -1795,17 +1806,25 @@ def run_v7_1_audit_regression_tests():
         os.makedirs(os.path.join(m_dir, "easyocr"), exist_ok=True)
         fake_y = b"\x08\x07\x12\x04onnx" + (b"Y" * 210_000)
         fake_s = b"\x08\x07\x12\x04onnx" + (b"S" * 30_100_000)
+        fake_v = _make_valid_pytorch_zip_bytes(6_050_000)
+        fake_c = b"PK\x03\x04" + b"C" * 600_000
+        fake_a = b"PK\x03\x04" + b"A" * 600_000
         y_sha = hashlib.sha256(fake_y).hexdigest()
         s_sha = hashlib.sha256(fake_s).hexdigest()
+        v_sha = hashlib.sha256(fake_v).hexdigest()
+        c_sha = hashlib.sha256(fake_c).hexdigest()
+        a_sha = hashlib.sha256(fake_a).hexdigest()
         open(os.path.join(m_dir, "yunet.onnx"), "wb").write(fake_y)
         open(os.path.join(m_dir, "sface.onnx"), "wb").write(fake_s)
-        open(os.path.join(m_dir, "yolov8n.pt"), "wb").write(_make_valid_pytorch_zip_bytes(6_050_000))
-        open(os.path.join(m_dir, "easyocr", "craft_mlt_25k.pth"), "wb").write(b"PK\x03\x04" + b"C" * 600_000)
-        open(os.path.join(m_dir, "easyocr", "arabic.pth"), "wb").write(b"PK\x03\x04" + b"A" * 600_000)
+        open(os.path.join(m_dir, "yolov8n.pt"), "wb").write(fake_v)
+        open(os.path.join(m_dir, "easyocr", "craft_mlt_25k.pth"), "wb").write(fake_c)
+        open(os.path.join(m_dir, "easyocr", "arabic.pth"), "wb").write(fake_a)
         cmd_ok = [
             sys.executable, "-c",
             f"import sys; sys.path.insert(0, {repr(vm_dir)}); import mersad_live as m; "
             f"m.MODEL_SHA256['yunet.onnx']={repr(y_sha)}; m.MODEL_SHA256['sface.onnx']={repr(s_sha)}; "
+            f"m.MODEL_SHA256['yolov8n.pt']={repr(v_sha)}; "
+            f"m.EASYOCR_SHA256['craft_mlt_25k.pth']={repr(c_sha)}; m.EASYOCR_SHA256['arabic.pth']={repr(a_sha)}; "
             f"sys.exit(m.verify_models_cli())"
         ]
         p_ok = subprocess.run(cmd_ok, cwd=vm_dir, capture_output=True, text=True, timeout=15)
@@ -5061,12 +5080,34 @@ def run_patched_v7_1_and_preview_0_1_tests():
         except RuntimeError as e:
             missing_raised = "prefetch.py" in str(e) and "Runtime downloads are disabled" in str(e)
         check("V7-EASYOCR-MISSING", "missing EasyOCR model files fail early with actionable guidance and no runtime download", missing_raised and not ReaderProbe.calls)
-        for model_name in ("craft_mlt_25k.pth", "arabic_g2.pth"):
-            with open(os.path.join(model_root, model_name), "wb") as mf:
-                mf.write(b"PK\x03\x04" + b"M" * 500_010)
-        _ = m.create_offline_easyocr_reader(probe_module, model_root)
-        reader_call = ReaderProbe.calls[-1] if ReaderProbe.calls else ([], {})
-        check("V7-EASYOCR-OFFLINE", "valid local EasyOCR models initialize the Reader with download_enabled=False", len(ReaderProbe.calls) == 1 and reader_call[1].get("download_enabled") is False and os.path.abspath(reader_call[1].get("model_storage_directory", "")) == os.path.abspath(model_root))
+        orig_easyocr_sha = dict(m.EASYOCR_SHA256)
+        try:
+            synth_pth_bytes = b"PK\x03\x04" + b"M" * 500_010
+            synth_pth_sha = hashlib.sha256(synth_pth_bytes).hexdigest()
+            for model_name in ("craft_mlt_25k.pth", "arabic.pth", "english_g2.pth"):
+                with open(os.path.join(model_root, model_name), "wb") as mf:
+                    mf.write(synth_pth_bytes)
+                m.EASYOCR_SHA256[model_name] = synth_pth_sha
+            _ = m.create_offline_easyocr_reader(probe_module, model_root)
+            reader_call = ReaderProbe.calls[-1] if ReaderProbe.calls else ([], {})
+            check("V7-EASYOCR-OFFLINE", "valid local EasyOCR models verified by SHA-256 initialize the Reader with download_enabled=False", len(ReaderProbe.calls) == 1 and reader_call[1].get("download_enabled") is False and os.path.abspath(reader_call[1].get("model_storage_directory", "")) == os.path.abspath(model_root))
+        finally:
+            m.EASYOCR_SHA256.clear()
+            m.EASYOCR_SHA256.update(orig_easyocr_sha)
+        # Now verify that with real pinned EASYOCR_SHA256 restored, synthetic/tampered .pth files (even with valid PK header) are rejected!
+        tampered_sha_rejected = False
+        try:
+            m.create_offline_easyocr_reader(probe_module, model_root)
+        except RuntimeError as e:
+            tampered_sha_rejected = "pth_sha256_mismatch" in str(e)
+        # Also verify that yolov8n.pt has a pinned SHA-256 and ignores self-minted .sha256 sidecars
+        fake_yolo_sidecar_p = os.path.join(d, "yolov8n.pt")
+        fake_yolo_bytes = _make_valid_pytorch_zip_bytes(6_050_000)
+        with open(fake_yolo_sidecar_p, "wb") as yf:
+            yf.write(fake_yolo_bytes)
+        with open(fake_yolo_sidecar_p + ".sha256", "w", encoding="utf-8") as sf:
+            sf.write(hashlib.sha256(fake_yolo_bytes).hexdigest() + "  yolov8n.pt\n")
+        ok_sidecar_bypass, r_sidecar_bypass = m.verify_yolo_pt_file(fake_yolo_sidecar_p)
         bad_model_root = os.path.join(d, "bad_easyocr")
         os.makedirs(bad_model_root, exist_ok=True)
         with open(os.path.join(bad_model_root, "bad.pth"), "wb") as mf:
@@ -5076,7 +5117,17 @@ def run_patched_v7_1_and_preview_0_1_tests():
             m.create_offline_easyocr_reader(probe_module, bad_model_root)
         except RuntimeError as e:
             corrupt_raised = "invalid" in str(e).lower() or "missing" in str(e).lower()
-        check("V7-EASYOCR-CORRUPT", "corrupt/incomplete EasyOCR model directory fails closed before Reader initialization", corrupt_raised and len(ReaderProbe.calls) == 1)
+        check(
+            "V7-EASYOCR-CORRUPT",
+            "corrupt/tampered EasyOCR .pth and self-minted yolov8n.pt.sha256 sidecar fail closed against pinned SHA-256",
+            corrupt_raised
+            and tampered_sha_rejected
+            and (not ok_sidecar_bypass and "sha256_mismatch" in r_sidecar_bypass)
+            and m.MODEL_SHA256.get("yolov8n.pt") == "31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95"
+            and set(m.EASYOCR_SHA256.keys()) >= {"craft_mlt_25k.pth", "arabic.pth", "english_g2.pth"}
+            and len(ReaderProbe.calls) == 1,
+            (corrupt_raised, tampered_sha_rejected, ok_sidecar_bypass, r_sidecar_bypass),
+        )
 
         original_capture = cv2.VideoCapture
         cap_calls = []
@@ -5222,6 +5273,103 @@ def run_patched_v7_1_and_preview_0_1_tests():
         check("PREVIEW01-VERIFY-INTEGRITY-TOOL", "verify_integrity.py validates all required MERSAD AI Preview 0.1 files and computes SHA-256 hashes",
               vi_rep.get("ok") is True and len(vi_rep.get("files", [])) >= 18 and len(vi_rep.get("missing_files", [])) == 0,
               (vi_rep.get("ok"), len(vi_rep.get("files", [])), vi_rep.get("missing_files")))
+
+        # 25. PREVIEW01-WIRE-CAMERAS-POST (BUG-01 Regression): wire() preserves /api/cameras/add and /api/cameras/remove in bus.post
+        m.wire()
+        has_cam_routes = ("/api/cameras/add" in m.bus.post and "/api/cameras/remove" in m.bus.post)
+        res_add_w = m.bus.post["/api/cameras/add"]({"name": "WIRE_CAM_TEST", "source": "http://127.0.0.1:8090/stream/cam1.mjpg", "spawn_worker": False}, "127.0.0.1") if has_cam_routes else {}
+        res_rem_w = m.bus.post["/api/cameras/remove"]({"name": "WIRE_CAM_TEST"}, "127.0.0.1") if has_cam_routes else {}
+        check("PREVIEW01-WIRE-CAMERAS-POST", "wire() registers and preserves /api/cameras/add and /api/cameras/remove in bus.post without overwrite",
+              has_cam_routes and res_add_w.get("ok") is True and res_rem_w.get("ok") is True and res_rem_w.get("removed") is True,
+              (has_cam_routes, res_add_w, res_rem_w))
+
+        # 26. PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT (BUG-02 Regression): remove_camera_runtime joins threads before releasing cap under lock
+        dummy_ev = threading.Event()
+        released_flag = [False]
+        joined_before_release = [False]
+        worker_done = [False]
+        def _dummy_reader():
+            while not dummy_ev.is_set():
+                time.sleep(0.01)
+            time.sleep(0.03)
+            worker_done[0] = True
+        class _SafeCap:
+            def release(self):
+                joined_before_release[0] = worker_done[0]
+                released_flag[0] = True
+        th_r = threading.Thread(target=_dummy_reader, daemon=True)
+        th_r.start()
+        m._ACTIVE_CAM_STATES["SAFE_REM_CAM"] = {
+            "cam": "SAFE_REM_CAM",
+            "stop_ev": dummy_ev,
+            "reader_thread": th_r,
+            "infer_thread": None,
+            "lock": threading.Lock(),
+            "cap": _SafeCap(),
+        }
+        rem_safe = m.remove_camera_runtime({"name": "SAFE_REM_CAM"}, who="regression_test")
+        check("PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT", "remove_camera_runtime waits for reader thread exit before calling cap.release() under lock",
+              rem_safe.get("ok") is True and released_flag[0] is True and joined_before_release[0] is True,
+              (rem_safe, released_flag[0], joined_before_release[0]))
+
+        # 27. PREVIEW01-ALERT-HUMAN-REVIEW-FLAG (BUG-06 Regression): raise_alert and _sync_alerts_from_db populate requires_human_review=True
+        blank_f = np.zeros((120, 320, 3), dtype=np.uint8)
+        aid_hr = m.raise_alert("FACE MATCH (demo watchlist)", "متطوع اختباري", "CAM_HR", blank_f, ref="HR-TEST-01")
+        with m.bus._lock:
+            al_match = [a for a in m.bus.alerts if a.get("id") == aid_hr]
+        al_obj = al_match[0] if al_match else {}
+        check("PREVIEW01-ALERT-HUMAN-REVIEW-FLAG", "raise_alert & _sync_alerts_from_db include explicit requires_human_review=True and verification_policy=HUMAN_VERIFICATION_REQUIRED",
+              al_obj.get("requires_human_review") is True and al_obj.get("verification_policy") == "HUMAN_VERIFICATION_REQUIRED" and al_obj.get("status") == "pending",
+              al_obj)
+
+        # 28. PREVIEW01-OMP-THREAD-LIMIT (BUG-05 Regression): OMP_THREAD_LIMIT=1 set to prevent Tesseract OpenMP thread contention
+        check("PREVIEW01-OMP-THREAD-LIMIT", "mersad_live sets OMP_THREAD_LIMIT=1 for multi-camera Tesseract OCR stability",
+              os.environ.get("OMP_THREAD_LIMIT") == "1", os.environ.get("OMP_THREAD_LIMIT"))
+
+        # 29. PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS (BUG-04 Regression): Unified build scripts generate EXE launchers & align pyinstaller==6.11.1
+        Check_b_ok = True
+        parent_ps1 = os.path.join(os.path.dirname(SRC), "BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1")
+        if os.path.isfile(parent_ps1):
+            ps1_s = open(parent_ps1, encoding="utf-8").read()
+            Check_b_ok = ("MERSAD_AI.exe %*" in ps1_s and "opencv-python-headless" in ps1_s)
+        check("PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS", "Unified Windows release script generates EXE distribution launchers and removes opencv-python-headless",
+              Check_b_ok, parent_ps1)
+
+        # 30. PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE (BUG-07 Regression): Phase 2 records BLOCKED honestly without aborting Windows build before Phase 3B
+        cmp_tool = os.path.join(os.path.dirname(SRC), "tools", "compare_original_vs_cleanroom_lab.py")
+        orig_placeholder = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Original_ed7b8f72")
+        clean_lab_dir = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Preview_0.1")
+        p2_ok = True
+        p2_detail = {}
+        if os.path.isfile(cmp_tool) and os.path.isdir(clean_lab_dir):
+            tmp_md = os.path.join(d, "cmp_out.md")
+            tmp_js = os.path.join(d, "cmp_out.json")
+            proc_cmp = subprocess.run(
+                [sys.executable, cmp_tool, "--original-source", orig_placeholder, "--cleanroom-dir", clean_lab_dir,
+                 "--output-md", tmp_md, "--output-json", tmp_js, "--require-cleanroom-pass"],
+                capture_output=True, text=True, timeout=60
+            )
+            cmp_data = json.loads(open(tmp_js, encoding="utf-8").read()) if os.path.isfile(tmp_js) else {}
+            ps1_txt_chk = open(parent_ps1, encoding="utf-8").read() if os.path.isfile(parent_ps1) else ""
+            suites_js = cmp_data.get("independent_test_suites", {})
+            p2_ok = (
+                proc_cmp.returncode == 0
+                and cmp_data.get("phase2_comparison_status") == "BLOCKED"
+                and suites_js.get("original_lab", {}).get("status") == "BLOCKED"
+                and suites_js.get("cleanroom_lab", {}).get("status") == "PASS"
+                and suites_js.get("cleanroom_lab", {}).get("passed") == 20
+                and "--require-cleanroom-pass" in ps1_txt_chk
+                and "--require-unblocked" not in ps1_txt_chk
+            )
+            p2_detail = {
+                "exit_code": proc_cmp.returncode,
+                "phase2_comparison_status": cmp_data.get("phase2_comparison_status"),
+                "original_status": suites_js.get("original_lab", {}).get("status"),
+                "cleanroom_passed": suites_js.get("cleanroom_lab", {}).get("passed"),
+            }
+        check("PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
+              "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",
+              p2_ok, p2_detail)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

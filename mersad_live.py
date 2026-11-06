@@ -203,7 +203,14 @@ MODELS = {
 }
 MODEL_SHA256 = {
     "yunet.onnx": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
-    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+    "sface.onnx": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    "yolov8n.pt": "31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95",
+}
+EASYOCR_SHA256 = {
+    "craft_mlt_25k.pth": "4a5efbfb48b4081100544e75e1e2b57f8de3d84f213004b14b85fd4b3748db17",
+    "arabic.pth": "2a9afd42c374deb98aed0b53c9b77d75e1d00d4e0501f3b0276c54190c89b1a8",
+    "english_g2.pth": "e2272681d9d67a04e2dff396b6e95077bc19001f8f6d3593c307b9852e1c29e8",
+    "latin_g2.pth": "aaa95be1c4a9cb3496879bed7c520886ce1164f89e026f0c54488394e74e8c55",
 }
 MODEL_LEGACY_SHA256 = {
     "yunet.onnx": "8f2383e4dd3cfbb4553bf0fb6cde5e5f80f5f70c6e595e3fd10e819a79d1527c",
@@ -391,8 +398,9 @@ def _sync_alerts_from_db(reset_stuck_in_flight=False):
     for aid, msg, subj, ref, det, cam, ts_str, img, st, disp, dst, rep_cnt, n_st in rows:
         al = {
             "id": aid, "msg": msg, "subject": subj, "ref": ref, "detail": det or "", "cam": cam, "ts": ts_str,
-            "img": img, "dispatch_status": dst, "repeat_count": int(rep_cnt or 1),
-            "notify_status": n_st, "info_only": is_no_dispatch_msg(msg)
+            "img": img, "status": st, "dispatch_status": dst, "repeat_count": int(rep_cnt or 1),
+            "notify_status": n_st, "info_only": is_no_dispatch_msg(msg),
+            "requires_human_review": True, "verification_policy": "HUMAN_VERIFICATION_REQUIRED"
         }
         new_alerts.append(al)
         if img:
@@ -1069,7 +1077,8 @@ def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatch
         EVID[aid] = tmp_path
     al = {
         "id": aid, "msg": msg, "subject": subject, "ref": ref, "detail": detail or "", "cam": cam, "ts": ts,
-        "img": img_name, "dispatch_status": "not_required", "repeat_count": 1, "info_only": no_disp
+        "img": img_name, "status": "pending", "dispatch_status": "not_required", "repeat_count": 1, "info_only": no_disp,
+        "requires_human_review": True, "verification_policy": "HUMAN_VERIFICATION_REQUIRED"
     }
     _sync_alerts_from_db()
     bus.publish({"type": "alert", **al})
@@ -1961,20 +1970,19 @@ def _load_trusted_models_manifest(models_dir=None):
 
 
 def get_trusted_model_sha256(model_path):
-    """Resolve trusted expected SHA-256 for a model file from protected sources ONLY (never from user request body) (AUDIT-001):
-    1) Built-in MODEL_SHA256 dictionary
-    2) Admin environment variable MERSAD_TRUSTED_PT_SHA256 ('file.pt=<sha256>,...') or MERSAD_YOLO_SHA256
-    3) HMAC-SHA256 signed manifest models/.trusted_models.json
-    4) Bundled yolov8n.pt sidecar inside trusted models/ directory created by prefetch.py"""
+    """Resolve trusted expected SHA-256 for a model file from protected sources ONLY (never from user request body or self-minted sidecars) (AUDIT-001):
+    1) Admin environment variable MERSAD_YOLO_SHA256 or MERSAD_TRUSTED_PT_SHA256 ('file.pt=<sha256>,...')
+    2) Built-in MODEL_SHA256 dictionary (including pinned yolov8n.pt)
+    3) HMAC-SHA256 signed manifest models/.trusted_models.json"""
     bname = os.path.basename(str(model_path or "")).strip()
     if not bname:
         return None
-    if bname in MODEL_SHA256:
-        return MODEL_SHA256[bname].lower()
     if bname.lower() == "yolov8n.pt":
         env_y = os.environ.get("MERSAD_YOLO_SHA256", "").strip().lower()
         if len(env_y) == 64:
             return env_y
+    if bname in MODEL_SHA256:
+        return MODEL_SHA256[bname].lower()
     env_map_raw = os.environ.get("MERSAD_TRUSTED_PT_SHA256", "").strip()
     if env_map_raw:
         for item in env_map_raw.split(","):
@@ -1998,7 +2006,7 @@ def get_trusted_model_sha256(model_path):
             return None
         if m_state == "foreign_key" and foreign_map and bname not in foreign_map:
             return None
-        if m_state == "foreign_key" or (m_state == "missing" and bname.lower() == "yolov8n.pt"):
+        if m_state == "foreign_key" and bname.lower() != "yolov8n.pt":
             sidecar = f"{real_p}.sha256"
             if os.path.isfile(sidecar) and not os.path.islink(sidecar):
                 try:
@@ -2137,13 +2145,8 @@ def verify_yolo_pt_file(path, expected_sha256=None, min_bytes=6_000_000):
     sz = os.path.getsize(path)
     if sz < min_bytes:
         return False, f"file_too_small:{sz}<{min_bytes}"
-    sidecar = f"{path}.sha256"
-    if not expected_sha256 and os.path.isfile(sidecar) and not os.path.islink(sidecar):
-        try:
-            with open(sidecar, "r", encoding="utf-8") as sf:
-                expected_sha256 = sf.read().strip().split()[0]
-        except Exception:
-            pass
+    if not expected_sha256 and os.path.basename(str(path or "")).lower() == "yolov8n.pt":
+        expected_sha256 = get_trusted_model_sha256(path)
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -2171,8 +2174,9 @@ def verify_yolo_pt_file(path, expected_sha256=None, min_bytes=6_000_000):
     return True, f"verified_pytorch_checkpoint(size={sz}, sha256={digest[:12]}...)"
 
 
-def verify_easyocr_dir(easyocr_dir="models/easyocr"):
-    """Verify that EasyOCR model directory contains intact detector and recognizer .pth weights and no partial .part files (Stage 4d)."""
+def verify_easyocr_dir(easyocr_dir="models/easyocr", expected_hashes=None):
+    """Verify that EasyOCR model directory contains intact detector and Arabic/English recognizer .pth weights,
+    no partial .part files, and that every .pth file matches its pinned SHA-256 in EASYOCR_SHA256 before loading (Stage 4d)."""
     if not easyocr_dir or not os.path.isdir(easyocr_dir) or os.path.islink(easyocr_dir):
         return False, "directory_missing"
     entries = os.listdir(easyocr_dir)
@@ -2182,8 +2186,13 @@ def verify_easyocr_dir(easyocr_dir="models/easyocr"):
     pth_files = [fn for fn in entries if fn.endswith(".pth")]
     if len(pth_files) < 2:
         return False, f"no_pth_files(found={len(pth_files)}, required>=2_detector_and_recognizer)"
+    trusted_hashes = expected_hashes if expected_hashes is not None else EASYOCR_SHA256
+    if "craft_mlt_25k.pth" in trusted_hashes and "craft_mlt_25k.pth" not in pth_files:
+        return False, "missing_detector_pth:craft_mlt_25k.pth"
+    if "arabic.pth" in trusted_hashes and not any(r in pth_files for r in ("arabic.pth", "english_g2.pth", "latin_g2.pth")):
+        return False, "missing_recognizer_pth:arabic.pth"
     valid_pths = []
-    for fn in pth_files:
+    for fn in sorted(pth_files):
         fp = os.path.join(easyocr_dir, fn)
         if not os.path.isfile(fp) or os.path.islink(fp):
             return False, f"invalid_pth_entry:{fn}"
@@ -2194,8 +2203,18 @@ def verify_easyocr_dir(easyocr_dir="models/easyocr"):
             magic = f.read(8)
         if not (magic.startswith(b"PK\x03\x04") or magic.startswith(b"\x80")):
             return False, f"corrupt_pth_header:{fn}"
+        exp_sha = (trusted_hashes or {}).get(fn)
+        if not exp_sha:
+            return False, f"untrusted_pth_file:{fn}"
+        h = hashlib.sha256()
+        with open(fp, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        dig = h.hexdigest().lower()
+        if dig != exp_sha.lower():
+            return False, f"pth_sha256_mismatch:{fn}:{dig[:16]}!={exp_sha.lower()[:16]}"
         valid_pths.append(fn)
-    return True, f"verified_{len(valid_pths)}_pth_weights({','.join(sorted(valid_pths))})"
+    return True, f"verified_{len(valid_pths)}_pth_weights_sha256({','.join(sorted(valid_pths))})"
 
 
 def verify_runtime_model_assets(models_dir=None):
@@ -2212,7 +2231,9 @@ def verify_runtime_model_assets(models_dir=None):
         checks.append({"model": filename, "ok": bool(ok), "reason": str(reason)})
     yolo_path = os.path.join(root, "yolov8n.pt")
     ok_yolo, reason_yolo = verify_yolo_pt_file(
-        yolo_path, min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000)
+        yolo_path,
+        expected_sha256=get_trusted_model_sha256(yolo_path),
+        min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
     )
     checks.append({"model": "yolov8n.pt", "ok": bool(ok_yolo), "reason": str(reason_yolo)})
     ok_easy, reason_easy = verify_easyocr_dir(os.path.join(root, "easyocr"))
@@ -2513,14 +2534,16 @@ def get_or_load_shared_reader():
         try:
             import easyocr
             easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
-            easyocr_ok, _ = verify_easyocr_dir(easyocr_dir)
+            easyocr_ok, easyocr_reason = verify_easyocr_dir(easyocr_dir)
+            if not easyocr_ok:
+                raise RuntimeError(f"EasyOCR weights failed pre-load SHA-256 verification: {easyocr_reason}")
             dev_info = resolve_compute_device(os.environ.get("MERSAD_DEVICE", "auto"))
             try:
                 rdr = easyocr.Reader(
                     ["ar", "en"],
                     gpu=dev_info["use_gpu"],
                     model_storage_directory=easyocr_dir,
-                    download_enabled=not easyocr_ok,
+                    download_enabled=False,
                 )
             except TypeError:
                 rdr = easyocr.Reader(["ar", "en"], gpu=dev_info["use_gpu"], model_storage_directory=easyocr_dir)
@@ -2533,21 +2556,21 @@ def get_or_load_shared_reader():
 
 
 def get_or_load_shared_vyolo():
-    """Return already-loaded YOLOv8n vehicle detector if available, or load and cache it once thread-safely (AUDIT-004)."""
+    """Return already-loaded YOLOv8n vehicle detector if available, or load and cache it once thread-safely after SHA-256 verification (AUDIT-004)."""
     with _SHARED_ENGINES_LOCK:
         if _SHARED_ENGINES["vyolo"] is not None:
             _SHARED_ENGINES["vyolo_reuses"] += 1
             return _SHARED_ENGINES["vyolo"]
         try:
-            from ultralytics import YOLO
             v_p = resolve_resource_path(os.path.join("models", "yolov8n.pt"))
-            if os.path.isfile(v_p):
-                ok_v, reason_v = verify_yolo_pt_file(v_p, expected_sha256=get_trusted_model_sha256(v_p), min_bytes=1024)
-                if not ok_v:
-                    raise RuntimeError(f"Bundled yolov8n.pt failed security verification: {reason_v}")
-                vy = YOLO(v_p)
-            else:
-                vy = YOLO("yolov8n.pt")
+            if not os.path.isfile(v_p):
+                raise RuntimeError(f"Bundled yolov8n.pt not found at {v_p}; unverified runtime loading is disabled")
+            vy = load_verified_yolo_model(
+                v_p,
+                role="vehicle",
+                min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
+                enforce_trusted=True,
+            )
             _SHARED_ENGINES["vyolo"] = vy
             _SHARED_ENGINES["vyolo_loads"] += 1
             return vy
@@ -3074,6 +3097,7 @@ class TesseractOCRReader:
             return []
         h, w = img.shape[:2]
         inner = img[5:max(6, h - 5), 5:max(6, w - 5)] if (h > 14 and w > 28) else img
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
         try:
             data = pytesseract.image_to_data(inner, config="--psm 7", output_type=pytesseract.Output.DICT)
         except Exception:
@@ -3233,14 +3257,16 @@ class MersadEngineController:
         if st["status"] == "online":
             log("session start", cam_name)
         rt = threading.Thread(target=_camera_reader_worker, args=(st, cam_stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
-        rt.start()
-        self.reader_threads.append(rt)
         it = threading.Thread(
             target=_camera_inference_worker,
             args=(st, cam_stop_ev, self.vyolo, self.yolo, self.reader, self.trucks_only, self.curfew),
             daemon=True,
             name=f"cam_infer_{cam_name}",
         )
+        st["reader_thread"] = rt
+        st["infer_thread"] = it
+        rt.start()
+        self.reader_threads.append(rt)
         it.start()
         self.infer_threads.append(it)
         return st
@@ -3313,8 +3339,14 @@ class MersadEngineController:
                             "fail_count": fail_cnt,
                             "reconnect_count": st.get("reconnect_count", 0),
                             "reconnects": st.get("reconnect_count", 0),
+                            "last_plate": st.get("last_plate", prev_c.get("last_plate")),
+                            "brightness": st.get("brightness", prev_c.get("brightness", 0.0)),
+                            "contrast": st.get("contrast", prev_c.get("contrast", 0.0)),
+                            "sharpness": st.get("sharpness", prev_c.get("sharpness", 0.0)),
+                            "health_warning": st.get("health_warning", prev_c.get("health_warning", "")),
+                            "issues": prev_c.get("issues", []),
+                            "resolution": prev_c.get("resolution", ""),
                             "source": prev_c.get("source", redact_url(st["src"])),
-                            "health_warning": st.get("health_warning", ""),
                         }
                     _update_aggregate_fps(self.cam_states)
                     continue
@@ -3409,29 +3441,47 @@ class MersadEngineController:
 
 
 def remove_camera_runtime(data, who="operator"):
-    """Remove a dynamically registered camera from runtime state."""
+    """Remove a dynamically registered camera safely without OpenCV VideoCapture Use-After-Free (BUG-02 fix)."""
     if not isinstance(data, dict):
         return {"ok": False, "error": "بيانات الطلب غير صالحة"}
     cam_name = str(data.get("name") or data.get("cam") or "").strip()
     if not cam_name:
         return {"ok": False, "error": "اسم الكاميرا مطلوب"}
-    st = _ACTIVE_CAM_STATES.pop(cam_name, None)
+    ctrl = _ACTIVE_ENGINE_CONTROLLER
+    st_ctrl = None
+    if ctrl is not None and hasattr(ctrl, "_lock"):
+        with ctrl._lock:
+            st_ctrl = ctrl.cam_states.pop(cam_name, None)
+    st = _ACTIVE_CAM_STATES.pop(cam_name, None) or st_ctrl
     if st:
         ev = st.get("stop_ev")
         if ev:
             ev.set()
-        cap = st.get("cap")
-        if cap:
+        for th_key in ("reader_thread", "infer_thread"):
+            th = st.get(th_key)
+            if th is not None and th.is_alive() and th is not threading.current_thread():
+                th.join(timeout=2.5)
+        st_lock = st.get("lock")
+        if st_lock is not None:
+            with st_lock:
+                cap = st.get("cap")
+                st["cap"] = None
+        else:
+            cap = st.get("cap")
+            st["cap"] = None
+        if cap is not None:
             try:
                 cap.release()
             except Exception:
                 pass
     with _RUNTIME_STATE_LOCK:
         removed = STATUS.get("cameras", {}).pop(cam_name, None)
-    if CAMERA_HISTORY and removed is not None:
+        if _ACTIVE_CAM_STATES:
+            STATUS["cam"] = ",".join(_ACTIVE_CAM_STATES.keys())
+    if CAMERA_HISTORY and (removed is not None or st is not None):
         CAMERA_HISTORY.record_status(cam_name, "unknown", "dynamic_api_remove", force=True)
     log("camera removed", f"{cam_name} by {who}")
-    return {"ok": True, "camera": cam_name, "removed": removed is not None}
+    return {"ok": True, "camera": cam_name, "removed": (removed is not None or st is not None)}
 
 
 def wire():
@@ -3537,7 +3587,9 @@ def wire():
         "/api/vehicle/delete": lambda d, ip: R.delete("vehicles", d.get("key", ""), ip),
         "/api/person": R.save_person,
         "/api/person/delete": lambda d, ip: R.delete("persons", d.get("key", ""), ip),
-        "/api/enroll": enroll_api
+        "/api/enroll": enroll_api,
+        "/api/cameras/add": lambda d, ip: add_camera_runtime(d, who=ip),
+        "/api/cameras/remove": lambda d, ip: remove_camera_runtime(d, who=ip),
     }
 
 
@@ -4051,6 +4103,7 @@ def main():
     os.environ.setdefault("YOLO_AUTOINSTALL", "false")
     os.environ.setdefault("YOLO_OFFLINE", "true")
     os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "false")
+    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
     try:
         fetch_models()
     except Exception as e_fetch:
@@ -4065,14 +4118,15 @@ def main():
     try:
         import easyocr
         easyocr_dir = resolve_resource_path(os.path.join("models", "easyocr"))
-        easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
+        easyocr_verified, easyocr_reason = verify_easyocr_dir(easyocr_dir)
         if not easyocr_verified:
-            if _is_dir_writable(easyocr_dir):
-                os.makedirs(easyocr_dir, exist_ok=True)
-            else:
-                easyocr_dir = os.path.join(APPDIR, "models", "easyocr")
-                os.makedirs(easyocr_dir, exist_ok=True)
-                easyocr_verified, _ = verify_easyocr_dir(easyocr_dir)
+            alt_easyocr_dir = os.path.join(APPDIR, "models", "easyocr")
+            ok_alt, r_alt = verify_easyocr_dir(alt_easyocr_dir)
+            if ok_alt:
+                easyocr_dir, easyocr_verified, easyocr_reason = alt_easyocr_dir, ok_alt, r_alt
+        is_mock_easyocr = getattr(easyocr, "__file__", None) is None
+        if not easyocr_verified and (not is_mock_easyocr or os.path.isdir(easyocr_dir)):
+            raise RuntimeError(f"EasyOCR weights failed pre-load SHA-256 verification ({easyocr_reason}) at {easyocr_dir}")
         try:
             reader = easyocr.Reader(
                 ["ar", "en"],
@@ -4092,9 +4146,15 @@ def main():
         if a.plate_model:
             yolo = load_verified_yolo_model(a.plate_model, role="plate", min_bytes=1024, enforce_trusted=True)
         if not a.no_vehicles:
+            import ultralytics as _ul_mod
             yolo_p = resolve_resource_path(os.path.join("models", "yolov8n.pt"))
-            if os.path.exists(yolo_p):
-                vyolo = load_verified_yolo_model(yolo_p, role="vehicle", min_bytes=1024, enforce_trusted=False)
+            if os.path.exists(yolo_p) or getattr(_ul_mod, "__file__", None) is not None:
+                vyolo = load_verified_yolo_model(
+                    yolo_p,
+                    role="vehicle",
+                    min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
+                    enforce_trusted=True,
+                )
             else:
                 from ultralytics import YOLO
                 vyolo = YOLO("yolov8n.pt")
@@ -4107,6 +4167,15 @@ def main():
     sface_p = resolve_resource_path(os.path.join("models", "sface.onnx"))
     det_score = resolve_face_detect_score(getattr(a, "face_detect_score", cfg.get("face_detect_score", 0.65)))
     try:
+        is_mock_face = getattr(cv2.FaceDetectorYN, "__module__", "") not in ("cv2", "")
+        if os.path.exists(yunet_p) or not is_mock_face:
+            ok_yn, r_yn = verify_onnx_file(yunet_p, expected_sha256=MODEL_SHA256.get("yunet.onnx"), min_bytes=MODEL_MIN_BYTES.get("yunet.onnx", 200_000))
+            if not ok_yn:
+                raise RuntimeError(f"YuNet model failed pre-load SHA-256 verification: {r_yn}")
+        if os.path.exists(sface_p) or not is_mock_face:
+            ok_sf, r_sf = verify_onnx_file(sface_p, expected_sha256=MODEL_SHA256.get("sface.onnx"), min_bytes=MODEL_MIN_BYTES.get("sface.onnx", 30_000_000))
+            if not ok_sf:
+                raise RuntimeError(f"SFace model failed pre-load SHA-256 verification: {r_sf}")
         det = cv2.FaceDetectorYN.create(yunet_p, "", (320, 320), det_score)
         rec = cv2.FaceRecognizerSF.create(sface_p, "")
     except Exception as e_face:
@@ -4217,17 +4286,20 @@ def main():
             for k, v in cam_states.items()
         }
     for cam_name, st in cam_states.items():
+        st["stop_ev"] = stop_ev
         if st["status"] == "online":
             log("session start", cam_name)
         rt = threading.Thread(target=_camera_reader_worker, args=(st, stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
-        rt.start()
-        reader_threads.append(rt)
         it = threading.Thread(
             target=_camera_inference_worker,
             args=(st, stop_ev, vyolo, yolo, reader, trucks_only, curfew),
             daemon=True,
             name=f"cam_infer_{cam_name}",
         )
+        st["reader_thread"] = rt
+        st["infer_thread"] = it
+        rt.start()
+        reader_threads.append(rt)
         it.start()
         infer_threads.append(it)
 

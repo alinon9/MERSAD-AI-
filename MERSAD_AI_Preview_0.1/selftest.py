@@ -5273,6 +5273,103 @@ def run_patched_v7_1_and_preview_0_1_tests():
         check("PREVIEW01-VERIFY-INTEGRITY-TOOL", "verify_integrity.py validates all required MERSAD AI Preview 0.1 files and computes SHA-256 hashes",
               vi_rep.get("ok") is True and len(vi_rep.get("files", [])) >= 18 and len(vi_rep.get("missing_files", [])) == 0,
               (vi_rep.get("ok"), len(vi_rep.get("files", [])), vi_rep.get("missing_files")))
+
+        # 25. PREVIEW01-WIRE-CAMERAS-POST (BUG-01 Regression): wire() preserves /api/cameras/add and /api/cameras/remove in bus.post
+        m.wire()
+        has_cam_routes = ("/api/cameras/add" in m.bus.post and "/api/cameras/remove" in m.bus.post)
+        res_add_w = m.bus.post["/api/cameras/add"]({"name": "WIRE_CAM_TEST", "source": "http://127.0.0.1:8090/stream/cam1.mjpg", "spawn_worker": False}, "127.0.0.1") if has_cam_routes else {}
+        res_rem_w = m.bus.post["/api/cameras/remove"]({"name": "WIRE_CAM_TEST"}, "127.0.0.1") if has_cam_routes else {}
+        check("PREVIEW01-WIRE-CAMERAS-POST", "wire() registers and preserves /api/cameras/add and /api/cameras/remove in bus.post without overwrite",
+              has_cam_routes and res_add_w.get("ok") is True and res_rem_w.get("ok") is True and res_rem_w.get("removed") is True,
+              (has_cam_routes, res_add_w, res_rem_w))
+
+        # 26. PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT (BUG-02 Regression): remove_camera_runtime joins threads before releasing cap under lock
+        dummy_ev = threading.Event()
+        released_flag = [False]
+        joined_before_release = [False]
+        worker_done = [False]
+        def _dummy_reader():
+            while not dummy_ev.is_set():
+                time.sleep(0.01)
+            time.sleep(0.03)
+            worker_done[0] = True
+        class _SafeCap:
+            def release(self):
+                joined_before_release[0] = worker_done[0]
+                released_flag[0] = True
+        th_r = threading.Thread(target=_dummy_reader, daemon=True)
+        th_r.start()
+        m._ACTIVE_CAM_STATES["SAFE_REM_CAM"] = {
+            "cam": "SAFE_REM_CAM",
+            "stop_ev": dummy_ev,
+            "reader_thread": th_r,
+            "infer_thread": None,
+            "lock": threading.Lock(),
+            "cap": _SafeCap(),
+        }
+        rem_safe = m.remove_camera_runtime({"name": "SAFE_REM_CAM"}, who="regression_test")
+        check("PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT", "remove_camera_runtime waits for reader thread exit before calling cap.release() under lock",
+              rem_safe.get("ok") is True and released_flag[0] is True and joined_before_release[0] is True,
+              (rem_safe, released_flag[0], joined_before_release[0]))
+
+        # 27. PREVIEW01-ALERT-HUMAN-REVIEW-FLAG (BUG-06 Regression): raise_alert and _sync_alerts_from_db populate requires_human_review=True
+        blank_f = np.zeros((120, 320, 3), dtype=np.uint8)
+        aid_hr = m.raise_alert("FACE MATCH (demo watchlist)", "متطوع اختباري", "CAM_HR", blank_f, ref="HR-TEST-01")
+        with m.bus._lock:
+            al_match = [a for a in m.bus.alerts if a.get("id") == aid_hr]
+        al_obj = al_match[0] if al_match else {}
+        check("PREVIEW01-ALERT-HUMAN-REVIEW-FLAG", "raise_alert & _sync_alerts_from_db include explicit requires_human_review=True and verification_policy=HUMAN_VERIFICATION_REQUIRED",
+              al_obj.get("requires_human_review") is True and al_obj.get("verification_policy") == "HUMAN_VERIFICATION_REQUIRED" and al_obj.get("status") == "pending",
+              al_obj)
+
+        # 28. PREVIEW01-OMP-THREAD-LIMIT (BUG-05 Regression): OMP_THREAD_LIMIT=1 set to prevent Tesseract OpenMP thread contention
+        check("PREVIEW01-OMP-THREAD-LIMIT", "mersad_live sets OMP_THREAD_LIMIT=1 for multi-camera Tesseract OCR stability",
+              os.environ.get("OMP_THREAD_LIMIT") == "1", os.environ.get("OMP_THREAD_LIMIT"))
+
+        # 29. PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS (BUG-04 Regression): Unified build scripts generate EXE launchers & align pyinstaller==6.11.1
+        Check_b_ok = True
+        parent_ps1 = os.path.join(os.path.dirname(SRC), "BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1")
+        if os.path.isfile(parent_ps1):
+            ps1_s = open(parent_ps1, encoding="utf-8").read()
+            Check_b_ok = ("MERSAD_AI.exe %*" in ps1_s and "opencv-python-headless" in ps1_s)
+        check("PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS", "Unified Windows release script generates EXE distribution launchers and removes opencv-python-headless",
+              Check_b_ok, parent_ps1)
+
+        # 30. PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE (BUG-07 Regression): Phase 2 records BLOCKED honestly without aborting Windows build before Phase 3B
+        cmp_tool = os.path.join(os.path.dirname(SRC), "tools", "compare_original_vs_cleanroom_lab.py")
+        orig_placeholder = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Original_ed7b8f72")
+        clean_lab_dir = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Preview_0.1")
+        p2_ok = True
+        p2_detail = {}
+        if os.path.isfile(cmp_tool) and os.path.isdir(clean_lab_dir):
+            tmp_md = os.path.join(d, "cmp_out.md")
+            tmp_js = os.path.join(d, "cmp_out.json")
+            proc_cmp = subprocess.run(
+                [sys.executable, cmp_tool, "--original-source", orig_placeholder, "--cleanroom-dir", clean_lab_dir,
+                 "--output-md", tmp_md, "--output-json", tmp_js, "--require-cleanroom-pass"],
+                capture_output=True, text=True, timeout=60
+            )
+            cmp_data = json.loads(open(tmp_js, encoding="utf-8").read()) if os.path.isfile(tmp_js) else {}
+            ps1_txt_chk = open(parent_ps1, encoding="utf-8").read() if os.path.isfile(parent_ps1) else ""
+            suites_js = cmp_data.get("independent_test_suites", {})
+            p2_ok = (
+                proc_cmp.returncode == 0
+                and cmp_data.get("phase2_comparison_status") == "BLOCKED"
+                and suites_js.get("original_lab", {}).get("status") == "BLOCKED"
+                and suites_js.get("cleanroom_lab", {}).get("status") == "PASS"
+                and suites_js.get("cleanroom_lab", {}).get("passed") == 20
+                and "--require-cleanroom-pass" in ps1_txt_chk
+                and "--require-unblocked" not in ps1_txt_chk
+            )
+            p2_detail = {
+                "exit_code": proc_cmp.returncode,
+                "phase2_comparison_status": cmp_data.get("phase2_comparison_status"),
+                "original_status": suites_js.get("original_lab", {}).get("status"),
+                "cleanroom_passed": suites_js.get("cleanroom_lab", {}).get("passed"),
+            }
+        check("PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
+              "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",
+              p2_ok, p2_detail)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

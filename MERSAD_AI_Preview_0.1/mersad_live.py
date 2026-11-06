@@ -398,8 +398,9 @@ def _sync_alerts_from_db(reset_stuck_in_flight=False):
     for aid, msg, subj, ref, det, cam, ts_str, img, st, disp, dst, rep_cnt, n_st in rows:
         al = {
             "id": aid, "msg": msg, "subject": subj, "ref": ref, "detail": det or "", "cam": cam, "ts": ts_str,
-            "img": img, "dispatch_status": dst, "repeat_count": int(rep_cnt or 1),
-            "notify_status": n_st, "info_only": is_no_dispatch_msg(msg)
+            "img": img, "status": st, "dispatch_status": dst, "repeat_count": int(rep_cnt or 1),
+            "notify_status": n_st, "info_only": is_no_dispatch_msg(msg),
+            "requires_human_review": True, "verification_policy": "HUMAN_VERIFICATION_REQUIRED"
         }
         new_alerts.append(al)
         if img:
@@ -1076,7 +1077,8 @@ def raise_alert(msg, subject, cam, frame, ref=None, extra="", detail="", unmatch
         EVID[aid] = tmp_path
     al = {
         "id": aid, "msg": msg, "subject": subject, "ref": ref, "detail": detail or "", "cam": cam, "ts": ts,
-        "img": img_name, "dispatch_status": "not_required", "repeat_count": 1, "info_only": no_disp
+        "img": img_name, "status": "pending", "dispatch_status": "not_required", "repeat_count": 1, "info_only": no_disp,
+        "requires_human_review": True, "verification_policy": "HUMAN_VERIFICATION_REQUIRED"
     }
     _sync_alerts_from_db()
     bus.publish({"type": "alert", **al})
@@ -3095,6 +3097,7 @@ class TesseractOCRReader:
             return []
         h, w = img.shape[:2]
         inner = img[5:max(6, h - 5), 5:max(6, w - 5)] if (h > 14 and w > 28) else img
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
         try:
             data = pytesseract.image_to_data(inner, config="--psm 7", output_type=pytesseract.Output.DICT)
         except Exception:
@@ -3254,14 +3257,16 @@ class MersadEngineController:
         if st["status"] == "online":
             log("session start", cam_name)
         rt = threading.Thread(target=_camera_reader_worker, args=(st, cam_stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
-        rt.start()
-        self.reader_threads.append(rt)
         it = threading.Thread(
             target=_camera_inference_worker,
             args=(st, cam_stop_ev, self.vyolo, self.yolo, self.reader, self.trucks_only, self.curfew),
             daemon=True,
             name=f"cam_infer_{cam_name}",
         )
+        st["reader_thread"] = rt
+        st["infer_thread"] = it
+        rt.start()
+        self.reader_threads.append(rt)
         it.start()
         self.infer_threads.append(it)
         return st
@@ -3334,8 +3339,14 @@ class MersadEngineController:
                             "fail_count": fail_cnt,
                             "reconnect_count": st.get("reconnect_count", 0),
                             "reconnects": st.get("reconnect_count", 0),
+                            "last_plate": st.get("last_plate", prev_c.get("last_plate")),
+                            "brightness": st.get("brightness", prev_c.get("brightness", 0.0)),
+                            "contrast": st.get("contrast", prev_c.get("contrast", 0.0)),
+                            "sharpness": st.get("sharpness", prev_c.get("sharpness", 0.0)),
+                            "health_warning": st.get("health_warning", prev_c.get("health_warning", "")),
+                            "issues": prev_c.get("issues", []),
+                            "resolution": prev_c.get("resolution", ""),
                             "source": prev_c.get("source", redact_url(st["src"])),
-                            "health_warning": st.get("health_warning", ""),
                         }
                     _update_aggregate_fps(self.cam_states)
                     continue
@@ -3430,29 +3441,47 @@ class MersadEngineController:
 
 
 def remove_camera_runtime(data, who="operator"):
-    """Remove a dynamically registered camera from runtime state."""
+    """Remove a dynamically registered camera safely without OpenCV VideoCapture Use-After-Free (BUG-02 fix)."""
     if not isinstance(data, dict):
         return {"ok": False, "error": "بيانات الطلب غير صالحة"}
     cam_name = str(data.get("name") or data.get("cam") or "").strip()
     if not cam_name:
         return {"ok": False, "error": "اسم الكاميرا مطلوب"}
-    st = _ACTIVE_CAM_STATES.pop(cam_name, None)
+    ctrl = _ACTIVE_ENGINE_CONTROLLER
+    st_ctrl = None
+    if ctrl is not None and hasattr(ctrl, "_lock"):
+        with ctrl._lock:
+            st_ctrl = ctrl.cam_states.pop(cam_name, None)
+    st = _ACTIVE_CAM_STATES.pop(cam_name, None) or st_ctrl
     if st:
         ev = st.get("stop_ev")
         if ev:
             ev.set()
-        cap = st.get("cap")
-        if cap:
+        for th_key in ("reader_thread", "infer_thread"):
+            th = st.get(th_key)
+            if th is not None and th.is_alive() and th is not threading.current_thread():
+                th.join(timeout=2.5)
+        st_lock = st.get("lock")
+        if st_lock is not None:
+            with st_lock:
+                cap = st.get("cap")
+                st["cap"] = None
+        else:
+            cap = st.get("cap")
+            st["cap"] = None
+        if cap is not None:
             try:
                 cap.release()
             except Exception:
                 pass
     with _RUNTIME_STATE_LOCK:
         removed = STATUS.get("cameras", {}).pop(cam_name, None)
-    if CAMERA_HISTORY and removed is not None:
+        if _ACTIVE_CAM_STATES:
+            STATUS["cam"] = ",".join(_ACTIVE_CAM_STATES.keys())
+    if CAMERA_HISTORY and (removed is not None or st is not None):
         CAMERA_HISTORY.record_status(cam_name, "unknown", "dynamic_api_remove", force=True)
     log("camera removed", f"{cam_name} by {who}")
-    return {"ok": True, "camera": cam_name, "removed": removed is not None}
+    return {"ok": True, "camera": cam_name, "removed": (removed is not None or st is not None)}
 
 
 def wire():
@@ -3558,7 +3587,9 @@ def wire():
         "/api/vehicle/delete": lambda d, ip: R.delete("vehicles", d.get("key", ""), ip),
         "/api/person": R.save_person,
         "/api/person/delete": lambda d, ip: R.delete("persons", d.get("key", ""), ip),
-        "/api/enroll": enroll_api
+        "/api/enroll": enroll_api,
+        "/api/cameras/add": lambda d, ip: add_camera_runtime(d, who=ip),
+        "/api/cameras/remove": lambda d, ip: remove_camera_runtime(d, who=ip),
     }
 
 
@@ -4072,6 +4103,7 @@ def main():
     os.environ.setdefault("YOLO_AUTOINSTALL", "false")
     os.environ.setdefault("YOLO_OFFLINE", "true")
     os.environ.setdefault("ULTRALYTICS_AUTOINSTALL", "false")
+    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
     try:
         fetch_models()
     except Exception as e_fetch:
@@ -4254,17 +4286,20 @@ def main():
             for k, v in cam_states.items()
         }
     for cam_name, st in cam_states.items():
+        st["stop_ev"] = stop_ev
         if st["status"] == "online":
             log("session start", cam_name)
         rt = threading.Thread(target=_camera_reader_worker, args=(st, stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
-        rt.start()
-        reader_threads.append(rt)
         it = threading.Thread(
             target=_camera_inference_worker,
             args=(st, stop_ev, vyolo, yolo, reader, trucks_only, curfew),
             daemon=True,
             name=f"cam_infer_{cam_name}",
         )
+        st["reader_thread"] = rt
+        st["infer_thread"] = it
+        rt.start()
+        reader_threads.append(rt)
         it.start()
         infer_threads.append(it)
 

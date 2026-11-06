@@ -63,6 +63,9 @@ Write-Host "[Phase 1A] Installing pinned Windows x64 dependencies..."
 Assert-ExitCode "pip upgrade"
 & $pip install -r "MERSAD_AI_Preview_0.1\requirements.txt" -c "MERSAD_AI_Preview_0.1\constraints-win-x64.txt" pyinstaller==6.11.1
 Assert-ExitCode "pip install pinned requirements"
+& $pip uninstall -y opencv-python-headless
+& $pip install --force-reinstall --no-deps opencv-python==4.11.0.86
+Assert-ExitCode "enforce GUI opencv-python==4.11.0.86"
 
 Write-Host "[Phase 1B] Downloading 4 AI Models (YuNet, SFace, YOLOv8n, EasyOCR) & Verifying Pinned SHA-256..."
 & $py "MERSAD_AI_Preview_0.1\prefetch.py"
@@ -76,10 +79,22 @@ Write-Host "[Phase 1C] Running Real AI Model Inference on MERSAD LAB Frames (--r
 Assert-ExitCode "evaluate_ai_models.py --require-real-models"
 
 Write-Host "[Phase 2] Verifying Original MERSAD LAB (Commit ed7b8f727243da4878e547f08489af581c83291c) vs Clean-Room LAB..."
-& $py "tools\compare_original_vs_cleanroom_lab.py" --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-unblocked
-Assert-ExitCode "compare_original_vs_cleanroom_lab.py --require-unblocked"
+# Attempt to fetch build/mersad-lab-exe-20261031 if git origin is configured and reachable; otherwise record Original LAB as BLOCKED without aborting Phase 3B
+if (Test-Path ".git") {
+    git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $origSha = (git rev-parse refs/remotes/origin/mersad-lab-orig 2>$null).Trim().ToLower()
+        if ($origSha -eq "ed7b8f727243da4878e547f08489af581c83291c") {
+            Write-Host "[Phase 2] Restoring Original MERSAD LAB commit ed7b8f727243da4878e547f08489af581c83291c from git remote..."
+            git archive refs/remotes/origin/mersad-lab-orig | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
+            Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $origSha -Encoding ASCII
+        }
+    }
+}
+& $py "tools\compare_original_vs_cleanroom_lab.py" --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
+Assert-ExitCode "compare_original_vs_cleanroom_lab.py --require-cleanroom-pass (Clean-Room 20/20 PASS verified; Original LAB recorded as PASS or BLOCKED)"
 
-Write-Host "[Phase 3A] Running 225 AI Selftests (Standard + Blocked Sklearn) & 20 LAB Functional/Security Tests..."
+Write-Host "[Phase 3A] Running 231 AI Selftests (Standard + Blocked Sklearn) & 20 LAB Functional/Security Tests..."
 & $py -u "MERSAD_AI_Preview_0.1\selftest.py"
 Assert-ExitCode "MERSAD AI selftest.py (standard)"
 $env:MERSAD_BLOCK_SKLEARN = "1"
@@ -100,7 +115,10 @@ try {
     & $pyinst --noconfirm --clean mersad_ai.spec
     Assert-ExitCode "PyInstaller mersad_ai.spec"
     Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-    Copy-Item -Path "dashboard.html","README_AR.md","SYSTEM_REQUIREMENTS.txt","RUN.bat","RUN_LAN.bat","VERIFY_AUDIT.bat","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+    Copy-Item -Path "dashboard.html","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+    Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
+    Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
+    Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
     New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
     Compress-Archive -Path "dist\MERSAD_AI\*" -DestinationPath "dist\portable\MERSAD_AI_Portable_x64.zip" -Force
 } finally {

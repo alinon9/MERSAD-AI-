@@ -20,7 +20,7 @@ set "PIP=.venv\Scripts\pip.exe"
 
 echo [2/5] Installing pinned dependencies (constraints-win-x64.txt)...
 "%PIP%" install --upgrade pip
-"%PIP%" install -r requirements.txt -c constraints-win-x64.txt pyinstaller==6.10.0
+"%PIP%" install -r requirements.txt -c constraints-win-x64.txt pyinstaller==6.11.1
 if errorlevel 1 exit /b 1
 
 echo [3/5] Running 20-check functional and security test suite...
