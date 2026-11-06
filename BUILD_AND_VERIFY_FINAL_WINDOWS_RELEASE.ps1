@@ -1,4 +1,8 @@
 $ErrorActionPreference = "Stop"
+
+# GitHub Windows runners may default to cp1252; force UTF-8 for Python progress output.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 Set-Location (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 function Assert-ExitCode([string]$StepName) {
