@@ -68,7 +68,7 @@ MERSAD_PREVIEW_0.1/
 ```bat
 BUILD_ALL_WINDOWS_PREVIEW_0_1.bat
 ```
-يقوم هذا السكربت تلقائياً بإنشاء بيئة افتراضية معزولة، وتثبيت الاعتماديات المثبتة في `constraints-win-x64.txt`، وتنزيل النماذج والتحقق من بصماتها `SHA-256` عبر `prefetch.py`، وتشغيل **257 اختباراً آلياً**، ثم إنتاج:
+يقوم هذا السكربت تلقائياً بإنشاء بيئة افتراضية معزولة، وتثبيت الاعتماديات المثبتة في `constraints-win-x64.txt`، وتنزيل النماذج والتحقق من بصماتها `SHA-256` عبر `prefetch.py`، وتشغيل حزم الاختبارات الآلية المفصلة دون خلط بين عدد الحالات وعدد مرات التشغيل (`AI Standard: 232/232 PASS`، و`AI No-skLearn: 232/232 PASS`، و`verify_integrity: 18/18 PASS`، و`MERSAD LAB: 20/20 PASS`، و`Integration: 12 PASS + 2 NOT_TESTED`)، ثم إنتاج:
 - `MERSAD_AI_Preview_0.1\dist\MERSAD_AI\MERSAD_AI.exe`
 - `MERSAD_LAB_Preview_0.1\dist\MERSAD_LAB\MERSAD_LAB.exe`
 - `MERSAD_LAB_Preview_0.1\dist\portable\MERSAD_LAB_Portable_x64.zip`

@@ -146,13 +146,31 @@
     }
   ],
   "totals_across_matrix": {
-    "total_checks": 549,
-    "passed": 532,
+    "unique_test_cases_total": 345,
+    "unique_test_cases_passed": 328,
+    "additional_mode_executions_passed_no_sklearn": 232,
+    "total_executions_across_all_modes": 577,
+    "total_executions_passed": 560,
     "failed": 0,
     "not_tested": 16,
     "blocked": 1,
     "executed_pass_rate_pct": 100.0,
-    "overall_matrix_pass_pct": 96.9
+    "breakdown_by_suite": {
+      "ai_selftest_unique_cases": 232,
+      "ai_selftest_standard_mode_pass": 232,
+      "ai_selftest_no_sklearn_mode_pass": 232,
+      "ai_verify_integrity_pass": 18,
+      "lab_test_suite_pass": 20,
+      "lab_git_provenance_files_pass": 14,
+      "integration_e2e_pass": 12,
+      "integration_e2e_not_tested": 2,
+      "security_penetration_suite_pass": 10,
+      "auxiliary_tesseract_ocr_benchmark_pass": 8,
+      "deployment_and_workflow_self_test_pass": 14,
+      "primary_4_heavy_models_evals_not_tested": 8,
+      "windows_x64_deliverables_not_tested_locally": 5,
+      "original_lab_ed7b8f72_comparison_blocked": 1
+    }
   },
   "bugs_closed_in_final_release": [
     {
@@ -236,7 +254,49 @@
       "id": "BUG-12",
       "severity": "High",
       "summary": "PUSH_CANDIDATE script targeted historical branch preview/mersad-ai-lab-0.1-20261105 (9491bcd) instead of release/mersad-preview-0.1 (25131918), lacked remote SHA verification via git ls-remote, and did not fail-fast when gh CLI was missing/unauthenticated",
-      "test_id": "deploy_and_run_github_actions.py --self-test (8/8 PASS)",
+      "test_id": "deploy_and_run_github_actions.py --self-test (14/14 PASS)",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-13",
+      "severity": "High",
+      "summary": "workflow_dispatch input run_extended_stress was passed by deployment script without being defined in release-mersad-preview-0.1-windows.yml; defined boolean input in YAML and added programmatic schema validator",
+      "test_id": "WORKFLOW_YAML_DEFINES_RUN_EXTENDED_STRESS_BOOLEAN",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-14",
+      "severity": "Critical/High",
+      "summary": "Replaced fixed 5s sleep + gh run list --limit 1 with pre-dispatch ID recording + polling loop matching workflow, workflow_dispatch event, branch release/mersad-preview-0.1, and headSha == LOCAL_HEAD_SHA, followed by per-job verification and 5-artifact SHA-256 calculation",
+      "test_id": "FULL_E2E_WATCH_DOWNLOAD_AND_5_ARTIFACT_SHA256_PASS",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-15",
+      "severity": "High",
+      "summary": "deploy_and_run_github_actions.py --live previously set status=PASS right after gh workflow run; changed to status=DISPATCHED after dispatch and PASS only after run completion, all jobs succeeding, and all 5 Windows artifacts verified with SHA-256",
+      "test_id": "DISPATCH_WITHOUT_NEW_MATCHING_SHA_RUN_STAYS_DISPATCHED_NEVER_PASS",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-16",
+      "severity": "Medium/High",
+      "summary": "Created standalone verifiable Git bundle mersad_lab_preview_0_1_verifiable_history.bundle and verify_mersad_lab_provenance.py proving 14/14 files in MERSAD_LAB_Preview_0.1 match commit e9284356f4d1a8205946d5893121c6f8a2f22012 byte-for-byte",
+      "test_id": "MERSAD_LAB_GIT_BUNDLE_PROVENANCE_14_OF_14_SHA256_MATCH",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-17",
+      "severity": "Medium",
+      "summary": "Removed stale '257 automated tests' from README_AR.md and INSTALLATION_GUIDE_AR.md and separated unique test cases (328 PASS) from multi-mode execution runs (+232 No-skLearn run = 560 passed executions)",
+      "test_id": "DOC_TEST_COUNT_RECONCILIATION",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-18",
+      "severity": "High",
+      "summary": "Upgraded integration/evaluate_ai_models.py with explicit 4-stage breakdown (S1 SHA-256, S2 Load/Infer, S3 GT Samples Available, S4 GT Acceptance Passed) and strict guard preventing NOT_TESTED from ever converting to PASS",
+      "test_id": "MODEL_4STAGE_BREAKDOWN_NEVER_CONVERTS_NOT_TESTED_TO_PASS",
       "status": "PASS"
     }
   ],

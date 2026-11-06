@@ -136,6 +136,36 @@ def build_negative_non_face_non_vehicle_scenes() -> list[np.ndarray]:
     return [neg1, neg2, neg3, neg4]
 
 
+def build_four_stage_breakdown(
+    downloaded_and_sha256_verified: bool,
+    loaded_and_inference_executed: bool,
+    ground_truth_samples_available: bool,
+    ground_truth_acceptance_passed: bool,
+    acceptance_status: str,
+    not_tested_or_fail_reason: str = None,
+) -> dict:
+    """
+    Explicitly separate the 4 distinct validation stages for each AI model:
+      1. Model downloaded and SHA-256 verified against pinned digest.
+      2. Model loaded into memory and executed real forward-pass inference.
+      3. Ground-truth benchmark dataset/samples available on disk (including authorized face samples for YuNet/SFace).
+      4. Ground-truth quantitative acceptance thresholds passed.
+    Never converts NOT_TESTED to PASS.
+    """
+    final_status = acceptance_status
+    if not (downloaded_and_sha256_verified and loaded_and_inference_executed and ground_truth_samples_available and ground_truth_acceptance_passed):
+        if final_status == "PASS":
+            final_status = "NOT_TESTED" if not ground_truth_samples_available else "FAIL"
+    return {
+        "stage1_downloaded_and_sha256_verified": bool(downloaded_and_sha256_verified),
+        "stage2_loaded_and_inference_executed": bool(loaded_and_inference_executed),
+        "stage3_ground_truth_samples_available": bool(ground_truth_samples_available),
+        "stage4_ground_truth_acceptance_passed": bool(ground_truth_acceptance_passed),
+        "final_status": final_status,
+        "status_explanation": not_tested_or_fail_reason,
+    }
+
+
 def compute_ocr_ground_truth_metrics(samples: list[dict]) -> dict:
     """Compute Exact Match Rate, Digits Match Rate, and Mean Character Error Rate (CER) against ground-truth plates."""
     if not samples:
@@ -316,15 +346,23 @@ def evaluate_yunet_and_sface_ground_truth_gates(det, rec, neg_frames: list[np.nd
         "reason": yunet_reason,
     }
 
-    # SFace evaluation: requires >= 2 identities with >= 2 samples each (e.g. personA_1.jpg, personA_2.jpg, personB_1.jpg, personB_2.jpg)
+    # SFace evaluation: verify forward-pass feature extraction on a 112x112 aligned crop if rec is loaded,
+    # then require >= 2 identities with >= 2 samples each for ground-truth acceptance.
+    sface_smoke_lat = None
+    if rec is not None:
+        t0_sf = time.perf_counter()
+        _ = rec.feature(np.zeros((112, 112, 3), dtype=np.uint8))
+        sface_smoke_lat = round((time.perf_counter() - t0_sf) * 1000.0, 2)
+
     if rec is None or len(detected_crops) < 4:
         sface_res = {
             "status": "NOT_TESTED",
+            "forward_pass_verified": bool(rec is not None),
             "pairs_evaluated": 0,
             "same_person_cosine_sim_mean": None,
             "different_person_cosine_sim_max": None,
             "false_accept_rate": None,
-            "latency_ms": None,
+            "latency_ms": sface_smoke_lat,
             "reason": (
                 "MISSING_AUTHORIZED_MULTI_IDENTITY_FACE_SAMPLES: SFace acceptance requires >= 4 YuNet-aligned crops across >= 2 authorized volunteers "
                 "to measure intra-person similarity (>= 0.363) and inter-person separation (< 0.363)."
@@ -509,9 +547,19 @@ def evaluate_four_models_on_frames(
     if sf_gate["status"] != "PASS":
         all_passed = False
 
+    yn_has_gt_samples = bool(det_obj is not None and yn_gate.get("positive_samples_count", 0) >= 2)
+    yn_gt_passed = bool(yunet_status == "PASS" and yn_has_gt_samples)
     results["YuNet"] = {
         "test_classification": classification_label,
         "acceptance_status": yunet_status,
+        "four_stage_breakdown": build_four_stage_breakdown(
+            downloaded_and_sha256_verified=bool(yunet_dl["ok"] and yunet_load != "PRELOAD_SHA256_VERIFY_FAILED"),
+            loaded_and_inference_executed=bool(det_obj is not None),
+            ground_truth_samples_available=yn_has_gt_samples,
+            ground_truth_acceptance_passed=yn_gt_passed,
+            acceptance_status=yunet_status,
+            not_tested_or_fail_reason=yunet_err,
+        ),
         "download_status": yunet_dl["download_status"],
         "expected_sha256": yunet_exp_sha,
         "actual_sha256": yunet_dl["sha256"],
@@ -523,9 +571,19 @@ def evaluate_four_models_on_frames(
         "errors": yunet_err,
     }
 
+    sf_has_gt_samples = bool(rec_obj is not None and sf_gate.get("pairs_evaluated", 0) > 0)
+    sf_gt_passed = bool(sf_gate["status"] == "PASS" and sf_has_gt_samples)
     results["SFace"] = {
         "test_classification": classification_label,
         "acceptance_status": sf_gate["status"],
+        "four_stage_breakdown": build_four_stage_breakdown(
+            downloaded_and_sha256_verified=bool(sface_dl["ok"] and sface_load != "PRELOAD_SHA256_VERIFY_FAILED"),
+            loaded_and_inference_executed=bool(rec_obj is not None),
+            ground_truth_samples_available=sf_has_gt_samples,
+            ground_truth_acceptance_passed=sf_gt_passed,
+            acceptance_status=sf_gate["status"],
+            not_tested_or_fail_reason=sf_gate["reason"] or sface_err,
+        ),
         "download_status": sface_dl["download_status"],
         "expected_sha256": sface_exp_sha,
         "actual_sha256": sface_dl["sha256"],
@@ -590,12 +648,21 @@ def evaluate_four_models_on_frames(
         except Exception as e:
             yolo_errs.append(f"{type(e).__name__}: {e}")
         all_passed = False
-        if require_real_models:
-            yolo_status = "FAIL"
+        # Keep yolo_status as NOT_TESTED when weights are unreachable; --require-real-models checks stage1/stage2 at exit
 
+    yolo_has_gt_samples = bool(yolo_gt_metrics is not None and (yolo_gt_metrics.get("tp", 0) > 0 or (veh_bench_dir.is_dir() and list(veh_bench_dir.glob("*.jpg")))))
+    yolo_gt_passed = bool(yolo_status == "PASS" and yolo_has_gt_samples)
     results["YOLOv8n"] = {
         "test_classification": classification_label,
         "acceptance_status": yolo_status,
+        "four_stage_breakdown": build_four_stage_breakdown(
+            downloaded_and_sha256_verified=bool(yolo_dl["ok"] and yolo_load != "PRELOAD_SHA256_VERIFY_FAILED"),
+            loaded_and_inference_executed=bool(yolo_load == "LOADED_AFTER_SHA256_VERIFY" and yolo_gt_metrics is not None),
+            ground_truth_samples_available=yolo_has_gt_samples,
+            ground_truth_acceptance_passed=yolo_gt_passed,
+            acceptance_status=yolo_status,
+            not_tested_or_fail_reason=" | ".join(yolo_errs) if yolo_errs else None,
+        ),
         "download_status": yolo_dl["download_status"],
         "expected_sha256": yolo_exp_sha,
         "actual_sha256": yolo_dl["sha256"],
@@ -633,8 +700,7 @@ def evaluate_four_models_on_frames(
     if not eocr_ok:
         eocr_errs.append(f"verify_easyocr_dir_sha256: {eocr_reason}")
         all_passed = False
-        if require_real_models:
-            eocr_status = "FAIL"
+        # Keep eocr_status as NOT_TESTED when weights are unreachable; --require-real-models checks stage1/stage2 at exit
     else:
         try:
             import easyocr
@@ -680,9 +746,19 @@ def evaluate_four_models_on_frames(
             if require_real_models:
                 eocr_status = "FAIL"
 
+    eocr_has_gt_samples = bool(eocr_gt_metrics is not None and eocr_gt_metrics.get("total_samples", 0) >= MIN_REQUIRED_PLATE_SAMPLES)
+    eocr_gt_passed = bool(eocr_status == "PASS" and eocr_has_gt_samples)
     results["EasyOCR_Ar_En"] = {
         "test_classification": classification_label,
         "acceptance_status": eocr_status,
+        "four_stage_breakdown": build_four_stage_breakdown(
+            downloaded_and_sha256_verified=bool(eocr_ok),
+            loaded_and_inference_executed=bool(eocr_load == "LOADED_AFTER_SHA256_VERIFY" and eocr_gt_metrics is not None),
+            ground_truth_samples_available=eocr_has_gt_samples,
+            ground_truth_acceptance_passed=eocr_gt_passed,
+            acceptance_status=eocr_status,
+            not_tested_or_fail_reason=" | ".join(eocr_errs) if eocr_errs else None,
+        ),
         "download_status": "PRESENT_AND_SHA256_VERIFIED" if eocr_ok else "FAILED_OR_MISSING_WEIGHTS",
         "expected_sha256_files": dict(pf.EASYOCR_SHA256),
         "actual_sha256_files": eocr_shas,
@@ -767,9 +843,13 @@ def main():
 
     print("\n  --- [B] LIVE_LAB_HTTP_MJPEG_STREAM_INFERENCE (Live LAB HTTP MJPEG -> OpenCV) ---")
     for k, v in live_results.items():
+        fs = v["four_stage_breakdown"]
         print(
-            f"  [LIVE STREAM] {k:14s} | Status={v['acceptance_status']:10s} | "
-            f"Download={v['download_status']:28s} | Load={v['model_load_status']:26s} | "
+            f"  [LIVE STREAM] {k:10s} | FinalStatus={v['acceptance_status']:10s} | "
+            f"S1_SHA256={str(fs['stage1_downloaded_and_sha256_verified']):5s} | "
+            f"S2_Infer={str(fs['stage2_loaded_and_inference_executed']):5s} | "
+            f"S3_GTSamples={str(fs['stage3_ground_truth_samples_available']):5s} | "
+            f"S4_GTPass={str(fs['stage4_ground_truth_acceptance_passed']):5s} | "
             f"Inference={v['inference_result']}"
         )
 
@@ -872,12 +952,19 @@ def main():
     shutil.rmtree(BENCH_HOME, ignore_errors=True)
 
     if args.require_real_models:
-        # In CI/Windows build mode, verify that all 4 models were downloaded, SHA-256 verified, and loaded without FAIL,
-        # and that no model returned FAIL on its ground-truth gate (models without natural photo benchmark sets remain NOT_TESTED).
-        any_load_fail = any(v["model_load_status"] != "LOADED_AFTER_SHA256_VERIFY" for v in live_results.values())
+        # Strictly verify Stage 1 (Downloaded & SHA-256 verified) and Stage 2 (Loaded & Inference executed) for all 4 models,
+        # and ensure no model failed Stage 4 (Ground-Truth Acceptance). Models lacking natural/authorized benchmark samples
+        # on disk (Stage 3 == False) remain honestly recorded as NOT_TESTED and are NEVER converted to PASS.
+        any_s1_s2_fail = any(
+            not (v["four_stage_breakdown"]["stage1_downloaded_and_sha256_verified"] and v["four_stage_breakdown"]["stage2_loaded_and_inference_executed"])
+            for v in live_results.values()
+        )
         any_gate_fail = any(v["acceptance_status"] == "FAIL" for v in live_results.values())
-        if any_load_fail or any_gate_fail:
-            print("  [ACCEPTANCE GATE FAILED] --require-real-models was set, and one or more of the 4 AI models failed SHA-256 load or ground-truth evaluation.")
+        not_tested_models = [k for k, v in live_results.items() if v["acceptance_status"] == "NOT_TESTED"]
+        if not_tested_models:
+            print(f"  [NOTE] Models remaining NOT_TESTED (never converted to PASS): {not_tested_models}")
+        if any_s1_s2_fail or any_gate_fail:
+            print("  [ACCEPTANCE GATE FAILED] --require-real-models was set, and one or more of the 4 AI models failed Stage 1 (SHA-256), Stage 2 (Load/Infer), or Stage 4 (Ground-Truth Gate).")
             sys.exit(1)
     sys.exit(0)
 

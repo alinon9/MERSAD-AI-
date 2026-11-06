@@ -1,7 +1,17 @@
 # 4. تقرير التحقق من قدرات الذكاء الاصطناعي وبوابات القبول المرجعية — `AI_MODEL_VALIDATION.md`
 ## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
 
-## 1. بوابات القبول المرجعية الصارمة للنماذج الأربعة (`Strict Ground-Truth Model Acceptance Gates — BUG-09`)
+## 1. التفريق الهيكلي رباعي المراحل وبوابات القبول المرجعية للنماذج الأربعة (`4-Stage Model Validation & Ground-Truth Gates — BUG-09 & BUG-18`)
+
+يفرّق `integration/evaluate_ai_models.py` (في المخرجات النصية وفي حقل `four_stage_breakdown` داخل `reports_and_logs/model_inference_results.json`) بصرامة بين المراحل الأربع المستقلة لكل نموذج، مع **حظر تحويل `NOT_TESTED` إلى `PASS` تحت أي ظرف** (بما في ذلك عند تمرير `--require-real-models`):
+
+| النموذج | المرحلة 1: التنزيل والتحقق من `SHA-256` (`S1_SHA256`) | المرحلة 2: التحميل وتشغيل الاستدلال (`S2_Infer`) | المرحلة 3: توفر عينات `Ground Truth` المرجعية (`S3_GTSamples`) | المرحلة 4: اجتياز عتبات الدقة المرجعية (`S4_GTPass`) | الحالة النهائية (`FinalStatus`) في الحاوية الحالية |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **`YuNet`** (`models/yunet.onnx`) | `False` (عزل الشبكة) | `False` | `False` (تتطلب عينات وجوه إيجابية مصرح بها `faces_positive/*.jpg`) | `False` (`Recall >= 0.75` + `Neg FP == 0`) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى لو نجحت المرحلتان 1 و2 ما لم تتوفر عينات الوجوه المصرح بها) |
+| **`SFace`** (`models/sface.onnx`) | `False` (عزل الشبكة) | `False` | `False` (تتطلب `>= 4` صور لشخصين مصرح بهما على الأقل) | `False` (`Same >= 0.363`, `Diff < 0.363`, `FAR == 0`) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى لو نجحت المرحلتان 1 و2 ما لم تتوفر عينات الهويات المتعددة المصرح بها) |
+| **`YOLOv8n`** (`models/yolov8n.pt`) | `False` (عزل الشبكة) | `False` | `False` (تتطلب صور مركبات طبيعية مرجعية `vehicles/*.jpg`) | `False` (`Recall >= 0.75`, `Precision >= 0.75`, `IoU >= 0.50`, `Neg FP == 0`) | **`NOT_TESTED`** |
+| **`EasyOCR`** (`models/easyocr/*.pth`) | `False` (عزل الشبكة) | `False` | `True` (`4` لوحات يمنية مرجعية موسومة في `MERSAD LAB`) | `False` (`ExactMatch >= 0.75`, `Mean CER <= 0.25`) | **`NOT_TESTED`** (`tesseract_substituted: false`) |
+| **`Tesseract 5 LSTM`** (تقييم مساعد مستقل) | `True` (`/usr/bin/tesseract`) | `True` (`411.08 ms`) | `True` (`4` اصطناعية + `4` بث `MJPEG` حي) | `True` (`ExactMatch = 100.0%`, `Mean CER = 0.0%`) | **`PASS`** (`8/8` — لم يُحتسب بديلاً عن `EasyOCR`) |
 
 التزاماً بقاعدة **عدم منح أي نموذج حالة `PASS` لمجرد نجاح تحميله أو تنفيذ استدلال على 4 إطارات دون مقارنة بالبيانات المرجعية (`Ground Truth`)**، تم تحصين `integration/evaluate_ai_models.py` بالبوابات الأربع التالية:
 
@@ -25,14 +35,14 @@
   [SYNTH SCENE] EasyOCR_Ar_En  | Status=NOT_TESTED | Download=FAILED_OR_MISSING_WEIGHTS    | Load=NOT_LOADED                 | Inference=NOT_EXECUTED
 
   --- [B] LIVE_LAB_HTTP_MJPEG_STREAM_INFERENCE (Live LAB HTTP MJPEG -> OpenCV) ---
-  [LIVE STREAM] YuNet          | Status=NOT_TESTED | Download=FAILED_DOWNLOAD              | Load=NOT_LOADED                 | Inference=NOT_EXECUTED
-  [LIVE STREAM] SFace          | Status=NOT_TESTED | Download=FAILED_DOWNLOAD              | Load=NOT_LOADED                 | Inference=NOT_EXECUTED
-  [LIVE STREAM] YOLOv8n        | Status=NOT_TESTED | Download=FAILED_DOWNLOAD              | Load=NOT_LOADED                 | Inference=NOT_EXECUTED
-  [LIVE STREAM] EasyOCR_Ar_En  | Status=NOT_TESTED | Download=FAILED_OR_MISSING_WEIGHTS    | Load=NOT_LOADED                 | Inference=NOT_EXECUTED
+  [LIVE STREAM] YuNet      | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
+  [LIVE STREAM] SFace      | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
+  [LIVE STREAM] YOLOv8n    | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
+  [LIVE STREAM] EasyOCR_Ar_En | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
 
   --- [C] INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK ---
   [AUX TEST] Synthetic VirtualCamera Scenes: 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%)
-  [AUX TEST] Live LAB HTTP MJPEG Streams   : 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%, mean_latency=423.67ms)
+  [AUX TEST] Live LAB HTTP MJPEG Streams   : 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%, mean_latency=411.08ms)
 ```
 
 # تقرير الفحص الهندسي والاختبار الفعلي لقدرات الذكاء الاصطناعي والرؤية الحاسوبية والأداء

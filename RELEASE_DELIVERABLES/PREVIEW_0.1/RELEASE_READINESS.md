@@ -29,7 +29,21 @@
 | **النتيجة الحالية المعتمدة (Current Final)** | **`integration/test_ai_lab_integration.py` (`25131918a981`)** | **`12 PASS, 0 FAIL, 2 NOT_TESTED` (`14 فحصاً`)** | ينفذ ويخرج في تشغيل واحد جميع السيناريوهات الـ 12 (`INT-SCEN-01` إلى `INT-SCEN-12` شاملةً `INT-E2E-01..07` = **`12/12 PASS`**) + بوابتي البيئة والعتاد (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة = **`NOT_TESTED`**، و`INT-HW-RTSP-USB` للكاميرات الفيزيائية = **`NOT_TESTED`**). | `reports_and_logs/ai_lab_integration_log.txt` & `reports_and_logs/ai_lab_integration_results.json` |
 
 
-## 2. المصفوفة الموحدة النهائية للقبول (`Unified PASS / FAIL / NOT TESTED / BLOCKED Matrix`)
+## 2. تفصيل الاختبارات المنفذة فعلياً (دون خلط بين عدد حالات الاختبار الفريدة وعدد مرات تشغيلها — `BUG-17`)
+
+- **`MERSAD AI selftest.py` (`232` حالة اختبار فريدة تُشغَّل في وضعين مستقلين)**:
+  - **الوضع القياسي (`AI Standard Mode`)**: **`232 / 232 PASS`** (`0 FAIL, 0 SKIP` — السجل: `reports_and_logs/logs/05_preview01_ai_selftest_std_232_pass.log`).
+  - **وضع غياب `scikit-learn` (`AI No-skLearn / _StatForest Mode`)**: **`232 / 232 PASS`** (`0 FAIL, 0 SKIP` — السجل: `reports_and_logs/logs/06_preview01_ai_selftest_nosklearn_232_pass.log`).
+  - *ملاحظة منهجية*: يمثل هذان التشغيلان نفس الـ **`232` حالة اختبار فريدة** عبر بيئتي تشغيل مختلفتين (`464` عملية تشغيل ناجحة)، ولا يُجمعان كـ `464` حالة اختبار مختلفة.
+- **فحص سلامة ملفات وبصمات `MERSAD AI` (`verify_integrity.py`)**: **`18 / 18 PASS`** (`18` ملفاً أساسياً).
+- **اختبارات مختبر الكاميرات `MERSAD LAB 1.0` (`test_lab.py`)**: **`20 / 20 PASS`** (`8` اختبارات وظيفية + `12` اختبار أمان وضغط وإغلاق).
+- **إثبات مصدر والتزام `MERSAD LAB` الجنائي (`verify_mersad_lab_provenance.py` @ `e9284356f4d1a8205946d5893121c6f8a2f22012`)**: **`14 / 14 PASS`** (مطابقة تامة बाيت-ببايت `SHA-256` بين جميع ملفات `MERSAD_LAB_Preview_0.1/` الـ 14 وحزمة Git المستقلة `reports_and_logs/mersad_lab_preview_0_1_verifiable_history.bundle`).
+- **اختبارات التكامل الشامل بين المشروعين (`integration/test_ai_lab_integration.py`)**: **`12 PASS + 2 NOT_TESTED`** (`0 FAIL` من أصل `14` فحصاً: اجتياز جميع السيناريوهات الـ 12 `INT-SCEN-01..12` شاملةً `INT-E2E-01..07` على المحرك الحي، وبقاء `PHASE4-GATE-01` و`INT-HW-RTSP-USB` بحالة `NOT_TESTED`).
+- **التدقيق الأمني الاختراقي الحي وفحص استعلامات `SQLite` (`SECURITY_AUDIT.md`)**: **`10 / 10 PASS`** (`10` اختبارات اختراق حية `SEC-AUDIT-01..10` + فحص ساكن `AST` لـ `203` استعلامات `SQLite`).
+- **التقييم المرجعي المساعد لمحرك `Tesseract 5 LSTM` (`evaluate_ai_models.py`)**: **`8 / 8 PASS`** (`4/4` مشاهد اصطناعية + `4/4` بث `MJPEG` حي، `ExactMatch=100.0%`, `MeanCER=0.0%`).
+- **الاختبار الذاتي لمنظومة النشر و`workflow_dispatch` واستخراج `Run ID` (`deploy_and_run_github_actions.py --self-test`)**: **`14 / 14 PASS`**.
+
+## 3. المصفوفة الموحدة النهائية للقبول (`Unified PASS / FAIL / NOT TESTED / BLOCKED Matrix`)
 
 | المعرّف | الحزمة / البند الاختباري | التصنيف الهندسي | الحالة النهائية (`PASS / FAIL / NOT TESTED / BLOCKED`) | عدد الفحوصات | الدليل السجلي الفعلي ومصدر النتيجة |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -45,4 +59,6 @@
 | **`MAT-10`** | **الكاميرات الفيزيائية (`INT-HW-RTSP-USB`) واختبار الاستقرار لمدة ساعتين (`2h Soak`)** | `Physical Hardware & 2-Hour Field Soak Validation` | **`NOT TESTED`** | **`0 / 2`** (`2 NOT_TESTED` في الحاوية الافتراضية) | `reports_and_logs/ai_lab_integration_results.json` |
 | **`MAT-11`** | **بناء وتشغيل ملفات Windows التنفيذية (`MERSAD_AI.exe`, `MERSAD_LAB.exe`, `MERSAD_LAB_Setup_x64.exe`, `MERSAD_AI_Portable_x64.zip`, `MERSAD_LAB_Portable_x64.zip`)** | `Native Windows 10/11 x64 Compilation & Smoke Test` | **`NOT TESTED`** | **`0 / 5`** (`5 NOT_TESTED` في حاوية Linux المعزولة) | مهيأ ومحصن بالكامل في `release-mersad-preview-0.1-windows.yml` و`BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` |
 | **`MAT-12`** | **مقارنة كود المختبر الأصلي عند الالتزام `ed7b8f727243da4878e547f08489af581c83291c`** | `Forensic Source Comparison (Original vs Clean-Room LAB)` | **`BLOCKED`** | **`0 / 1`** (`1 BLOCKED` — غير مانع لبناء `Preview 0.1`) | `reports_and_logs/08_ORIGINAL_VS_CLEANROOM_LAB_COMPARISON_AR.md` & `original_vs_cleanroom_lab_comparison.json` |
-| **الإجمالي** | **مجموع فحوصات منظومة التحقق الموحدة (`549` فحصاً)** | **`96.90% PASS`** | **`532`** | **`0`** | **`16`** | **`1`** | **`100.0%` نجاح في جميع الاختبارات القابلة للتنفيذ محلياً (`0 FAIL`)** |
+| **`MAT-13`** | **إثبات مصدر `MERSAD LAB` الجنائي (`verify_mersad_lab_provenance.py` @ `e9284356`)** | `Standalone Git Bundle & 14-File SHA-256 Parity` | **`PASS`** | **`14 / 14 PASS`** (`0 FAIL`) | `reports_and_logs/logs/16_mersad_lab_git_provenance_verification.log` & `mersad_lab_preview_0_1_verifiable_history.bundle` |
+| **`MAT-14`** | **الاختبار الذاتي لمنظومة النشر و`workflow_dispatch` واستخراج `Run ID` (`deploy_and_run_github_actions.py --self-test`)** | `Workflow Dispatch Input & Run ID Polling Self-Test` | **`PASS`** | **`14 / 14 PASS`** (`0 FAIL`) | `reports_and_logs/logs/15_github_actions_deployment_attempt.log` |
+| **الإجمالي (حالات فريدة)** | **مجموع حالات الفحص الفريدة (`345` حالة فريدة، بدون تكرار وضعي `selftest.py`)** | **`READY FOR WINDOWS CI BUILD (NOT YET WINDOWS-DELIVERED)`** | **`328 PASS`** (`+232` في الوضع الثاني لـ `selftest.py` = `560` تشغيلاً ناجحاً) | **`0 FAIL`** | **`16 NOT_TESTED`** (`8` تقييمات للنماذج الأربعة + `1` بوابة نماذج تكاملية + `2` كاميرات/ساعتان + `5` مخرجات Windows) | **`1 BLOCKED`** (المختبر الأصلي `ed7b8f72`) |
