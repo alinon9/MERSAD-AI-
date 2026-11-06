@@ -942,7 +942,9 @@ def main():
     out_path = ROOT_DIR / "reports_and_logs" / "model_inference_results.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path("/tmp/evaluate_ai_models_benchmark.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    benchmark_path = Path(os.environ.get("MERSAD_BENCHMARK_OUTPUT", str(ROOT_DIR / "reports_and_logs" / "evaluate_ai_models_benchmark.json")))
+    benchmark_path.parent.mkdir(parents=True, exist_ok=True)
+    benchmark_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     try:
         if m.db:
