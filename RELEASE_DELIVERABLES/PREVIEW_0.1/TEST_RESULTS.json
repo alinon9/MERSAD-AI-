@@ -298,6 +298,34 @@
       "summary": "Upgraded integration/evaluate_ai_models.py with explicit 4-stage breakdown (S1 SHA-256, S2 Load/Infer, S3 GT Samples Available, S4 GT Acceptance Passed) and strict guard preventing NOT_TESTED from ever converting to PASS",
       "test_id": "MODEL_4STAGE_BREAKDOWN_NEVER_CONVERTS_NOT_TESTED_TO_PASS",
       "status": "PASS"
+    },
+    {
+      "id": "BUG-19",
+      "severity": "High",
+      "summary": "Run 42273598736: TesseractOCRReader silently returned [] on Windows when pytesseract was absent; added direct CLI TSV fallback (_run_tesseract_tsv_cli) and Windows path discovery (0/4 -> 4/4 matched)",
+      "test_id": "RUN_42273598736_TESSERACT_DIRECT_CLI_FALLBACK_WITHOUT_PYTESSERACT",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-20",
+      "severity": "Critical",
+      "summary": "Run 42273598736: Added _LATIN_GOV_TO_AR in registry.py so EasyOCR Latin plate reads (ADEN/SANA/TAIZ/HADR/IBB/MARIB) normalize to canonical Arabic (6/6 exact match) and fixed samples_count key typo at line 749",
+      "test_id": "RUN_42273598736_LATIN_TO_ARABIC_GOV_NORMALIZATION_6_OF_6",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-21",
+      "severity": "High",
+      "summary": "Run 42273598736: Created tools/prepare_safe_eval_benchmarks.py and populated MERSAD_AI_Preview_0.1/models/eval_benchmarks/ (plates, vehicles, faces_positive, faces_authorized_pairs, BENCHMARK_MANIFEST.json) with zero real human PII",
+      "test_id": "RUN_42273598736_SAFE_BENCHMARKS_NO_PII_AND_6_PLATES_READY",
+      "status": "PASS"
+    },
+    {
+      "id": "BUG-22",
+      "severity": "High",
+      "summary": "Run 42273598736: Separated smoke_inference_status (--require-smoke-inference) from ground_truth_acceptance_status (--require-ground-truth-accuracy) and marked VirtualCamera frames as synthetic integration streams",
+      "test_id": "RUN_42273598736_VIRTUAL_CAMERA_MARKED_NON_PHOTOREALISTIC_INTEGRATION_STREAM",
+      "status": "PASS"
     }
   ],
   "integration_14_checks_detail": [
@@ -341,14 +369,14 @@
       "check": "INT-SCEN-04: Stream live MJPEG test video from MERSAD LAB",
       "status": "PASS",
       "category": "INDEPENDENT_TESSERACT_E2E",
-      "detail": "status=200, frames_delivered=4, bytes=99426"
+      "detail": "status=200, frames_delivered=4, bytes=99510"
     },
     {
       "id": "INT-SCEN-05",
       "check": "INT-SCEN-05: Feed video stream into CV engine & compute real-time frame quality metrics",
       "status": "PASS",
       "category": "INDEPENDENT_TESSERACT_E2E",
-      "detail": "LAB_CAM1 frames=76, detections=4, brightness=75.72, res=640x480"
+      "detail": "LAB_CAM1 frames=75, detections=4, brightness=75.73, res=640x480"
     },
     {
       "id": "INT-SCEN-06",
@@ -362,7 +390,7 @@
       "check": "INT-SCEN-07: Multi-frame trajectory tracking & alert deduplication across continuous frames (INT-E2E-03)",
       "status": "PASS",
       "category": "INDEPENDENT_TESSERACT_E2E",
-      "detail": "LAB_CAM1 frames 77->91, alerts for عدن-12345: 1 (expected 1)"
+      "detail": "LAB_CAM1 frames 75->90, alerts for عدن-12345: 1 (expected 1)"
     },
     {
       "id": "INT-SCEN-08",
@@ -383,7 +411,7 @@
       "check": "INT-SCEN-10: Save logs, analytics CSV export & verify HMAC-SHA256 audit chain and secret redaction",
       "status": "PASS",
       "category": "INDEPENDENT_TESSERACT_E2E",
-      "detail": "csv_bytes=1080, log_bytes=755, token_leaked=False, verify='Audit chain OK (11 records)'"
+      "detail": "csv_bytes=1082, log_bytes=755, token_leaked=False, verify='Audit chain OK (11 records)'"
     },
     {
       "id": "INT-SCEN-12",
@@ -410,13 +438,13 @@
     {
       "status": "PASS",
       "id": "LAB-02",
-      "description": "MJPEG streaming -- status=200, frames_received=4, bytes=99915",
+      "description": "MJPEG streaming -- status=200, frames_received=4, bytes=99777",
       "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
     },
     {
       "status": "PASS",
       "id": "LAB-03",
-      "description": "Health endpoint -- version=MERSAD LAB 1.0 — PREVIEW 0.1, cameras=4, rss_mb=240.74",
+      "description": "Health endpoint -- version=MERSAD LAB 1.0 — PREVIEW 0.1, cameras=4, rss_mb=241.96",
       "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
     },
     {
@@ -440,13 +468,13 @@
     {
       "status": "PASS",
       "id": "LAB-07",
-      "description": "Image quality upload -- grade=ممتازة (Excellent), sharpness=1205.32, brightness=76.53",
+      "description": "Image quality upload -- grade=ممتازة (Excellent), sharpness=1198.78, brightness=76.52",
       "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
     },
     {
       "status": "PASS",
       "id": "LAB-08",
-      "description": "Video quality upload -- sampled_frames=10, grade=ممتازة (Excellent), elapsed=0.031s",
+      "description": "Video quality upload -- sampled_frames=10, grade=ممتازة (Excellent), elapsed=0.042s",
       "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
     },
     {
@@ -494,7 +522,7 @@
     {
       "status": "PASS",
       "id": "LAB-SEC-08",
-      "description": "Memory & CPU pressure bounds -- rss_before=258.41MB, rss_after=258.41MB, delta=+0.00MB",
+      "description": "Memory & CPU pressure bounds -- rss_before=257.68MB, rss_after=257.68MB, delta=+0.00MB",
       "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
     },
     {
@@ -518,7 +546,7 @@
     {
       "status": "PASS",
       "id": "LAB-SEC-12",
-      "description": "Zero hanging processes/threads/ports on close -- port 42481 released, lingering_threads=0",
+      "description": "Zero hanging processes/threads/ports on close -- port 46257 released, lingering_threads=0",
       "log_source": "reports_and_logs/mersad_lab_test_log.txt (and logs/09_preview01_lab_20_checks_pass.log)"
     }
   ],
@@ -646,7 +674,7 @@
     {
       "status": "PASS",
       "id": "P2-8#2",
-      "description": "class-filtered detect_vehicles benchmark completed quickly (200 calls in 29.5ms)",
+      "description": "class-filtered detect_vehicles benchmark completed quickly (200 calls in 25.6ms)",
       "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
     },
     {
@@ -976,7 +1004,7 @@
     {
       "status": "PASS",
       "id": "P1-3",
-      "description": "Telegram callback answered immediately (0.20s < 1.2s) & camera frames kept advancing during slow dispatch",
+      "description": "Telegram callback answered immediately (0.21s < 1.2s) & camera frames kept advancing during slow dispatch",
       "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
     },
     {
@@ -1366,7 +1394,7 @@
     {
       "status": "PASS",
       "id": "STAGE4-GAP08",
-      "description": "24 display frames & 12 MJPEG updates completed in 13.7ms (<120ms) while 250ms OCR ran asynchronously",
+      "description": "24 display frames & 12 MJPEG updates completed in 13.3ms (<120ms) while 250ms OCR ran asynchronously",
       "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
     },
     {
@@ -1378,7 +1406,7 @@
     {
       "status": "PASS",
       "id": "STAGE4-GAP13",
-      "description": "lookup_vehicle on 5,005 rows scans ONLY 5 wanted/stolen rows in 1.81ms (<25ms)",
+      "description": "lookup_vehicle on 5,005 rows scans ONLY 5 wanted/stolen rows in 1.21ms (<25ms)",
       "log_source": "reports_and_logs/mersad_ai_selftest_log.txt (and logs/05_preview01_ai_selftest_std_232_pass.log)"
     },
     {

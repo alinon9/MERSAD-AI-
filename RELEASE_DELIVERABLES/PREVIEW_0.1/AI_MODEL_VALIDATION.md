@@ -35,14 +35,15 @@
   [SYNTH SCENE] EasyOCR_Ar_En  | Status=NOT_TESTED | Download=FAILED_OR_MISSING_WEIGHTS    | Load=NOT_LOADED                 | Inference=NOT_EXECUTED
 
   --- [B] LIVE_LAB_HTTP_MJPEG_STREAM_INFERENCE (Live LAB HTTP MJPEG -> OpenCV) ---
-  [LIVE STREAM] YuNet      | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
-  [LIVE STREAM] SFace      | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
-  [LIVE STREAM] YOLOv8n    | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
-  [LIVE STREAM] EasyOCR_Ar_En | FinalStatus=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False | Inference=NOT_EXECUTED
+  [LIVE STREAM] YuNet          | Smoke=NOT_TESTED | GroundTruth=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False
+  [LIVE STREAM] SFace          | Smoke=NOT_TESTED | GroundTruth=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False
+  [LIVE STREAM] YOLOv8n        | Smoke=NOT_TESTED | GroundTruth=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False
+  [LIVE STREAM] EasyOCR_Ar_En  | Smoke=NOT_TESTED | GroundTruth=NOT_TESTED | S1_SHA256=False | S2_Infer=False | S3_GTSamples=False | S4_GTPass=False
 
   --- [C] INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK ---
+  [AUX TEST] Benchmark Plates Dataset (6)  : 6/6 matched (ExactMatch=100.0%, MeanCER=0.0%)
   [AUX TEST] Synthetic VirtualCamera Scenes: 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%)
-  [AUX TEST] Live LAB HTTP MJPEG Streams   : 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%, mean_latency=411.08ms)
+  [AUX TEST] Live LAB HTTP MJPEG Streams   : 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%, mean_latency=363.01ms)
 ```
 
 # تقرير الفحص الهندسي والاختبار الفعلي لقدرات الذكاء الاصطناعي والرؤية الحاسوبية والأداء
