@@ -145,7 +145,7 @@ def check_models_detailed(root_dir=ROOT_DIR):
             "remediation": "Run `python prefetch.py` to download and verify yolov8n.pt",
         })
     else:
-        ok_y, reason_y = verify_yolo_pt_file(yolo_p, min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000))
+        ok_y, reason_y = verify_yolo_pt_file(yolo_p, expected_sha256=MODEL_SHA256.get("yolov8n.pt"), min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000))
         results.append({
             "item": yolo_rel,
             "category": "MODEL_OK" if ok_y else "MODEL_CORRUPT",

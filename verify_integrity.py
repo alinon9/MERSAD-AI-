@@ -28,6 +28,7 @@ REQUIRED_SOURCE_FILES = (
     "constraints-win-x64.txt",
     "README_AR.md",
     "SYSTEM_REQUIREMENTS.txt",
+    "models/eval_benchmarks/BENCHMARK_MANIFEST.json",
 )
 
 

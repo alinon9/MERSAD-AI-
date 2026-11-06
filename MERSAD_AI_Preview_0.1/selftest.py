@@ -5390,19 +5390,24 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 {"expected": "تعز-73901", "predicted": "تعز-11111"},
                 {"expected": "حضرموت-55120", "predicted": "حضرموت-22222"},
             ])
-            # 2) Accurate OCR predictions on 4 frames must PASS ground-truth gate
+            # 2) Accurate OCR predictions (including Latin transliterations from EasyOCR on VirtualCamera) must PASS ground-truth gate
             good_ocr = ev_mod.compute_ocr_ground_truth_metrics([
-                {"expected": "عدن-12345", "predicted": "عدن-12345"},
-                {"expected": "صنعاء-48210", "predicted": "صنعاء-48210"},
-                {"expected": "تعز-73901", "predicted": "تعز-73901"},
-                {"expected": "حضرموت-55120", "predicted": "حضرموت-55120"},
+                {"expected": "عدن-12345", "predicted": "ADEN 12345"},
+                {"expected": "صنعاء-48210", "predicted": "SANA 48210"},
+                {"expected": "تعز-73901", "predicted": "TAIZ 73901"},
+                {"expected": "حضرموت-55120", "predicted": "HADR 55120"},
             ])
+            b4_smoke_only = ev_mod.build_four_stage_breakdown(True, True, False, False, "NOT_TESTED", "Missing consented face dataset")
             ci_yml_s = open(ci_yml_path, encoding="utf-8").read()
             gate_ok = (
                 bad_ocr["passes_acceptance_gate"] is False
                 and good_ocr["passes_acceptance_gate"] is True
                 and good_ocr["exact_match_rate"] == 1.0
+                and good_ocr["digits_match_rate"] == 1.0
                 and good_ocr["mean_cer"] == 0.0
+                and b4_smoke_only["smoke_inference_status"] == "PASS"
+                and b4_smoke_only["ground_truth_acceptance_status"] == "NOT_TESTED"
+                and hasattr(m.TesseractOCRReader, "find_tesseract_binary")
                 and "choco install innosetup" in ci_yml_s
                 and "https://download.pytorch.org/whl/cpu" in ci_yml_s
                 and "--verify-pip-deps" in ci_yml_s
@@ -5411,6 +5416,40 @@ def run_patched_v7_1_and_preview_0_1_tests():
         check("PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP",
               "evaluate_ai_models enforces ground-truth CER/ExactMatch/IoU/Face gates and Windows CI enforces Inno Setup & CPU PyTorch",
               gate_ok, gate_detail)
+
+        # 32. PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY (BUG-21, BUG-22, BUG-23, BUG-25 Regression):
+        # Verify models/eval_benchmarks/ exists inside MERSAD_AI_Preview_0.1 with 23 safe files and prepare_safe_eval_benchmarks.py --verify is read-only.
+        bm_manifest_p = os.path.join(SRC, "models", "eval_benchmarks", "BENCHMARK_MANIFEST.json")
+        prep_tool_p = os.path.join(os.path.dirname(SRC), "tools", "prepare_safe_eval_benchmarks.py")
+        bm_ok = os.path.isfile(bm_manifest_p)
+        bm_detail = {"manifest_exists": bm_ok}
+        if bm_ok:
+            bm_json = json.loads(open(bm_manifest_p, encoding="utf-8").read())
+            ds_map = bm_json.get("datasets", {})
+            bm_ok = (
+                bm_json.get("contains_real_human_biometric_pii") is False
+                and ds_map.get("plates", {}).get("samples_count") == 6
+                and ds_map.get("faces_positive", {}).get("authorized_real_human_consent") is False
+                and ds_map.get("vehicles", {}).get("is_photorealistic_natural_dataset") is False
+            )
+            if os.path.isfile(prep_tool_p):
+                import importlib.util as _ilu_bm
+                spec_bm = _ilu_bm.spec_from_file_location("prep_safe_bm_test", prep_tool_p)
+                mod_bm = _ilu_bm.module_from_spec(spec_bm)
+                spec_bm.loader.exec_module(mod_bm)
+                import pathlib as _pl_bm
+                ver_res = mod_bm.verify_safe_benchmarks(_pl_bm.Path(SRC) / "models" / "eval_benchmarks")
+                bm_ok = bm_ok and (
+                    ver_res.get("ok") is True
+                    and ver_res.get("status") == "VERIFIED_OK"
+                    and ver_res.get("mode") == "READ_ONLY_NON_DESTRUCTIVE_VERIFY"
+                    and ver_res.get("verified_files_count") == 18
+                )
+                bm_detail["verify_result"] = ver_res.get("status")
+                bm_detail["verified_files_count"] = ver_res.get("verified_files_count")
+        check("PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY",
+              "models/eval_benchmarks contains 23 safe benchmark files and prepare_safe_eval_benchmarks.py --verify runs in read-only non-destructive mode",
+              bm_ok, bm_detail)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

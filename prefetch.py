@@ -11,6 +11,7 @@ if BASE_DIR not in sys.path:
 from mersad_live import (
     MODELS,
     MODEL_SHA256,
+    EASYOCR_SHA256,
     MODEL_MIN_BYTES,
     YOLO_MODEL_URL,
     YOLO_RELEASE_VERSION,
@@ -77,26 +78,22 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
             raise RuntimeError(f"EasyOCR model verification failed in {easy_dir}: {reason_after}")
         print(f"  [SAVED & VERIFIED] EasyOCR models ready ({reason_after})")
 
-    print(f"3/3 Vehicle / truck detection model (YOLOv8n from pinned Ultralytics {YOLO_RELEASE_VERSION})...")
+    print(f"3/3 Vehicle / truck detection model (YOLOv8n from pinned Ultralytics {YOLO_RELEASE_VERSION}, verified SHA-256)...")
     yolo_target = os.path.join(models_dir, "yolov8n.pt")
-    yolo_sha_env = os.environ.get("MERSAD_YOLO_SHA256", "").strip() or None
+    yolo_expected_sha = os.environ.get("MERSAD_YOLO_SHA256", "").strip() or MODEL_SHA256["yolov8n.pt"]
     download_verified(
         "yolov8n.pt",
         YOLO_MODEL_URL,
         min_bytes=EXPECTED_MIN_BYTES.get("yolov8n.pt", 6_000_000),
-        expected_sha256=yolo_sha_env,
+        expected_sha256=yolo_expected_sha,
         retries=retries,
         timeout=timeout,
         target_dir=models_dir,
     )
-    # Record local SHA-256 sidecar on first verified download so subsequent checks detect any bit-rot or tampering
-    sha_sidecar = yolo_target + ".sha256"
-    if os.path.isfile(yolo_target) and not os.path.isfile(sha_sidecar):
-        with open(yolo_target, "rb") as yf:
-            digest = hashlib.sha256(yf.read()).hexdigest()
-        with open(sha_sidecar, "w", encoding="utf-8") as sf:
-            sf.write(f"{digest}  yolov8n.pt\n")
     if os.path.isfile(yolo_target):
+        ok_y_chk, r_y_chk = verify_yolo_pt_file(yolo_target, expected_sha256=yolo_expected_sha, min_bytes=EXPECTED_MIN_BYTES.get("yolov8n.pt", 6_000_000))
+        if not ok_y_chk:
+            raise RuntimeError(f"yolov8n.pt failed pinned SHA-256 verification before loading: {r_y_chk}")
         try:
             register_trusted_model(yolo_target, who="prefetch")
         except Exception:

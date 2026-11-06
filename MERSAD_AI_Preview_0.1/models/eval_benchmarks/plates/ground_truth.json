@@ -1,0 +1,98 @@
+{
+  "dataset": "MERSAD_PREVIEW_0.1_SAFE_PLATES_BENCHMARK",
+  "license": "CC0-1.0 / Synthetic Non-PII Yemeni Plate Benchmark",
+  "contains_personal_data": false,
+  "samples_count": 6,
+  "samples": [
+    {
+      "filename": "plate_01_aden.jpg",
+      "governorate_ar": "عدن",
+      "governorate_en": "ADEN",
+      "digits": "12345",
+      "expected_plate": "عدن-12345",
+      "plate_bbox_xywh": [
+        215,
+        338,
+        210,
+        52
+      ],
+      "sha256": "401ca1a7bc4c363dec91810c134c14eb9ed881ea6c2fe6e21c3fb48d3de61827",
+      "size_bytes": 16405
+    },
+    {
+      "filename": "plate_02_sanaa.jpg",
+      "governorate_ar": "صنعاء",
+      "governorate_en": "SANAA",
+      "digits": "48210",
+      "expected_plate": "صنعاء-48210",
+      "plate_bbox_xywh": [
+        215,
+        338,
+        210,
+        52
+      ],
+      "sha256": "1da14c3d6ab72c8dda66e6365a9050847fc46ee2854cfb80a420559ac7155831",
+      "size_bytes": 16618
+    },
+    {
+      "filename": "plate_03_taiz.jpg",
+      "governorate_ar": "تعز",
+      "governorate_en": "TAIZ",
+      "digits": "73901",
+      "expected_plate": "تعز-73901",
+      "plate_bbox_xywh": [
+        215,
+        338,
+        210,
+        52
+      ],
+      "sha256": "d54dc61ccd5d4340a5d88a907fd04e63d1d6be17bfb9eba92521c6063c5234f5",
+      "size_bytes": 15748
+    },
+    {
+      "filename": "plate_04_hadramout.jpg",
+      "governorate_ar": "حضرموت",
+      "governorate_en": "HADR",
+      "digits": "55120",
+      "expected_plate": "حضرموت-55120",
+      "plate_bbox_xywh": [
+        215,
+        338,
+        210,
+        52
+      ],
+      "sha256": "9688bed54c627cc57ed6b38642a37a3cf1267e8abe94da5d5a4404463ef26c91",
+      "size_bytes": 16673
+    },
+    {
+      "filename": "plate_05_ibb.jpg",
+      "governorate_ar": "إب",
+      "governorate_en": "IBB",
+      "digits": "91406",
+      "expected_plate": "إب-91406",
+      "plate_bbox_xywh": [
+        215,
+        338,
+        210,
+        52
+      ],
+      "sha256": "e72b6ddb828fba029e0966d03e20458d4b101e7f5627d2cb9714de25a6d6da33",
+      "size_bytes": 15831
+    },
+    {
+      "filename": "plate_06_marib.jpg",
+      "governorate_ar": "مأرب",
+      "governorate_en": "MARIB",
+      "digits": "30827",
+      "expected_plate": "مأرب-30827",
+      "plate_bbox_xywh": [
+        215,
+        338,
+        210,
+        52
+      ],
+      "sha256": "7f470395dd9cbace83d9d28bbd639dc6a09d50910e8c0527ade0551f850b937d",
+      "size_bytes": 16377
+    }
+  ]
+}

@@ -3075,7 +3075,7 @@ def add_camera_runtime(data, who="operator"):
 
 
 class TesseractOCRReader:
-    """Real pixel-level OCR adapter using Tesseract 5 LSTM engine when EasyOCR is unavailable."""
+    """Real pixel-level OCR adapter using Tesseract 5 LSTM engine (supports both pytesseract and direct CLI binary execution on Windows/Linux)."""
     engine_name = "Tesseract-5-LSTM-Real-Pixel-OCR"
     is_mock = False
     _GOV_MAP = {
@@ -3084,23 +3084,86 @@ class TesseractOCRReader:
         "SANA": "صنعاء",
         "TAIZ": "تعز",
         "HADR": "حضرموت",
+        "HADRAMOUT": "حضرموت",
         "IBB": "إب",
         "MARIB": "مأرب",
+    "MARI": "مأرب",
     }
+
+    @classmethod
+    def find_tesseract_binary(cls):
+        env_cmd = os.environ.get("TESSERACT_CMD", "").strip()
+        if env_cmd and os.path.isfile(env_cmd):
+            return env_cmd
+        which_bin = shutil.which("tesseract")
+        if which_bin:
+            return which_bin
+        for win_cand in (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+        ):
+            if win_cand and os.path.isfile(win_cand):
+                return win_cand
+        return None
+
+    @classmethod
+    def is_available(cls) -> bool:
+        return cls.find_tesseract_binary() is not None
+
+    def _run_tesseract_tsv_cli(self, inner_bgr, tess_bin: str) -> dict:
+        """Directly invoke tesseract binary with TSV output when pytesseract wrapper is not installed."""
+        fd, tmp_png = tempfile.mkstemp(prefix="mersad_tess_", suffix=".png")
+        os.close(fd)
+        try:
+            cv2.imwrite(tmp_png, inner_bgr)
+            env = os.environ.copy()
+            env.setdefault("OMP_THREAD_LIMIT", "1")
+            proc = subprocess.run(
+                [tess_bin, tmp_png, "stdout", "--psm", "7", "tsv"],
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if proc.returncode != 0 or not proc.stdout:
+                return {"text": [], "conf": []}
+            texts, confs = [], []
+            lines = proc.stdout.splitlines()
+            for row in lines[1:]:
+                cols = row.split("\t")
+                if len(cols) >= 12:
+                    texts.append(cols[11])
+                    confs.append(cols[10])
+            return {"text": texts, "conf": confs}
+        except Exception:
+            return {"text": [], "conf": []}
+        finally:
+            try:
+                os.unlink(tmp_png)
+            except OSError:
+                pass
 
     def readtext(self, img):
         if img is None or getattr(img, "size", 0) == 0:
             return []
-        try:
-            import pytesseract
-        except ImportError:
+        tess_bin = self.find_tesseract_binary()
+        if not tess_bin:
             return []
         h, w = img.shape[:2]
         inner = img[5:max(6, h - 5), 5:max(6, w - 5)] if (h > 14 and w > 28) else img
         os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+        data = None
         try:
+            import pytesseract
+            if getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract") == "tesseract":
+                pytesseract.pytesseract.tesseract_cmd = tess_bin
             data = pytesseract.image_to_data(inner, config="--psm 7", output_type=pytesseract.Output.DICT)
         except Exception:
+            data = self._run_tesseract_tsv_cli(inner, tess_bin)
+        if not data:
             return []
         tokens = []
         confs = []
@@ -3137,12 +3200,8 @@ def create_real_ocr_reader(use_gpu=False):
             return r
     except Exception:
         pass
-    try:
-        import pytesseract
-        if shutil.which("tesseract"):
-            return TesseractOCRReader()
-    except Exception:
-        pass
+    if TesseractOCRReader.is_available():
+        return TesseractOCRReader()
     return None
 
 

@@ -472,6 +472,25 @@ def _fix_ocr_numeric_tokens(raw_str):
     return "".join(out), fixed
 
 
+_LATIN_GOV_TO_AR = {
+    "ADEN": "عدن",
+    "SANAA": "صنعاء",
+    "SANA": "صنعاء",
+    "TAIZ": "تعز",
+    "HADR": "حضرموت",
+    "HADRAMOUT": "حضرموت",
+    "IBB": "إب",
+    "MARIB": "مأرب",
+    "MARI": "مأرب",
+}
+
+
+def _map_latin_gov_letters(letters: str) -> str:
+    """Map standard Latin Yemeni governorate codes (ADEN, SANA, TAIZ, HADR, IBB, MARIB) to canonical Arabic."""
+    up = str(letters or "").strip().upper()
+    return _LATIN_GOV_TO_AR.get(up, letters)
+
+
 def split_plate_ex(s):
     """Extract (core_digits, normalized_letters, ocr_confusion_fixed) from any plate string."""
     raw = str(s or "").translate(DIG).translate(AR_NORM).strip().upper()
@@ -480,6 +499,7 @@ def split_plate_ex(s):
     raw_fixed, ocr_fixed = _fix_ocr_numeric_tokens(raw)
     digits = "".join(re.findall(r"\d", raw_fixed))
     letters = "".join(re.findall(r"[A-Z\u0621-\u064A]", raw_fixed))[:8]
+    letters = _map_latin_gov_letters(letters)
     return digits, letters, ocr_fixed
 
 
