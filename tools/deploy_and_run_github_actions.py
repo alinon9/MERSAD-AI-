@@ -167,7 +167,7 @@ def run_self_test(repo_root: Path) -> dict:
         fake_bin_dir = Path(tmpdir) / "fake_bin_unauth"
         fake_bin_dir.mkdir()
         fake_gh = fake_bin_dir / "gh"
-        fake_gh.write_text("#!/bin/sh\nif [ "$1" = "auth" ]; then echo 'You are not logged into any GitHub hosts.' >&2; exit 1; fi\nexit 0\n")
+        fake_gh.write_text("#!/bin/sh\nexit 1\n")
         fake_gh.chmod(0o755)
         res_unauth = execute_deployment(bundle, str(bare_remote), env_override={"PATH": f"{fake_bin_dir}:/usr/bin:/bin"})
         checks.append(("UNAUTH_GH_HALTS_WITH_ERROR", res_unauth["status"] == "FAIL" and res_unauth["build_triggered"] is False and "GH_CLI_UNAUTHENTICATED" in res_unauth.get("error", "")))
