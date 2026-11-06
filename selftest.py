@@ -5390,19 +5390,24 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 {"expected": "تعز-73901", "predicted": "تعز-11111"},
                 {"expected": "حضرموت-55120", "predicted": "حضرموت-22222"},
             ])
-            # 2) Accurate OCR predictions on 4 frames must PASS ground-truth gate
+            # 2) Accurate OCR predictions (including Latin transliterations from EasyOCR on VirtualCamera) must PASS ground-truth gate
             good_ocr = ev_mod.compute_ocr_ground_truth_metrics([
-                {"expected": "عدن-12345", "predicted": "عدن-12345"},
-                {"expected": "صنعاء-48210", "predicted": "صنعاء-48210"},
-                {"expected": "تعز-73901", "predicted": "تعز-73901"},
-                {"expected": "حضرموت-55120", "predicted": "حضرموت-55120"},
+                {"expected": "عدن-12345", "predicted": "ADEN 12345"},
+                {"expected": "صنعاء-48210", "predicted": "SANA 48210"},
+                {"expected": "تعز-73901", "predicted": "TAIZ 73901"},
+                {"expected": "حضرموت-55120", "predicted": "HADR 55120"},
             ])
+            b4_smoke_only = ev_mod.build_four_stage_breakdown(True, True, False, False, "NOT_TESTED", "Missing consented face dataset")
             ci_yml_s = open(ci_yml_path, encoding="utf-8").read()
             gate_ok = (
                 bad_ocr["passes_acceptance_gate"] is False
                 and good_ocr["passes_acceptance_gate"] is True
                 and good_ocr["exact_match_rate"] == 1.0
+                and good_ocr["digits_match_rate"] == 1.0
                 and good_ocr["mean_cer"] == 0.0
+                and b4_smoke_only["smoke_inference_status"] == "PASS"
+                and b4_smoke_only["ground_truth_acceptance_status"] == "NOT_TESTED"
+                and hasattr(m.TesseractOCRReader, "find_tesseract_binary")
                 and "choco install innosetup" in ci_yml_s
                 and "https://download.pytorch.org/whl/cpu" in ci_yml_s
                 and "--verify-pip-deps" in ci_yml_s

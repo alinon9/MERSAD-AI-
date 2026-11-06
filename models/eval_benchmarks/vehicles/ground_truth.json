@@ -1,0 +1,61 @@
+{
+  "dataset": "MERSAD_PREVIEW_0.1_VEHICLE_BENCHMARK_FIXTURES",
+  "license": "CC0-1.0 / Synthetic Geometric Fixtures (Replace via --import-photorealistic-vehicles for COCO Ground-Truth Accuracy)",
+  "contains_personal_data": false,
+  "is_photorealistic_natural_dataset": false,
+  "samples_count": 4,
+  "samples": [
+    {
+      "filename": "vehicle_01_car.jpg",
+      "class": "car",
+      "bbox_xywh": [
+        140,
+        150,
+        360,
+        260
+      ],
+      "is_photorealistic_natural_image": false,
+      "sha256": "8715fdea1ba189da8603ff1ea7a8ea60ba255ae1bdc3a9ce1ef7bc465bccb231",
+      "size_bytes": 13201
+    },
+    {
+      "filename": "vehicle_02_car.jpg",
+      "class": "car",
+      "bbox_xywh": [
+        150,
+        155,
+        340,
+        255
+      ],
+      "is_photorealistic_natural_image": false,
+      "sha256": "0cc12396743054e22251459ffcabcfe3ed9b4d515bee2d19cbac1f8ef4211023",
+      "size_bytes": 12960
+    },
+    {
+      "filename": "vehicle_03_bus.jpg",
+      "class": "bus",
+      "bbox_xywh": [
+        100,
+        110,
+        440,
+        300
+      ],
+      "is_photorealistic_natural_image": false,
+      "sha256": "e55ae9455ad2a2b5187d9eeed618a7227995758838e1bb2456a0eada53bfea98",
+      "size_bytes": 14342
+    },
+    {
+      "filename": "vehicle_04_truck.jpg",
+      "class": "truck",
+      "bbox_xywh": [
+        110,
+        120,
+        420,
+        290
+      ],
+      "is_photorealistic_natural_image": false,
+      "sha256": "fa98f40801fadd9385905fc8c93d1e076222575b5ed45bad468dbec27aff2f69",
+      "size_bytes": 14969
+    }
+  ]
+}

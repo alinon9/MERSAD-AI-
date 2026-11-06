@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-11-06 19:03:18",
+  "benchmark_root": "MERSAD_AI_Preview_0.1/models/eval_benchmarks",
+  "privacy_and_governance_verified": true,
+  "contains_real_human_biometric_pii": false,
+  "datasets": {
+    "plates": {
+      "path": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/plates",
+      "ground_truth_file": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/plates/ground_truth.json",
+      "target_models": [
+        "EasyOCR_Ar_En",
+        "Tesseract-5-LSTM"
+      ],
+      "samples_count": 6,
+      "ready_for_ground_truth_accuracy": true
+    },
+    "vehicles": {
+      "path": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/vehicles",
+      "ground_truth_file": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/vehicles/ground_truth.json",
+      "target_models": [
+        "YOLOv8n"
+      ],
+      "samples_count": 4,
+      "is_photorealistic_natural_dataset": false,
+      "ready_for_smoke_inference": true,
+      "ready_for_ground_truth_accuracy": false
+    },
+    "faces_positive": {
+      "path": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/faces_positive",
+      "consent_manifest": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/faces_positive/CONSENT_MANIFEST.json",
+      "target_models": [
+        "YuNet"
+      ],
+      "samples_count": 4,
+      "authorized_real_human_consent": false,
+      "ready_for_smoke_inference": true,
+      "ready_for_ground_truth_accuracy": false
+    },
+    "faces_authorized_pairs": {
+      "path": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/faces_authorized_pairs",
+      "consent_manifest": "MERSAD_AI_Preview_0.1/models/eval_benchmarks/faces_authorized_pairs/CONSENT_MANIFEST.json",
+      "target_models": [
+        "SFace"
+      ],
+      "samples_count": 4,
+      "authorized_real_human_consent": false,
+      "ready_for_smoke_inference": true,
+      "ready_for_ground_truth_accuracy": false
+    }
+  }
+}

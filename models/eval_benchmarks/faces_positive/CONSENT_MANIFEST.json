@@ -1,0 +1,42 @@
+{
+  "dataset": "MERSAD_PREVIEW_0.1_FACE_BENCHMARK_SCAFFOLD",
+  "privacy_policy": "STRICT_NO_REAL_HUMAN_PII_IN_PUBLIC_REPO",
+  "authorized_real_human_consent": false,
+  "is_synthetic_non_human": true,
+  "note": "To comply with strict biometric privacy rules forbidding real human face photos in a public/shared Git repository, the committed files are 100% synthetic non-human geometric avatars used ONLY for directory/pipeline smoke checks. YuNet and SFace ground-truth accuracy status remains NOT_TESTED until an authorized operator supplies consented human face samples locally via `python tools/prepare_safe_eval_benchmarks.py --import-authorized-faces <dir> --consent-manifest <json>`.",
+  "samples_count": 4,
+  "samples": [
+    {
+      "filename": "synthetic_nonhuman_id1_01.jpg",
+      "identity_id": "id1",
+      "is_synthetic_non_human": true,
+      "authorized_real_human_consent": false,
+      "sha256": "ac0c30e48efb2c1cabf038f0304eafced86ae3ac5c2931bd3d7527078e655c46",
+      "size_bytes": 7200
+    },
+    {
+      "filename": "synthetic_nonhuman_id1_02.jpg",
+      "identity_id": "id1",
+      "is_synthetic_non_human": true,
+      "authorized_real_human_consent": false,
+      "sha256": "d246a2eddebc199a4e70f93032aa26333766ddac1477f758cf690b985a831af5",
+      "size_bytes": 6910
+    },
+    {
+      "filename": "synthetic_nonhuman_id2_01.jpg",
+      "identity_id": "id2",
+      "is_synthetic_non_human": true,
+      "authorized_real_human_consent": false,
+      "sha256": "dcc843e26e3461cbc81dac712efc9463e42ef3df1548a540ba8029ddefc146c7",
+      "size_bytes": 6894
+    },
+    {
+      "filename": "synthetic_nonhuman_id2_02.jpg",
+      "identity_id": "id2",
+      "is_synthetic_non_human": true,
+      "authorized_real_human_consent": false,
+      "sha256": "6edbfab37f4811f85ac0395cde43af6bf36e0a815dde44cdb3034d1f90697312",
+      "size_bytes": 6897
+    }
+  ]
+}

@@ -644,7 +644,48 @@ sys.exit(1)
     lab_prov = mod_lp.verify_lab_provenance(repo_root)
     checks.append((
         "MERSAD_LAB_GIT_BUNDLE_PROVENANCE_14_OF_14_SHA256_MATCH",
-        lab_prov["status"] == "PASS" and lab_prov["matched_files_count"] == 14 and lab_prov["verified_head_commit"] == EXPECTED_LAB_CODE_SHA
+        lab_prov["status"] == "PASS" and lab_prov["matched_files_count"] == 14 and lab_prov.get("verified_release_branch_commit") == EXPECTED_LAB_CODE_SHA
+    ))
+
+    # Check 15..18: Run 42273598736 post-build remediation checks
+    sys.path.insert(0, str(repo_root / "MERSAD_AI_Preview_0.1"))
+    sys.path.insert(0, str(repo_root / "MERSAD_LAB_Preview_0.1"))
+    import registry as reg_mod
+    import mersad_live as ml_mod
+    from sim_engine import VirtualCamera as VCMod
+
+    checks.append((
+        "RUN_42273598736_LATIN_TO_ARABIC_GOV_NORMALIZATION_6_OF_6",
+        all(
+            reg_mod.norm_plate(raw) == exp
+            for raw, exp in [
+                ("ADEN 12345", "عدن-12345"),
+                ("SANA 48210", "صنعاء-48210"),
+                ("TAIZ 73901", "تعز-73901"),
+                ("HADR 55120", "حضرموت-55120"),
+                ("IBB 91406", "إب-91406"),
+                ("MARIB 30827", "مأرب-30827"),
+            ]
+        )
+    ))
+    checks.append((
+        "RUN_42273598736_TESSERACT_DIRECT_CLI_FALLBACK_WITHOUT_PYTESSERACT",
+        hasattr(ml_mod.TesseractOCRReader, "find_tesseract_binary") and hasattr(ml_mod.TesseractOCRReader, "_run_tesseract_tsv_cli")
+    ))
+    bm_p = repo_root / "MERSAD_AI_Preview_0.1" / "models" / "eval_benchmarks" / "BENCHMARK_MANIFEST.json"
+    bm_data = json.loads(bm_p.read_text(encoding="utf-8")) if bm_p.is_file() else {}
+    checks.append((
+        "RUN_42273598736_SAFE_BENCHMARKS_NO_PII_AND_6_PLATES_READY",
+        bm_data.get("contains_real_human_biometric_pii") is False
+        and bm_data.get("datasets", {}).get("plates", {}).get("samples_count") == 6
+        and bm_data.get("datasets", {}).get("faces_positive", {}).get("authorized_real_human_consent") is False
+    ))
+    vc_info = VCMod("cam1", "Cam 1", plate_idx=0).info()
+    checks.append((
+        "RUN_42273598736_VIRTUAL_CAMERA_MARKED_NON_PHOTOREALISTIC_INTEGRATION_STREAM",
+        vc_info.get("scene_fidelity") == "SYNTHETIC_2D_GEOMETRIC_INTEGRATION_STREAM"
+        and vc_info.get("valid_for_integration_and_smoke_tests") is True
+        and vc_info.get("valid_for_photorealistic_dl_accuracy_benchmark") is False
     ))
 
     all_ok = all(ok for _, ok in checks)

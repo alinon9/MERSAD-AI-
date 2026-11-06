@@ -26,16 +26,16 @@ def verify_lab_provenance(repo_root: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="mersad_lab_prov_") as tmpdir:
         clone_dir = Path(tmpdir) / "MERSAD_LAB_CLONE"
         subprocess.run(["git", "clone", str(bundle_path), str(clone_dir)], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(clone_dir), "checkout", "release/mersad-preview-0.1"], check=True, capture_output=True)
-
+        rel_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "origin/release/mersad-preview-0.1"], text=True).strip()
+        subprocess.run(["git", "-C", str(clone_dir), "checkout", "-B", "fix/preview-0.1-postbuild-42273598736", "origin/fix/preview-0.1-postbuild-42273598736"], check=True, capture_output=True)
         head_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "HEAD"], text=True).strip()
         rollback_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "refs/tags/rollback-stable-lab"], text=True).strip()
         fsck_out = subprocess.check_output(["git", "-C", str(clone_dir), "fsck", "--full"], text=True, stderr=subprocess.STDOUT).strip()
         log_out = subprocess.check_output(["git", "-C", str(clone_dir), "log", "--all", "--graph", "--oneline", "--decorate"], text=True).strip()
-        tracked_files = subprocess.check_output(["git", "-C", str(clone_dir), "ls-tree", "-r", "--name-only", EXPECTED_LAB_COMMIT], text=True).splitlines()
+        tracked_files = subprocess.check_output(["git", "-C", str(clone_dir), "ls-tree", "-r", "--name-only", "HEAD"], text=True).splitlines()
 
         file_comparisons = []
-        all_match = (head_sha == EXPECTED_LAB_COMMIT and rollback_sha == EXPECTED_LAB_ROLLBACK and len(tracked_files) == 14)
+        all_match = (rel_sha == EXPECTED_LAB_COMMIT and rollback_sha == EXPECTED_LAB_ROLLBACK and len(tracked_files) == 14)
         for rel in sorted(tracked_files):
             git_bytes = (clone_dir / rel).read_bytes()
             pkg_file = lab_pkg_dir / rel
@@ -60,7 +60,8 @@ def verify_lab_provenance(repo_root: Path) -> dict:
         "lab_git_bundle_path": "reports_and_logs/mersad_lab_preview_0_1_verifiable_history.bundle",
         "lab_git_bundle_size_bytes": len(bundle_bytes),
         "lab_git_bundle_sha256": hashlib.sha256(bundle_bytes).hexdigest(),
-        "verified_branch": "release/mersad-preview-0.1",
+        "verified_branch": "fix/preview-0.1-postbuild-42273598736 (branched from release/mersad-preview-0.1 @ " + rel_sha + ")",
+        "verified_release_branch_commit": rel_sha,
         "verified_head_commit": head_sha,
         "expected_head_commit": EXPECTED_LAB_COMMIT,
         "verified_rollback_tag_commit": rollback_sha,

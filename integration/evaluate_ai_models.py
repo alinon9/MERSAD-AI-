@@ -156,11 +156,14 @@ def build_four_stage_breakdown(
     if not (downloaded_and_sha256_verified and loaded_and_inference_executed and ground_truth_samples_available and ground_truth_acceptance_passed):
         if final_status == "PASS":
             final_status = "NOT_TESTED" if not ground_truth_samples_available else "FAIL"
+    smoke_status = "PASS" if (downloaded_and_sha256_verified and loaded_and_inference_executed) else ("FAIL" if (downloaded_and_sha256_verified and not loaded_and_inference_executed) else "NOT_TESTED")
     return {
         "stage1_downloaded_and_sha256_verified": bool(downloaded_and_sha256_verified),
         "stage2_loaded_and_inference_executed": bool(loaded_and_inference_executed),
         "stage3_ground_truth_samples_available": bool(ground_truth_samples_available),
         "stage4_ground_truth_acceptance_passed": bool(ground_truth_acceptance_passed),
+        "smoke_inference_status": smoke_status,
+        "ground_truth_acceptance_status": final_status,
         "final_status": final_status,
         "status_explanation": not_tested_or_fail_reason,
     }
@@ -185,8 +188,8 @@ def compute_ocr_ground_truth_metrics(samples: list[dict]) -> dict:
         pred = reg.norm_plate(s.get("predicted", ""))
         if exp and pred == exp:
             exact_cnt += 1
-        exp_dig = "".join(re.findall(r"\\d+", exp))
-        pred_dig = "".join(re.findall(r"\\d+", pred))
+        exp_dig = "".join(re.findall(r"\d+", exp))
+        pred_dig = "".join(re.findall(r"\d+", pred))
         if exp_dig and pred_dig == exp_dig:
             digits_cnt += 1
         cers.append(m._compute_cer(exp, pred))
@@ -259,10 +262,52 @@ def evaluate_yolo_ground_truth_gate(vyolo, pos_frames: list[np.ndarray], neg_fra
     mean_iou = round(float(np.mean(ious)), 4) if ious else 0.0
     mean_lat = round(float(np.mean(lats)), 2) if lats else None
 
-    has_real_vehicle_benchmark = bool(benchmark_dir and benchmark_dir.is_dir() and list(benchmark_dir.glob("*.jpg")))
+    has_real_vehicle_benchmark = False
+    if benchmark_dir and benchmark_dir.is_dir():
+        gt_json_p = benchmark_dir / "ground_truth.json"
+        if gt_json_p.is_file():
+            try:
+                gt_meta = json.loads(gt_json_p.read_text(encoding="utf-8"))
+                has_real_vehicle_benchmark = bool(gt_meta.get("is_photorealistic_natural_dataset", False))
+                if has_real_vehicle_benchmark:
+                    for item in gt_meta.get("samples", []):
+                        img_p = benchmark_dir / item["filename"]
+                        b_img = cv2.imread(str(img_p))
+                        if b_img is None or b_img.size == 0:
+                            continue
+                        t0 = time.perf_counter()
+                        bdets = m.detect_vehicles(b_img, vyolo)
+                        lats.append((time.perf_counter() - t0) * 1000.0)
+                        if not bdets:
+                            fn += 1
+                            continue
+                        best_iou = 0.0
+                        best_cls = None
+                        for d in bdets:
+                            x1, y1, x2, y2 = d[:4]
+                            d_cls = str(d[4]) if len(d) > 4 else "car"
+                            pred_xywh = [x1, y1, max(1, x2 - x1), max(1, y2 - y1)]
+                            iou_val = m._bbox_iou(pred_xywh, item["bbox_xywh"])
+                            if iou_val > best_iou:
+                                best_iou = iou_val
+                                best_cls = d_cls
+                        if best_iou >= 0.50 and best_cls in allowed_classes:
+                            tp += 1
+                            ious.append(best_iou)
+                            class_matches += 1
+                        else:
+                            fn += 1
+                            fp += len(bdets)
+                    precision = round(tp / (tp + fp + neg_fp), 4) if (tp + fp + neg_fp) > 0 else 0.0
+                    recall = round(tp / (tp + fn), 4) if (tp + fn) > 0 else 0.0
+                    f1 = round(2 * precision * recall / (precision + recall), 4) if (precision + recall) > 0 else 0.0
+                    mean_iou = round(float(np.mean(ious)), 4) if ious else 0.0
+                    mean_lat = round(float(np.mean(lats)), 2) if lats else None
+            except Exception:
+                has_real_vehicle_benchmark = False
     if tp == 0 and not has_real_vehicle_benchmark:
         status = "NOT_TESTED"
-        reason = "INSUFFICIENT_NATURAL_VEHICLE_BENCHMARK_DATASET (VirtualCamera renders 2D geometric rectangles for plate OCR; natural vehicle benchmark photos required for YOLOv8n acceptance)"
+        reason = "INSUFFICIENT_NATURAL_VEHICLE_BENCHMARK_DATASET (VirtualCamera and synthetic fixtures render 2D geometric rectangles; photorealistic vehicle benchmark photos required for YOLOv8n Ground-Truth Accuracy acceptance, while Smoke/Inference and Negative FP=0 are verified)"
     elif recall >= 0.75 and precision >= 0.75 and mean_iou >= 0.50 and neg_fp == 0:
         status = "PASS"
         reason = None
@@ -302,7 +347,15 @@ def evaluate_yunet_and_sface_ground_truth_gates(det, rec, neg_frames: list[np.nd
         if faces is not None and len(faces) > 0:
             neg_fp += len(faces)
 
-    pos_files = sorted(pos_face_dir.glob("*.jpg")) if (pos_face_dir and pos_face_dir.is_dir()) else []
+    consent_manifest_p = (pos_face_dir / "CONSENT_MANIFEST.json") if (pos_face_dir and pos_face_dir.is_dir()) else None
+    has_authorized_human_consent = False
+    if consent_manifest_p and consent_manifest_p.is_file():
+        try:
+            c_meta = json.loads(consent_manifest_p.read_text(encoding="utf-8"))
+            has_authorized_human_consent = bool(c_meta.get("authorized_real_human_consent", False) and not c_meta.get("is_synthetic_non_human", True))
+        except Exception:
+            has_authorized_human_consent = False
+    pos_files = sorted(pos_face_dir.glob("*.jpg")) if (pos_face_dir and pos_face_dir.is_dir() and has_authorized_human_consent) else []
     pos_tp = 0
     detected_crops = []
     for pf_path in pos_files:
@@ -723,6 +776,19 @@ def evaluate_four_models_on_frames(
                     sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "", "conf": round(conf_val, 3)})
                 else:
                     sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": "", "conf": 0.0})
+            plates_gt_p = AI_DIR / "models" / "eval_benchmarks" / "plates" / "ground_truth.json"
+            if plates_gt_p.is_file():
+                p_gt_data = json.loads(plates_gt_p.read_text(encoding="utf-8"))
+                for item in p_gt_data.get("samples", []):
+                    b_img = cv2.imread(str(plates_gt_p.parent / item["filename"]))
+                    if b_img is not None:
+                        boxes = m.find_plates(b_img)
+                        if boxes:
+                            x, y, bw, bh = boxes[0]
+                            t0 = time.perf_counter()
+                            norm_txt, conf_val = m.read_plate(reader, b_img[y:y + bh, x:x + bw])
+                            lats.append((time.perf_counter() - t0) * 1000.0)
+                            sample_rows.append({"cam": item["filename"], "expected": item["expected_plate"], "predicted": norm_txt or "", "conf": round(conf_val, 3)})
             eocr_lat = round(float(np.mean(lats)), 2) if lats else None
             eocr_gt_metrics = compute_ocr_ground_truth_metrics(sample_rows)
             eocr_inf = (
@@ -746,7 +812,7 @@ def evaluate_four_models_on_frames(
             if require_real_models:
                 eocr_status = "FAIL"
 
-    eocr_has_gt_samples = bool(eocr_gt_metrics is not None and eocr_gt_metrics.get("total_samples", 0) >= MIN_REQUIRED_PLATE_SAMPLES)
+    eocr_has_gt_samples = bool(eocr_gt_metrics is not None and eocr_gt_metrics.get("samples_count", 0) >= MIN_REQUIRED_PLATE_SAMPLES)
     eocr_gt_passed = bool(eocr_status == "PASS" and eocr_has_gt_samples)
     results["EasyOCR_Ar_En"] = {
         "test_classification": classification_label,
@@ -777,7 +843,9 @@ def evaluate_four_models_on_frames(
 
 def main():
     ap = argparse.ArgumentParser(description="MERSAD Phase 1: Real AI Model Verification & Ground-Truth Acceptance")
-    ap.add_argument("--require-real-models", action="store_true", help="Exit 1 unless all 4 real models pass SHA-256 verification and load without error, and EasyOCR passes ground-truth plate CER/Exact-Match gates")
+    ap.add_argument("--require-real-models", action="store_true", help="Exit 1 unless all 4 real models pass Stage 1 (SHA-256) and Stage 2 (Smoke/Inference), and EasyOCR passes Stage 4 (Ground-Truth Plate Accuracy)")
+    ap.add_argument("--require-smoke-inference", action="store_true", help="Exit 1 unless all 4 real models pass Smoke/Inference (Stage 1 SHA-256 + Stage 2 Load/Inference + Negative FP==0)")
+    ap.add_argument("--require-ground-truth-accuracy", action="store_true", help="Exit 2 unless all 4 real models have consented/photorealistic Ground-Truth datasets (Stage 3) AND pass Stage 4 accuracy thresholds")
     ap.add_argument("--attempt-prefetch", action="store_true", help="Run prefetch.py before testing")
     args = ap.parse_args()
 
@@ -845,19 +913,39 @@ def main():
     for k, v in live_results.items():
         fs = v["four_stage_breakdown"]
         print(
-            f"  [LIVE STREAM] {k:10s} | FinalStatus={v['acceptance_status']:10s} | "
+            f"  [LIVE STREAM] {k:14s} | Smoke={fs['smoke_inference_status']:10s} | "
+            f"GroundTruth={fs['ground_truth_acceptance_status']:10s} | "
             f"S1_SHA256={str(fs['stage1_downloaded_and_sha256_verified']):5s} | "
             f"S2_Infer={str(fs['stage2_loaded_and_inference_executed']):5s} | "
             f"S3_GTSamples={str(fs['stage3_ground_truth_samples_available']):5s} | "
-            f"S4_GTPass={str(fs['stage4_ground_truth_acceptance_passed']):5s} | "
-            f"Inference={v['inference_result']}"
+            f"S4_GTPass={str(fs['stage4_ground_truth_acceptance_passed']):5s}"
         )
 
     # Classification C: INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK (with full Exact Match Rate & CER)
     t_reader = m.TesseractOCRReader()
+    tess_available = m.TesseractOCRReader.is_available()
     tess_synth_reads = []
     tess_live_reads = []
+    tess_bench_reads = []
     tess_lats = []
+    plates_bench_gt_path = AI_DIR / "models" / "eval_benchmarks" / "plates" / "ground_truth.json"
+    if tess_available and plates_bench_gt_path.is_file():
+        p_gt = json.loads(plates_bench_gt_path.read_text(encoding="utf-8"))
+        for item in p_gt.get("samples", []):
+            p_img = cv2.imread(str(plates_bench_gt_path.parent / item["filename"]))
+            if p_img is not None:
+                boxes = m.find_plates(p_img)
+                if boxes:
+                    x, y, bw, bh = boxes[0]
+                    t0 = time.perf_counter()
+                    norm_txt, conf_val = m.read_plate(t_reader, p_img[y:y + bh, x:x + bw])
+                    tess_lats.append((time.perf_counter() - t0) * 1000.0)
+                    tess_bench_reads.append({
+                        "filename": item["filename"],
+                        "expected": item["expected_plate"],
+                        "predicted": norm_txt,
+                        "conf": round(conf_val, 3),
+                    })
     for c_obj, f_img in zip(synth_cams, synth_frames):
         boxes = m.find_plates(f_img)
         if boxes:
@@ -915,7 +1003,10 @@ def main():
         "independent_tesseract_benchmark": {
             "test_classification": "INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK",
             "note": "Independent auxiliary test ONLY. NOT counted as EasyOCR acceptance.",
-            "engine": "Tesseract 5 LSTM (/usr/bin/tesseract)",
+            "engine": f"Tesseract 5 LSTM ({m.TesseractOCRReader.find_tesseract_binary() or 'NOT_INSTALLED'})",
+            "tesseract_binary_available": tess_available,
+            "benchmark_plates_6_samples": compute_ocr_ground_truth_metrics(tess_bench_reads) if tess_bench_reads else None,
+            "benchmark_plates_6_results": tess_bench_reads,
             "synthetic_scene_samples": len(tess_synth_reads),
             "synthetic_scene_exact_matches": tess_synth_metrics["exact_matches"],
             "synthetic_scene_exact_match_rate": tess_synth_metrics["exact_match_rate"],
@@ -930,8 +1021,11 @@ def main():
         },
     }
 
+    tess_bench_metrics = report["independent_tesseract_benchmark"]["benchmark_plates_6_samples"] or {"exact_matches": 0, "exact_match_rate": 0.0, "mean_cer": 1.0}
     print(
         f"\n  --- [C] INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK ---\n"
+        f"  [AUX TEST] Benchmark Plates Dataset (6)  : {tess_bench_metrics['exact_matches']}/6 matched "
+        f"(ExactMatch={tess_bench_metrics['exact_match_rate']*100:.1f}%, MeanCER={tess_bench_metrics['mean_cer']*100:.1f}%)\n"
         f"  [AUX TEST] Synthetic VirtualCamera Scenes: {tess_synth_metrics['exact_matches']}/4 matched "
         f"(ExactMatch={tess_synth_metrics['exact_match_rate']*100:.1f}%, MeanCER={tess_synth_metrics['mean_cer']*100:.1f}%)\n"
         f"  [AUX TEST] Live LAB HTTP MJPEG Streams   : {tess_live_metrics['exact_matches']}/4 matched "
@@ -951,20 +1045,26 @@ def main():
         pass
     shutil.rmtree(BENCH_HOME, ignore_errors=True)
 
-    if args.require_real_models:
+    if args.require_ground_truth_accuracy:
+        not_passed = [k for k, v in live_results.items() if v["four_stage_breakdown"]["ground_truth_acceptance_status"] != "PASS"]
+        if not_passed:
+            print(f"  [GROUND-TRUTH ACCURACY GATE BLOCKED/FAILED] Models not at Ground-Truth PASS: {not_passed}")
+            sys.exit(2)
+
+    if args.require_real_models or args.require_smoke_inference:
         # Strictly verify Stage 1 (Downloaded & SHA-256 verified) and Stage 2 (Loaded & Inference executed) for all 4 models,
         # and ensure no model failed Stage 4 (Ground-Truth Acceptance). Models lacking natural/authorized benchmark samples
-        # on disk (Stage 3 == False) remain honestly recorded as NOT_TESTED and are NEVER converted to PASS.
+        # on disk (Stage 3 == False) remain honestly recorded as NOT_TESTED on ground_truth_acceptance_status and are NEVER converted to PASS.
         any_s1_s2_fail = any(
-            not (v["four_stage_breakdown"]["stage1_downloaded_and_sha256_verified"] and v["four_stage_breakdown"]["stage2_loaded_and_inference_executed"])
+            v["four_stage_breakdown"]["smoke_inference_status"] != "PASS"
             for v in live_results.values()
         )
-        any_gate_fail = any(v["acceptance_status"] == "FAIL" for v in live_results.values())
-        not_tested_models = [k for k, v in live_results.items() if v["acceptance_status"] == "NOT_TESTED"]
+        any_gate_fail = any(v["four_stage_breakdown"]["ground_truth_acceptance_status"] == "FAIL" for v in live_results.values())
+        not_tested_models = [k for k, v in live_results.items() if v["four_stage_breakdown"]["ground_truth_acceptance_status"] == "NOT_TESTED"]
         if not_tested_models:
-            print(f"  [NOTE] Models remaining NOT_TESTED (never converted to PASS): {not_tested_models}")
+            print(f"  [NOTE] Models with ground_truth_acceptance_status=NOT_TESTED (strictly preserved, never converted to PASS): {not_tested_models}")
         if any_s1_s2_fail or any_gate_fail:
-            print("  [ACCEPTANCE GATE FAILED] --require-real-models was set, and one or more of the 4 AI models failed Stage 1 (SHA-256), Stage 2 (Load/Infer), or Stage 4 (Ground-Truth Gate).")
+            print("  [ACCEPTANCE GATE FAILED] One or more of the 4 AI models failed Smoke/Inference (Stage 1/2) or failed a Ground-Truth Accuracy Gate (Stage 4).")
             sys.exit(1)
     sys.exit(0)
 

@@ -12,6 +12,7 @@ on:
     branches:
       - "preview/mersad-ai-lab-0.1-*"
       - "release/mersad-preview-0.1*"
+      - "fix/preview-0.1-*"
 
 permissions:
   contents: read
@@ -54,6 +55,13 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed ($LASTEXITCODE)" }
           }
+          $tessCheck = Get-Command "tesseract.exe" -ErrorAction SilentlyContinue
+          if ($null -eq $tessCheck -and -not (Test-Path "${env:ProgramFiles}\Tesseract-OCR\tesseract.exe")) {
+            Write-Host "[Setup] Installing Tesseract OCR via Chocolatey for auxiliary benchmark..."
+            choco install tesseract -y --no-progress
+          }
+          python tools/prepare_safe_eval_benchmarks.py --verify
+          if ($LASTEXITCODE -ne 0) { throw "prepare_safe_eval_benchmarks.py --verify failed ($LASTEXITCODE)" }
 
       - name: Phase 1 — Download All 4 Real AI Models, Verify Pinned SHA-256 & Execute Real Inference on LAB Frames
         shell: pwsh
