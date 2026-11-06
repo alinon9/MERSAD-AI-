@@ -13,7 +13,10 @@ import json
 import logging
 import os
 import re
-import resource
+try:
+    import resource  # Unix-only process telemetry provider
+except ImportError:  # Windows does not provide the resource module
+    resource = None
 import secrets
 import signal
 import socket
@@ -68,9 +71,31 @@ def get_process_telemetry(start_time: float) -> dict:
         if sys.platform.startswith("linux") and os.path.isfile("/proc/self/statm"):
             parts = open("/proc/self/statm", encoding="ascii").read().split()
             rss_mb = round((int(parts[1]) * os.sysconf("SC_PAGE_SIZE")) / (1024.0 * 1024.0), 2)
-        else:
+        elif resource is not None:
             ru = resource.getrusage(resource.RUSAGE_SELF)
-            rss_mb = round(ru.ru_maxrss / 1024.0, 2)
+            # Unix reports ru_maxrss in KiB on Linux; macOS reports bytes.
+            rss_value = float(ru.ru_maxrss)
+            rss_mb = round(rss_value / (1024.0 if sys.platform.startswith("linux") else 1024.0 * 1024.0), 2)
+        elif sys.platform == "win32":
+            # Windows fallback: GetProcessMemoryInfo from the built-in ctypes/wintypes APIs.
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(counters)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            ok = ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+            if ok:
+                rss_mb = round(counters.WorkingSetSize / (1024.0 * 1024.0), 2)
     except Exception:
         rss_mb = 0.0
     cpu_sec = round(float(time.process_time()), 3)
