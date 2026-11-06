@@ -27,7 +27,15 @@
 4. **توليد مشغلات التوزيع (`dist\MERSAD_AI\RUN.bat` و`RUN_LAN.bat` و`VERIFY_AUDIT.bat` — `BUG-04`)**:
    * توليد مشغلات تستدعي `MERSAD_AI.exe %*` مباشرةً داخل `dist\MERSAD_AI\` دون الاعتماد على `setup.bat` أو `venv`.
 
-## 3. لماذا لم يُشغَّل `release-mersad-preview-0.1-windows.yml` مباشرةً من داخل هذه الحاوية وكيف يُشغَّل؟
+5. **تصحيح وتحصين سكربت النشر والتشغيل السحابي (`PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat` & `PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` & `tools/deploy_and_run_github_actions.py` — `BUG-12`)**:
+   * استبدال الفرع التاريخي `preview/mersad-ai-lab-0.1-20261105` والالتزام القديم `9491bcd0` بفرع الإصدار النهائي المعتمد **`release/mersad-preview-0.1`** المتضمن التزام الكود **`25131918a981ac2ac37923d4c738d9f93cdcbc5b`** (`MERSAD AI`) و**`e9284356f4d1a8205946d5893121c6f8a2f22012`** (`MERSAD LAB`).
+   * التحقق الآلي المسبق من عدم المساس بالفرع الرئيسي `main` (`25c9e5bba30dc8f921675e12c23a53571be895c1`)، ورفع الفرع بدون `--force` (`git push -u origin refs/heads/release/mersad-preview-0.1:refs/heads/release/mersad-preview-0.1`).
+   * التحقق الفعلي من تطابق بصمة الالتزام المنشور على GitHub (`REMOTE_SHA`) مع `LOCAL_HEAD_SHA` عبر `git ls-remote origin refs/heads/release/mersad-preview-0.1` والتوقف فوراً عند أي اختلاف.
+   * التحقق المسبق الصارم من تثبيت أداة `GitHub CLI (gh)` ومصادقتها (`gh auth status`) قبل البدء؛ وفي حال عدم تثبيتها أو عدم مصادقتها يتوقف السكربت فوراً برمز خطأ غير صفري (`exit /b 1`) ورسالة خطأ واضحة دون الادعاء بنجاح تشغيل البناء.
+   * تشغيل `gh workflow run release-mersad-preview-0.1-windows.yml --ref release/mersad-preview-0.1` يدوياً، واستخراج `Run ID`، وانتظار اكتمال البناء عبر `gh run watch <RUN_ID> --exit-status`، وتنزيل المخرجات الخمسة عبر `gh run download <RUN_ID>`.
+   * تم التحقق الفعلي من منطق السكربت عبر حزمة الاختبار الذاتي `python3 tools/deploy_and_run_github_actions.py --self-test` على مستودع Git محلي مجرد (`Bare Remote`) واجتاز **`8 / 8 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
+
+## 3. نتيجة محاولة الرفع وتشغيل `release-mersad-preview-0.1-windows.yml` من داخل بيئة الفحص الحالية وكيفية تشغيله على جهاز متصل
 
 - **القيود التقنية الصارمة لبيئة الفحص الحالية:**
   1. بيئة التنفيذ الحالية هي حاوية `Linux x86_64` معزولة شبكياً بالكامل (`No Outbound Internet Access` في الطرفية).
