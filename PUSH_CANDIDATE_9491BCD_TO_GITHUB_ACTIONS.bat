@@ -47,7 +47,7 @@ if errorlevel 1 (
 pushd "%WORK_REPO%"
 
 REM 3. التحقق من عدم المساس بالفرع الرئيسي main
-for /f "tokens=*" %%M in ('git rev-parse refs/heads/main 2^>nul') do set "LOCAL_MAIN_SHA=%%M"
+for /f "tokens=*" %%M in ('git rev-parse origin/main 2^>nul') do set "LOCAL_MAIN_SHA=%%M"
 if not "!LOCAL_MAIN_SHA!"=="%EXPECTED_MAIN_SHA%" (
     echo [ERROR] بصمة الفرع الرئيسي main ^(!LOCAL_MAIN_SHA!^) لا تطابق البصمة الأصلية غير الممسوسة ^(%EXPECTED_MAIN_SHA%^)!
     popd

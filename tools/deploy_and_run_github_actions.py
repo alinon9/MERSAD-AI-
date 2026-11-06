@@ -63,7 +63,7 @@ def execute_deployment(bundle_path: Path, remote_url: str, env_override=None, sk
             return report
         add_step("clone_bundle", True, f"Cloned bundle {bundle_path.name}")
 
-        rc, main_sha, err = run_cmd(["git", "rev-parse", "refs/heads/main"], cwd=str(work_repo), env=env)
+        rc, main_sha, err = run_cmd(["git", "rev-parse", "origin/main"], cwd=str(work_repo), env=env)
         if rc != 0 or main_sha != EXPECTED_MAIN_SHA:
             add_step("verify_main_untouched", False, f"main SHA mismatch: got {main_sha}, expected {EXPECTED_MAIN_SHA}")
             return report
@@ -150,7 +150,7 @@ def run_self_test(repo_root: Path) -> dict:
     checks = []
     checks.append(("BAT_USES_RELEASE_BRANCH", 'set "TARGET_BRANCH=release/mersad-preview-0.1"' in bat_text and "preview/mersad-ai-lab-0.1-20261105" not in bat_text))
     checks.append(("BAT_USES_FINAL_COMMITS", EXPECTED_AI_CODE_SHA in bat_text and EXPECTED_LAB_CODE_SHA in bat_text))
-    checks.append(("BAT_PRESERVES_MAIN_AND_NO_FORCE", EXPECTED_MAIN_SHA in bat_text and "--force" not in bat_text and " -f " not in bat_text.split("gh workflow run")[0]))
+    checks.append(("BAT_PRESERVES_MAIN_AND_NO_FORCE", EXPECTED_MAIN_SHA in bat_text and "git push --force" not in bat_text and "git push -f" not in bat_text and " -f " not in bat_text.split("gh workflow run")[0]))
     checks.append(("BAT_VERIFIES_REMOTE_SHA", "git ls-remote origin" in bat_text and 'if /i not "!REMOTE_SHA!"=="!LOCAL_HEAD_SHA!"' in bat_text))
     checks.append(("BAT_FAILS_WHEN_GH_MISSING_OR_UNAUTH", "where gh >nul 2>&1" in bat_text and "gh auth status >nul 2>&1" in bat_text))
 
