@@ -109,7 +109,7 @@ if (Test-Path ".git") {
 & $py "tools\compare_original_vs_cleanroom_lab.py" --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
 Assert-ExitCode "compare_original_vs_cleanroom_lab.py --require-cleanroom-pass (Clean-Room 20/20 PASS verified; Original LAB recorded as PASS or BLOCKED)"
 
-Write-Host "[Phase 3A] Running 232 AI Selftests (Standard + Blocked Sklearn) & 20 LAB Functional/Security Tests..."
+Write-Host "[Phase 3A] Running 234 AI Selftests (Standard + Blocked Sklearn) & 20 LAB Functional/Security Tests..."
 & $py -u "MERSAD_AI_Preview_0.1\selftest.py"
 Assert-ExitCode "MERSAD AI selftest.py (standard)"
 $env:MERSAD_BLOCK_SKLEARN = "1"
@@ -207,6 +207,8 @@ try {
 }
 
 Write-Host "[Phase 4] Running Final Unmocked End-to-End Integration (Real YOLOv8n + Real EasyOCR)..."
+& $py -u "integration\test_main_entrypoint_dynamic_camera_lifecycle.py"
+Assert-ExitCode "test_main_entrypoint_dynamic_camera_lifecycle.py"
 & $py -u "integration\test_ai_lab_integration.py" --require-real-models
 Assert-ExitCode "test_ai_lab_integration.py --require-real-models"
 

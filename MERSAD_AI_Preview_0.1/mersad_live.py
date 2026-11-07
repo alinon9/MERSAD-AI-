@@ -2673,8 +2673,11 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF):
     if proc is None or reader is None:
         return None, 0.0
     try:
-        with _OCR_INFER_LOCK:
+        if getattr(reader, "engine_name", "") == "Tesseract-5-LSTM-Real-Pixel-OCR":
             res = reader.readtext(proc)
+        else:
+            with _OCR_INFER_LOCK:
+                res = reader.readtext(proc)
     except Exception as e:
         logger.debug("OCR readtext error: %s", e)
         return None, 0.0
@@ -3078,6 +3081,15 @@ class TesseractOCRReader:
     """Real pixel-level OCR adapter using Tesseract 5 LSTM engine (supports both pytesseract and direct CLI binary execution on Windows/Linux)."""
     engine_name = "Tesseract-5-LSTM-Real-Pixel-OCR"
     is_mock = False
+    _PYTESSERACT_AVAILABLE = None
+
+    def __init__(self):
+        if self.__class__._PYTESSERACT_AVAILABLE is None:
+            try:
+                import pytesseract  # noqa: F401
+                self.__class__._PYTESSERACT_AVAILABLE = True
+            except Exception:
+                self.__class__._PYTESSERACT_AVAILABLE = False
     _GOV_MAP = {
         "ADEN": "عدن",
         "SANAA": "صنعاء",
@@ -3156,12 +3168,15 @@ class TesseractOCRReader:
         inner = img[5:max(6, h - 5), 5:max(6, w - 5)] if (h > 14 and w > 28) else img
         os.environ.setdefault("OMP_THREAD_LIMIT", "1")
         data = None
-        try:
-            import pytesseract
-            if getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract") == "tesseract":
-                pytesseract.pytesseract.tesseract_cmd = tess_bin
-            data = pytesseract.image_to_data(inner, config="--psm 7", output_type=pytesseract.Output.DICT)
-        except Exception:
+        pytess_mod = sys.modules.get("pytesseract")
+        if pytess_mod is not None:
+            try:
+                if getattr(getattr(pytess_mod, "pytesseract", None), "tesseract_cmd", "tesseract") == "tesseract":
+                    pytess_mod.pytesseract.tesseract_cmd = tess_bin
+                data = pytess_mod.image_to_data(inner, config="--psm 7", output_type=pytess_mod.Output.DICT)
+            except Exception:
+                data = None
+        if data is None:
             data = self._run_tesseract_tsv_cli(inner, tess_bin)
         if not data:
             return []
@@ -3516,10 +3531,18 @@ def remove_camera_runtime(data, who="operator"):
         ev = st.get("stop_ev")
         if ev:
             ev.set()
+        inf_q = st.get("infer_queue")
+        if inf_q is not None:
+            while True:
+                try:
+                    inf_q.get_nowait()
+                    inf_q.task_done()
+                except Exception:
+                    break
         for th_key in ("reader_thread", "infer_thread"):
             th = st.get(th_key)
             if th is not None and th.is_alive() and th is not threading.current_thread():
-                th.join(timeout=2.5)
+                th.join(timeout=4.0)
         st_lock = st.get("lock")
         if st_lock is not None:
             with st_lock:
@@ -3974,8 +3997,11 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
         and yolo is None
         and (os.environ.get("MERSAD_SKIP_EMPTY_VYOLO_OCR", "0") == "1" or st.get("skip_empty_vyolo", False))
     )
+    st_stop_ev = st.get("stop_ev")
     iter_vboxes = [] if skip_empty_vyolo else (new_vboxes or [(0, 0, W, H, "unknown")])
     for (vx, vy, vw, vh, vc) in iter_vboxes:
+        if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
+            break
         if trucks_only and vc != "truck":
             continue
         oy = vy + int(vh * .35) if vc != "unknown" else 0
@@ -3999,6 +4025,8 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
             if not overlap:
                 dedup_pboxes.append(pb)
         for (x, y, bw, bh) in dedup_pboxes:
+            if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
+                break
             x, y = x + vx, y + oy
             d, c = read_plate(reader, inf_frame[y:y + bh, x:x + bw])
             new_boxes.append((x, y, bw, bh, d))
@@ -4100,7 +4128,7 @@ def wait_for_pending_inference(timeout=5.0, cam=None):
 
 
 def main():
-    global SESSION_ID, PROCESS_OWNER_ID
+    global SESSION_ID, PROCESS_OWNER_ID, _ACTIVE_ENGINE_CONTROLLER
     init_runtime_env()
     STOP_MAIN_EVENT.clear()
     cfg = load_cfg()
@@ -4199,7 +4227,11 @@ def main():
         if not allow_degraded:
             logger.error("EasyOCR initialization failed: %s", e_ocr)
             raise
-        logger.warning("Running in degraded preview mode without EasyOCR: %s", e_ocr)
+        if TesseractOCRReader.is_available():
+            reader = TesseractOCRReader()
+            logger.warning("Running in degraded preview mode with Tesseract 5 LSTM fallback OCR: %s", e_ocr)
+        else:
+            logger.warning("Running in degraded preview mode without EasyOCR: %s", e_ocr)
     yolo = vyolo = None
     try:
         if a.plate_model:
@@ -4257,9 +4289,6 @@ def main():
     if not a.no_telegram_listener and start_listener(tg_press, stop_event=stop_ev):
         print("Telegram buttons active: decisions can be made from the phone.")
     refresh_known()
-    srv = start_server(a.port, host=a.host)
-    if cfg.get("open_browser") and not a.no_window:
-        webbrowser.open(f"http://127.0.0.1:{a.port}/?k={bus.token}")
     if not (os.getenv("TELEGRAM_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")):
         print("Telegram alerts off (set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID to enable).")
 
@@ -4345,13 +4374,14 @@ def main():
             for k, v in cam_states.items()
         }
     for cam_name, st in cam_states.items():
-        st["stop_ev"] = stop_ev
+        cam_stop_ev = threading.Event()
+        st["stop_ev"] = cam_stop_ev
         if st["status"] == "online":
             log("session start", cam_name)
-        rt = threading.Thread(target=_camera_reader_worker, args=(st, stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
+        rt = threading.Thread(target=_camera_reader_worker, args=(st, cam_stop_ev), daemon=True, name=f"cam_reader_{cam_name}")
         it = threading.Thread(
             target=_camera_inference_worker,
-            args=(st, stop_ev, vyolo, yolo, reader, trucks_only, curfew),
+            args=(st, cam_stop_ev, vyolo, yolo, reader, trucks_only, curfew),
             daemon=True,
             name=f"cam_infer_{cam_name}",
         )
@@ -4362,6 +4392,137 @@ def main():
         it.start()
         infer_threads.append(it)
 
+    class _MainLoopRuntimeController:
+        """Runtime camera spawner bridge for main() so add_camera_runtime() and remove_camera_runtime() manage worker threads natively."""
+        def __init__(self):
+            self._lock = _RUNTIME_STATE_LOCK
+            self.cam_states = cam_states
+
+        def add_camera(self, dyn_cam: str, dyn_src: str) -> dict:
+            with self._lock:
+                old_st = cam_states.pop(dyn_cam, None)
+                _ACTIVE_CAM_STATES.pop(dyn_cam, None)
+            if old_st is not None:
+                old_ev = old_st.get("stop_ev")
+                if old_ev:
+                    old_ev.set()
+                for th_k in ("reader_thread", "infer_thread"):
+                    th_o = old_st.get(th_k)
+                    if th_o is not None and th_o.is_alive() and th_o is not threading.current_thread():
+                        th_o.join(timeout=2.5)
+                with old_st["lock"]:
+                    old_cap = old_st.get("cap")
+                    old_st["cap"] = None
+                if old_cap is not None:
+                    try:
+                        old_cap.release()
+                    except Exception:
+                        pass
+
+            now_d = time.time()
+            try:
+                cap_d = _open_camera_capture(dyn_src)
+            except Exception:
+                cap_d = None
+            is_op_d = bool(cap_d and cap_d.isOpened())
+            is_eof_d = bool(not is_op_d and cap_d is not None and getattr(cap_d, "eof", False))
+            if not is_op_d:
+                if cap_d is not None:
+                    try:
+                        cap_d.release()
+                    except Exception:
+                        pass
+                cap_d = None
+            st_status = "online" if is_op_d else "reconnecting"
+            idle_ev_d = threading.Event()
+            idle_ev_d.set()
+            cam_stop_d = threading.Event()
+            st_d = {
+                "cam": dyn_cam,
+                "src": dyn_src,
+                "stop_ev": cam_stop_d,
+                "lock": threading.Lock(),
+                "infer_lock": threading.Lock(),
+                "infer_queue": queue.Queue(maxsize=1),
+                "infer_busy": False,
+                "infer_idle_event": idle_ev_d,
+                "dropped_infer_frames": 0,
+                "cap": cap_d,
+                "status": st_status,
+                "n": 0,
+                "det_runs": 0,
+                "votes": {},
+                "tracks": {},
+                "last_seen": {},
+                "last_plate": None,
+                "boxes": [],
+                "vboxes": [],
+                "face_entries": [],
+                "unmatched_face_boxes": [],
+                "face_det_runs": 0,
+                "fail_count": 0 if is_op_d else 1,
+                "consec_errors": 0,
+                "disconnected_since": 0.0 if is_op_d else now_d,
+                "next_reconnect_ts": 0.0 if is_op_d else (now_d + _compute_reconnect_backoff(1)),
+                "offline_alert_sent": False,
+                "fps": 0.0,
+                "reconnect_count": 0,
+                "fps_t": now_d,
+                "fps_n": 0,
+                "latest_frame": None,
+                "latest_frame_seq": 0,
+                "last_processed_seq": 0,
+                "last_frame_ts": now_d if is_op_d else 0.0,
+                "read_failed": not is_op_d,
+                "just_reconnected": False,
+                "logged_session_start": is_op_d,
+                "eof": is_eof_d,
+                "brightness": 0.0,
+                "contrast": 0.0,
+                "sharpness": 0.0,
+                "health_warning": "",
+            }
+            if not is_op_d:
+                bus.set_frame(_make_offline_frame(dyn_cam, "reconnecting"), cam=dyn_cam, status="reconnecting")
+                bus.publish({"type": "camera_status", "cam": dyn_cam, "status": "reconnecting"})
+            with self._lock:
+                cam_states[dyn_cam] = st_d
+                _ACTIVE_CAM_STATES[dyn_cam] = st_d
+                STATUS["cam"] = ",".join(cam_states.keys())
+                STATUS.setdefault("cameras", {})[dyn_cam] = {
+                    "status": st_d["status"],
+                    "fps": 0.0,
+                    "frames": 0,
+                    "detections": 0,
+                    "errors": 0,
+                    "fail_count": st_d["fail_count"],
+                    "reconnect_count": 0,
+                    "source": redact_url(dyn_src),
+                    "health_warning": "",
+                }
+            if st_d["status"] == "online":
+                log("session start", dyn_cam)
+            rt_d = threading.Thread(target=_camera_reader_worker, args=(st_d, cam_stop_d), daemon=True, name=f"cam_reader_{dyn_cam}")
+            it_d = threading.Thread(
+                target=_camera_inference_worker,
+                args=(st_d, cam_stop_d, vyolo, yolo, reader, trucks_only, curfew),
+                daemon=True,
+                name=f"cam_infer_{dyn_cam}",
+            )
+            st_d["reader_thread"] = rt_d
+            st_d["infer_thread"] = it_d
+            rt_d.start()
+            reader_threads.append(rt_d)
+            it_d.start()
+            infer_threads.append(it_d)
+            return st_d
+
+    _main_runtime_ctrl = _MainLoopRuntimeController()
+    _ACTIVE_ENGINE_CONTROLLER = _main_runtime_ctrl
+    srv = start_server(a.port, host=a.host)
+    if cfg.get("open_browser") and not a.no_window:
+        webbrowser.open(f"http://127.0.0.1:{a.port}/?k={bus.token}")
+
     print("Faces are matched ONLY against volunteers who gave consent. Bystander faces in evidence photos are blurred.")
 
     t_faces = 0.0
@@ -4371,7 +4532,11 @@ def main():
             any_alive = False
             processed_any_frame = False
             now_loop = time.time()
-            for cam_name, st in cam_states.items():
+            with _RUNTIME_STATE_LOCK:
+                cam_items_snap = list(cam_states.items())
+            for cam_name, st in cam_items_snap:
+                if st.get("stop_ev") is not None and st["stop_ev"].is_set():
+                    continue
                 with st["lock"]:
                     just_rec = st["just_reconnected"]
                     if just_rec:
@@ -4430,12 +4595,22 @@ def main():
                     with st["infer_lock"]:
                         det_r_off = st["det_runs"]
                         err_c_off = st["consec_errors"]
+                        last_p_off = st.get("last_plate")
                     with _RUNTIME_STATE_LOCK:
-                        STATUS["cameras"][cam_name] = {
-                            "status": st["status"], "fps": st["fps"] if st["status"] == "online" else 0.0,
-                            "frames": st["n"], "detections": det_r_off, "errors": err_c_off,
-                            "fail_count": fail_cnt, "reconnect_count": st.get("reconnect_count", 0)
-                        }
+                        if cam_name in cam_states and not (st.get("stop_ev") and st["stop_ev"].is_set()):
+                            prev_c_off = STATUS.get("cameras", {}).get(cam_name, {})
+                            STATUS["cameras"][cam_name] = {
+                                "status": st["status"], "fps": st["fps"] if st["status"] == "online" else 0.0,
+                                "frames": st["n"], "detections": det_r_off, "errors": err_c_off,
+                                "fail_count": fail_cnt, "reconnect_count": st.get("reconnect_count", 0),
+                                "last_plate": last_p_off if last_p_off is not None else prev_c_off.get("last_plate"),
+                                "brightness": st.get("brightness", prev_c_off.get("brightness", 0.0)),
+                                "contrast": st.get("contrast", prev_c_off.get("contrast", 0.0)),
+                                "sharpness": st.get("sharpness", prev_c_off.get("sharpness", 0.0)),
+                                "health_warning": st.get("health_warning", prev_c_off.get("health_warning", "")),
+                                "resolution": prev_c_off.get("resolution", ""),
+                                "source": redact_url(st["src"]),
+                            }
                     _update_aggregate_fps(cam_states)
                     if not is_eof:
                         any_alive = True
@@ -4583,12 +4758,22 @@ def main():
                 with st["infer_lock"]:
                     det_runs_cur = st["det_runs"]
                     err_cnt_cur = st["consec_errors"]
+                    last_p_cur = st.get("last_plate")
                 with _RUNTIME_STATE_LOCK:
-                    STATUS["cameras"][cam_name] = {
-                        "status": st["status"], "fps": st["fps"], "frames": st["n"],
-                        "detections": det_runs_cur, "errors": err_cnt_cur, "fail_count": fail_cnt,
-                        "reconnect_count": st.get("reconnect_count", 0)
-                    }
+                    if cam_name in cam_states and not (st.get("stop_ev") and st["stop_ev"].is_set()):
+                        prev_c_cur = STATUS.get("cameras", {}).get(cam_name, {})
+                        STATUS["cameras"][cam_name] = {
+                            "status": st["status"], "fps": st["fps"], "frames": st["n"],
+                            "detections": det_runs_cur, "errors": err_cnt_cur, "fail_count": fail_cnt,
+                            "reconnect_count": st.get("reconnect_count", 0),
+                            "last_plate": last_p_cur if last_p_cur is not None else prev_c_cur.get("last_plate"),
+                            "brightness": st.get("brightness", prev_c_cur.get("brightness", 0.0)),
+                            "contrast": st.get("contrast", prev_c_cur.get("contrast", 0.0)),
+                            "sharpness": st.get("sharpness", prev_c_cur.get("sharpness", 0.0)),
+                            "health_warning": st.get("health_warning", prev_c_cur.get("health_warning", "")),
+                            "resolution": prev_c_cur.get("resolution", f"{W}x{H}"),
+                            "source": redact_url(st["src"]),
+                        }
 
                 k = 255
                 if gui_enabled:
@@ -4612,15 +4797,23 @@ def main():
                     msg_enr = "لتسجيل وجه متطوع بأمان دون تجميد بث الكاميرات، استخدم تبويب «سجل الأشخاص» في لوحة العمليات (dashboard.html)."
                     logger.info("Console 'e' key pressed: %s", msg_enr)
                     print(msg_enr)
-            if not any_alive:
+            if cam_items_snap and not any_alive:
                 break
             if not processed_any_frame:
                 time.sleep(0.005)
     except KeyboardInterrupt:
         pass
     finally:
+        if _ACTIVE_ENGINE_CONTROLLER is _main_runtime_ctrl:
+            _ACTIVE_ENGINE_CONTROLLER = None
         wait_for_pending_inference(timeout=2.0)
         stop_ev.set()
+        with _RUNTIME_STATE_LOCK:
+            fin_cam_states = list(cam_states.values())
+        for st_fin in fin_cam_states:
+            ev_fin = st_fin.get("stop_ev")
+            if ev_fin:
+                ev_fin.set()
         for rt in reader_threads:
             try:
                 rt.join(timeout=1.0)

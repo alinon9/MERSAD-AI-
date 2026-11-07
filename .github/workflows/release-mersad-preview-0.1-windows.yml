@@ -94,7 +94,7 @@ jobs:
           python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
           if ($LASTEXITCODE -ne 0) { throw "Clean-Room LAB verification failed in Phase 2 ($LASTEXITCODE)" }
 
-      - name: Phase 3A — Run Full AI (233) & LAB (20) Test Suites
+      - name: Phase 3A — Run Full AI (234) & LAB (20) Test Suites
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -204,6 +204,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          python -u integration/test_main_entrypoint_dynamic_camera_lifecycle.py
+          if ($LASTEXITCODE -ne 0) { throw "test_main_entrypoint_dynamic_camera_lifecycle.py failed ($LASTEXITCODE)" }
           python -u integration/test_ai_lab_integration.py --require-real-models
           if ($LASTEXITCODE -ne 0) { throw "test_ai_lab_integration.py --require-real-models failed ($LASTEXITCODE)" }
 

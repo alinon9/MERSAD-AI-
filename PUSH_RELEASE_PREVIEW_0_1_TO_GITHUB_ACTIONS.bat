@@ -3,18 +3,27 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "TARGET_BRANCH=release/mersad-preview-0.1"
-set "EXPECTED_AI_CODE_SHA=25131918a981ac2ac37923d4c738d9f93cdcbc5b"
-set "EXPECTED_LAB_CODE_SHA=e9284356f4d1a8205946d5893121c6f8a2f22012"
+if "%MERSAD_DEPLOY_BRANCH%"=="" (
+    set "TARGET_BRANCH=fix/preview-0.1-postbuild-42273598736"
+) else (
+    set "TARGET_BRANCH=%MERSAD_DEPLOY_BRANCH%"
+)
+if not "%~1"=="" set "TARGET_BRANCH=%~1"
+
+set "EXPECTED_AI_CODE_SHA=7f35cb1007a229a72ac0cd1be61fd5a81eb891bd"
+set "EXPECTED_AI_PREV_FIX_SHA=d965d71317e3506e5dce9d316dc81cb8ae45e43b"
+set "EXPECTED_AI_RELEASE_BASE_SHA=25131918a981ac2ac37923d4c738d9f93cdcbc5b"
+set "EXPECTED_LAB_CODE_SHA=748ac0158761812a6fff63ff6fe626b9df8c252b"
+set "EXPECTED_LAB_RELEASE_BASE_SHA=e9284356f4d1a8205946d5893121c6f8a2f22012"
 set "EXPECTED_MAIN_SHA=25c9e5bba30dc8f921675e12c23a53571be895c1"
 set "WORKFLOW_FILE=release-mersad-preview-0.1-windows.yml"
 set "REMOTE_URL=https://github.com/alinon9/MERSAD-AI-.git"
 
 echo ========================================================================================
 echo   نشر الإصدار النهائي المعتمد وبناء واستخراج مخرجات Windows x64
-echo   الفرع المعتمد: %TARGET_BRANCH%
-echo   التزام الكود الأساسي لـ MERSAD AI : %EXPECTED_AI_CODE_SHA%
-echo   التزام الكود الأساسي لـ MERSAD LAB: %EXPECTED_LAB_CODE_SHA%
+echo   الفرع المستهدف (Configurable)     : %TARGET_BRANCH%
+echo   التزام الكود الموحد لـ MERSAD AI   : %EXPECTED_AI_CODE_SHA% (سلف: %EXPECTED_AI_PREV_FIX_SHA% / %EXPECTED_AI_RELEASE_BASE_SHA%)
+echo   التزام الكود الموحد لـ MERSAD LAB  : %EXPECTED_LAB_CODE_SHA% (سلف: %EXPECTED_LAB_RELEASE_BASE_SHA%)
 echo   الفرع الرئيسي main (غير ممسوس)   : %EXPECTED_MAIN_SHA%
 echo ========================================================================================
 
@@ -61,17 +70,32 @@ if not "!LOCAL_MAIN_SHA!"=="%EXPECTED_MAIN_SHA%" (
     exit /b 1
 )
 
-REM 5. التبديل إلى فرع الإصدار النهائي release/mersad-preview-0.1 والتحقق من احتوائه على التزام الكود 25131918
+REM 5. التبديل إلى الفرع المستهدف والتحقق من سلالة الالتزامات المعتمدة
 git checkout "%TARGET_BRANCH%"
 if errorlevel 1 (
-    echo [ERROR] تعذّر التبديل إلى فرع الإصدار النهائي %TARGET_BRANCH%!
+    echo [ERROR] تعذّر التبديل إلى الفرع المستهدف %TARGET_BRANCH%!
     popd
     exit /b 1
 )
 
-git merge-base --is-ancestor "%EXPECTED_AI_CODE_SHA%" HEAD
+if /i "%TARGET_BRANCH%"=="fix/preview-0.1-postbuild-42273598736" (
+    git merge-base --is-ancestor "%EXPECTED_AI_CODE_SHA%" HEAD
+    if errorlevel 1 (
+        echo [ERROR] الفرع %TARGET_BRANCH% لا يتضمن التزام الكود الموحد %EXPECTED_AI_CODE_SHA%!
+        popd
+        exit /b 1
+    )
+    git merge-base --is-ancestor "%EXPECTED_AI_PREV_FIX_SHA%" HEAD
+    if errorlevel 1 (
+        echo [ERROR] الفرع %TARGET_BRANCH% لا يتضمن التزام الإصلاح %EXPECTED_AI_PREV_FIX_SHA%!
+        popd
+        exit /b 1
+    )
+)
+
+git merge-base --is-ancestor "%EXPECTED_AI_RELEASE_BASE_SHA%" HEAD
 if errorlevel 1 (
-    echo [ERROR] الفرع %TARGET_BRANCH% لا يتضمن التزام الكود المعتمد %EXPECTED_AI_CODE_SHA%!
+    echo [ERROR] الفرع %TARGET_BRANCH% لا يتضمن التزام الكود الأساسي %EXPECTED_AI_RELEASE_BASE_SHA%!
     popd
     exit /b 1
 )
@@ -79,7 +103,7 @@ if errorlevel 1 (
 for /f "tokens=*" %%H in ('git rev-parse HEAD') do set "LOCAL_HEAD_SHA=%%H"
 echo [INFO] أحدث التزام محلي ^(HEAD^) على الفرع %TARGET_BRANCH%: !LOCAL_HEAD_SHA!
 
-REM 6. رفع الفرع release/mersad-preview-0.1 والأوسمة إلى GitHub دون لمس main ودون force-push
+REM 6. رفع الفرع المستهدف والأوسمة إلى GitHub دون لمس main ودون force-push
 git remote set-url origin "%REMOTE_URL%"
 echo [INFO] جارٍ رفع الفرع %TARGET_BRANCH% إلى GitHub ^(دون force-push ودون المساس بفرع main^)...
 git push -u origin "refs/heads/%TARGET_BRANCH%:refs/heads/%TARGET_BRANCH%"
@@ -89,7 +113,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-git push origin refs/tags/v0.1.0-preview-code refs/tags/rollback-preview01-f66ecea refs/tags/rollback-stable-49e400c refs/tags/rollback-stable-9491bcd refs/tags/rollback-stage15-64b0dde >nul 2>&1
+git push origin refs/tags/v0.1.1-postbuild-reconciled-code refs/tags/v0.1.0-preview-code refs/tags/rollback-preview01-f66ecea refs/tags/rollback-stable-49e400c refs/tags/rollback-stable-9491bcd refs/tags/rollback-stage15-64b0dde >nul 2>&1
 
 REM 7. التحقق الفعلي من SHA المنشور على GitHub بعد الرفع عبر git ls-remote
 set "REMOTE_SHA="
@@ -111,7 +135,7 @@ set "PREV_LATEST_RUN_ID=0"
 for /f "tokens=*" %%P in ('gh run list --workflow="%WORKFLOW_FILE%" --branch="%TARGET_BRANCH%" --event=workflow_dispatch --limit 1 --json databaseId --jq ".[0].databaseId // 0" 2^>nul') do set "PREV_LATEST_RUN_ID=%%P"
 echo [INFO] أحدث Run ID سابق قبل الإطلاق: !PREV_LATEST_RUN_ID!
 
-REM 9. التشغيل اليدوي الصريح لسير العمل عبر workflow_dispatch على الفرع release/mersad-preview-0.1
+REM 9. التشغيل اليدوي الصريح لسير العمل عبر workflow_dispatch على الفرع المستهدف
 echo [INFO] جارٍ إرسال طلب تشغيل سير العمل %WORKFLOW_FILE% ^(workflow_dispatch^) على الفرع %TARGET_BRANCH%...
 gh workflow run "%WORKFLOW_FILE%" --ref "%TARGET_BRANCH%" -f run_extended_stress=true
 if errorlevel 1 (

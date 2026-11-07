@@ -5450,6 +5450,125 @@ def run_patched_v7_1_and_preview_0_1_tests():
         check("PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY",
               "models/eval_benchmarks contains 23 safe benchmark files and prepare_safe_eval_benchmarks.py --verify runs in read-only non-destructive mode",
               bm_ok, bm_detail)
+
+        # 33. PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE (BUG-27 Regression):
+        # Verify natural main() entry point (not manual MersadEngineController) spawns live workers on /api/cameras/add,
+        # increments latest_frame_seq, streams MJPEG, runs inference, safely stops threads & releases VideoCapture on /api/cameras/remove,
+        # stays alive when 0 cameras remain, and spawns a second dynamic camera after removal.
+        orig_nfr_234 = globals().get("NFR", 18)
+        old_argv_234 = sys.argv[:]
+        main_ep_ok = False
+        main_ep_detail = {}
+        try:
+            globals()["NFR"] = 500
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_ep:
+                s_ep.bind(("127.0.0.1", 0))
+                port_234 = s_ep.getsockname()[1]
+            tok_234 = "main_ep_tok_234"
+            sys.argv = [
+                "mersad_live.py",
+                "--source", "cam1_ok",
+                "--cam", "BOOT_CAM_EP",
+                "--no-window",
+                "--no-telegram-listener",
+                "--port", str(port_234),
+                "--token", tok_234,
+                "--allow-degraded-preview",
+            ]
+            t_main_234 = threading.Thread(target=m.main, daemon=True, name="selftest-main-ep-234")
+            t_main_234.start()
+            wait(lambda: "BOOT_CAM_EP" in m._ACTIVE_CAM_STATES and m._ACTIVE_ENGINE_CONTROLLER is not None, t=5.0)
+            for _ in range(60):
+                try:
+                    p_r = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port_234}/api/ping?k={tok_234}", timeout=1.0).read())
+                    if p_r.get("ok"):
+                        break
+                except Exception:
+                    time.sleep(0.03)
+
+            # Add first dynamic camera DYN_EP_1 via HTTP POST /api/cameras/add
+            req_add1 = urllib.request.Request(
+                f"http://127.0.0.1:{port_234}/api/cameras/add?k={tok_234}",
+                data=json.dumps({"name": "DYN_EP_1", "source": "cam2_ok"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port_234}"},
+                method="POST",
+            )
+            r_add1 = json.loads(urllib.request.urlopen(req_add1, timeout=3.0).read().decode("utf-8"))
+            st_ep1 = m._ACTIVE_CAM_STATES.get("DYN_EP_1")
+            rt_ep1 = st_ep1.get("reader_thread") if st_ep1 else None
+            it_ep1 = st_ep1.get("infer_thread") if st_ep1 else None
+            threads_started_1 = bool(rt_ep1 and rt_ep1.is_alive() and it_ep1 and it_ep1.is_alive())
+
+            wait(lambda: st_ep1 is not None and st_ep1["latest_frame_seq"] >= 8 and st_ep1["det_runs"] >= 1 and m.STATUS.get("cameras", {}).get("DYN_EP_1", {}).get("detections", 0) >= 1, t=6.0)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port_234}/stream.mjpg?cam=DYN_EP_1&k={tok_234}", timeout=3.0) as mjpg_ep1:
+                chunk_ep1 = mjpg_ep1.read(400)
+            mjpg_ep1_ok = (b"image/jpeg" in chunk_ep1 and b"\xff\xd8" in chunk_ep1)
+
+            # Remove DYN_EP_1 while main() is running
+            req_rem1 = urllib.request.Request(
+                f"http://127.0.0.1:{port_234}/api/cameras/remove?k={tok_234}",
+                data=json.dumps({"name": "DYN_EP_1"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port_234}"},
+                method="POST",
+            )
+            r_rem1 = json.loads(urllib.request.urlopen(req_rem1, timeout=4.0).read().decode("utf-8"))
+            threads_stopped_1 = bool(rt_ep1 and not rt_ep1.is_alive() and it_ep1 and not it_ep1.is_alive())
+            cap_released_1 = (st_ep1.get("cap") is None) if st_ep1 else False
+            removed_status_1 = ("DYN_EP_1" not in m.STATUS.get("cameras", {}))
+
+            # Remove BOOT_CAM_EP so 0 cameras remain, verify main() stays alive, then add second camera DYN_EP_2
+            req_rem_boot = urllib.request.Request(
+                f"http://127.0.0.1:{port_234}/api/cameras/remove?k={tok_234}",
+                data=json.dumps({"name": "BOOT_CAM_EP"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port_234}"},
+                method="POST",
+            )
+            urllib.request.urlopen(req_rem_boot, timeout=4.0).read()
+            time.sleep(0.03)
+            main_still_alive = t_main_234.is_alive()
+
+            req_add2 = urllib.request.Request(
+                f"http://127.0.0.1:{port_234}/api/cameras/add?k={tok_234}",
+                data=json.dumps({"name": "DYN_EP_2", "source": "cam3_ok"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port_234}"},
+                method="POST",
+            )
+            r_add2 = json.loads(urllib.request.urlopen(req_add2, timeout=3.0).read().decode("utf-8"))
+            st_ep2 = m._ACTIVE_CAM_STATES.get("DYN_EP_2")
+            wait(lambda: st_ep2 is not None and st_ep2["latest_frame_seq"] >= 8 and st_ep2["det_runs"] >= 1, t=6.0)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port_234}/stream.mjpg?cam=DYN_EP_2&k={tok_234}", timeout=3.0) as mjpg_ep2:
+                chunk_ep2 = mjpg_ep2.read(400)
+            mjpg_ep2_ok = (b"image/jpeg" in chunk_ep2 and b"\xff\xd8" in chunk_ep2)
+
+            main_ep_ok = (
+                r_add1.get("ok") is True and r_add1.get("worker_spawned") is True
+                and threads_started_1 and mjpg_ep1_ok
+                and r_rem1.get("ok") is True and r_rem1.get("removed") is True
+                and threads_stopped_1 and cap_released_1 and removed_status_1
+                and main_still_alive
+                and r_add2.get("ok") is True and r_add2.get("worker_spawned") is True
+                and mjpg_ep2_ok
+            )
+            main_ep_detail = {
+                "add1_worker_spawned": r_add1.get("worker_spawned"),
+                "threads_started_1": threads_started_1,
+                "mjpg_ep1_ok": mjpg_ep1_ok,
+                "threads_stopped_1": threads_stopped_1,
+                "cap_released_1": cap_released_1,
+                "main_still_alive": main_still_alive,
+                "add2_worker_spawned": r_add2.get("worker_spawned"),
+                "mjpg_ep2_ok": mjpg_ep2_ok,
+            }
+        finally:
+            m.STOP_MAIN_EVENT.set()
+            if "t_main_234" in locals():
+                t_main_234.join(timeout=4.0)
+            m.STOP_MAIN_EVENT.clear()
+            globals()["NFR"] = orig_nfr_234
+            sys.argv = old_argv_234
+        check("PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE",
+              "main() entry point spawns live camera workers on /api/cameras/add, streams MJPEG, runs inference, safely stops threads on remove, and adds a second camera",
+              main_ep_ok, main_ep_detail)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

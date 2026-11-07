@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Cryptographic provenance verifier for MERSAD LAB (Commit e9284356f4d1a8205946d5893121c6f8a2f22012).
+Cryptographic provenance verifier for MERSAD LAB:
+- Fix branch HEAD: fix/preview-0.1-postbuild-42273598736 @ 748ac0158761812a6fff63ff6fe626b9df8c252b
+- Release branch baseline: release/mersad-preview-0.1 @ e9284356f4d1a8205946d5893121c6f8a2f22012
+- Main & rollback tag: rollback-stable-lab @ 1c56dcbf77d62b8d89863e04f215e12f162e9555
 Clones reports_and_logs/mersad_lab_preview_0_1_verifiable_history.bundle into an isolated temp directory,
-verifies git fsck --full, verifies commit e9284356f4d1a8205946d5893121c6f8a2f22012 and tag rollback-stable-lab
-(1c56dcbf77d62b8d89863e04f215e12f162e9555), and compares all 14 tracked files byte-for-byte against
-MERSAD_LAB_Preview_0.1/.
+verifies git fsck --full, verifies all branch commits and tags, and compares all 14 tracked files byte-for-byte
+against both MERSAD_LAB_Preview_0.1/ and RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_LAB_Preview_0.1_Portable_Source.zip.
 """
 import hashlib
 import json
@@ -12,21 +14,33 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
-EXPECTED_LAB_COMMIT = "e9284356f4d1a8205946d5893121c6f8a2f22012"
+EXPECTED_LAB_FIX_COMMIT = "748ac0158761812a6fff63ff6fe626b9df8c252b"
+EXPECTED_LAB_RELEASE_COMMIT = "e9284356f4d1a8205946d5893121c6f8a2f22012"
 EXPECTED_LAB_ROLLBACK = "1c56dcbf77d62b8d89863e04f215e12f162e9555"
 
 
 def verify_lab_provenance(repo_root: Path) -> dict:
     bundle_path = repo_root / "reports_and_logs" / "mersad_lab_preview_0_1_verifiable_history.bundle"
     lab_pkg_dir = repo_root / "MERSAD_LAB_Preview_0.1"
+    lab_zip_path = repo_root / "RELEASE_DELIVERABLES" / "PREVIEW_0.1" / "MERSAD_LAB_Preview_0.1_Portable_Source.zip"
     assert bundle_path.is_file(), f"Missing LAB git bundle: {bundle_path}"
+
+    zip_hashes = {}
+    if lab_zip_path.is_file():
+        with zipfile.ZipFile(lab_zip_path, "r") as zf:
+            for name in zf.namelist():
+                if not name.endswith("/"):
+                    rel_z = name.split("/", 1)[1] if name.startswith("MERSAD_LAB_Preview_0.1/") else name
+                    zip_hashes[rel_z] = hashlib.sha256(zf.read(name)).hexdigest()
 
     with tempfile.TemporaryDirectory(prefix="mersad_lab_prov_") as tmpdir:
         clone_dir = Path(tmpdir) / "MERSAD_LAB_CLONE"
         subprocess.run(["git", "clone", str(bundle_path), str(clone_dir)], check=True, capture_output=True)
         rel_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "origin/release/mersad-preview-0.1"], text=True).strip()
+        main_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "origin/main"], text=True).strip()
         subprocess.run(["git", "-C", str(clone_dir), "checkout", "-B", "fix/preview-0.1-postbuild-42273598736", "origin/fix/preview-0.1-postbuild-42273598736"], check=True, capture_output=True)
         head_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "HEAD"], text=True).strip()
         rollback_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "refs/tags/rollback-stable-lab"], text=True).strip()
@@ -35,14 +49,23 @@ def verify_lab_provenance(repo_root: Path) -> dict:
         tracked_files = subprocess.check_output(["git", "-C", str(clone_dir), "ls-tree", "-r", "--name-only", "HEAD"], text=True).splitlines()
 
         file_comparisons = []
-        all_match = (rel_sha == EXPECTED_LAB_COMMIT and rollback_sha == EXPECTED_LAB_ROLLBACK and len(tracked_files) == 14)
+        all_match = (
+            head_sha == EXPECTED_LAB_FIX_COMMIT
+            and rel_sha == EXPECTED_LAB_RELEASE_COMMIT
+            and main_sha == EXPECTED_LAB_ROLLBACK
+            and rollback_sha == EXPECTED_LAB_ROLLBACK
+            and len(tracked_files) == 14
+        )
         for rel in sorted(tracked_files):
             git_bytes = (clone_dir / rel).read_bytes()
             pkg_file = lab_pkg_dir / rel
             pkg_bytes = pkg_file.read_bytes() if pkg_file.is_file() else b""
             h_git = hashlib.sha256(git_bytes).hexdigest()
             h_pkg = hashlib.sha256(pkg_bytes).hexdigest() if pkg_file.is_file() else None
-            match = (h_git == h_pkg and len(git_bytes) == len(pkg_bytes))
+            h_zip = zip_hashes.get(rel)
+            match_dir = (h_git == h_pkg and len(git_bytes) == len(pkg_bytes))
+            match_zip = (h_git == h_zip) if zip_hashes else True
+            match = match_dir and match_zip
             if not match:
                 all_match = False
             file_comparisons.append({
@@ -50,6 +73,7 @@ def verify_lab_provenance(repo_root: Path) -> dict:
                 "size_bytes": len(git_bytes),
                 "git_commit_sha256": h_git,
                 "packaged_file_sha256": h_pkg,
+                "portable_zip_sha256": h_zip,
                 "exact_match": match,
             })
 
@@ -60,10 +84,14 @@ def verify_lab_provenance(repo_root: Path) -> dict:
         "lab_git_bundle_path": "reports_and_logs/mersad_lab_preview_0_1_verifiable_history.bundle",
         "lab_git_bundle_size_bytes": len(bundle_bytes),
         "lab_git_bundle_sha256": hashlib.sha256(bundle_bytes).hexdigest(),
-        "verified_branch": "fix/preview-0.1-postbuild-42273598736 (branched from release/mersad-preview-0.1 @ " + rel_sha + ")",
+        "verified_branch": f"fix/preview-0.1-postbuild-42273598736 @ {head_sha} (branched from release/mersad-preview-0.1 @ {rel_sha})",
+        "verified_fix_branch_commit": head_sha,
+        "expected_fix_branch_commit": EXPECTED_LAB_FIX_COMMIT,
         "verified_release_branch_commit": rel_sha,
+        "expected_release_branch_commit": EXPECTED_LAB_RELEASE_COMMIT,
         "verified_head_commit": head_sha,
-        "expected_head_commit": EXPECTED_LAB_COMMIT,
+        "expected_head_commit": EXPECTED_LAB_FIX_COMMIT,
+        "verified_main_commit": main_sha,
         "verified_rollback_tag_commit": rollback_sha,
         "expected_rollback_tag_commit": EXPECTED_LAB_ROLLBACK,
         "git_fsck_status": "OK (0 errors)" if "error" not in fsck_out.lower() else fsck_out,
@@ -72,7 +100,8 @@ def verify_lab_provenance(repo_root: Path) -> dict:
         "matched_files_count": sum(1 for x in file_comparisons if x["exact_match"]),
         "historical_original_lab_ed7b8f72_note": (
             "While MERSAD_LAB_Preview_0.1 (Clean-Room LAB) is 100% proven by mersad_lab_preview_0_1_verifiable_history.bundle "
-            "at commit e9284356f4d1a8205946d5893121c6f8a2f22012 (14/14 files byte-identical), the historical Original LAB "
+            f"at commit {EXPECTED_LAB_FIX_COMMIT} on fix/preview-0.1-postbuild-42273598736 (14/14 files byte-identical across Git tree, "
+            "workspace directory, and MERSAD_LAB_Preview_0.1_Portable_Source.zip), the historical Original LAB "
             "commit ed7b8f727243da4878e547f08489af581c83291c remains BLOCKED because MERSAD_LAB_Original_ed7b8f72 in the "
             "workspace contained only a placeholder file."
         ),
@@ -85,20 +114,20 @@ if __name__ == "__main__":
     rep = verify_lab_provenance(root)
     (root / "reports_and_logs" / "mersad_lab_git_provenance.json").write_text(json.dumps(rep, indent=2, ensure_ascii=False), encoding="utf-8")
     lines = [
-        f"=== MERSAD LAB GIT PROVENANCE VERIFICATION (Commit {EXPECTED_LAB_COMMIT}) ===",
-        f"Status              : {rep['status']}",
-        f"Bundle Path         : {rep['lab_git_bundle_path']} ({rep['lab_git_bundle_size_bytes']:,d} B)",
-        f"Bundle SHA-256      : {rep['lab_git_bundle_sha256']}",
-        f"Verified Branch     : {rep['verified_branch']}",
-        f"Verified HEAD SHA   : {rep['verified_head_commit']}",
-        f"Rollback Tag SHA    : {rep['verified_rollback_tag_commit']} (rollback-stable-lab)",
-        f"Git fsck --full     : {rep['git_fsck_status']}",
-        f"Matched Tracked Files: {rep['matched_files_count']}/{rep['tracked_files_count']}",
+        f"=== MERSAD LAB GIT PROVENANCE VERIFICATION (Fix Commit {EXPECTED_LAB_FIX_COMMIT}) ===",
+        f"Status               : {rep['status']}",
+        f"Bundle Path          : {rep['lab_git_bundle_path']} ({rep['lab_git_bundle_size_bytes']:,d} B)",
+        f"Bundle SHA-256       : {rep['lab_git_bundle_sha256']}",
+        f"Verified Fix Branch  : fix/preview-0.1-postbuild-42273598736 @ {rep['verified_fix_branch_commit']}",
+        f"Release Branch Base  : release/mersad-preview-0.1 @ {rep['verified_release_branch_commit']}",
+        f"Main & Rollback Tag  : {rep['verified_rollback_tag_commit']} (main & rollback-stable-lab)",
+        f"Git fsck --full      : {rep['git_fsck_status']}",
+        f"Matched Tracked Files: {rep['matched_files_count']}/{rep['tracked_files_count']} (Git Tree == Workspace == Portable_Source.zip)",
         "",
         "--- Git Commit Graph ---",
         rep["git_log_graph"],
         "",
-        "--- Byte-for-Byte File Comparison (Git Tree vs Packaged MERSAD_LAB_Preview_0.1/) ---",
+        "--- Byte-for-Byte File Comparison (Git Tree vs Workspace Dir vs Portable_Source.zip) ---",
     ]
     for f in rep["files"]:
         lines.append(f"  [MATCH={f['exact_match']}] {f['path']:48s} | {f['size_bytes']:6d} B | SHA256={f['git_commit_sha256']}")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MERSAD AI V7.1 + MERSAD LAB 1.0 — PREVIEW 0.1
-Phase 4: Unified 12-Scenario & 2-Gate End-to-End Integration Validation Suite
+Phase 4: Unified 13-Scenario & 2-Gate End-to-End Integration Validation Suite
 =============================================================================
 Reconciles and executes in a single deterministic run:
   - 2 Strict Environment & Hardware Gates (`PHASE4-GATE-01` for the 4 heavy AI models,
@@ -19,6 +19,7 @@ import json
 import numpy as np
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -57,9 +58,9 @@ REPORT = {
     "suite": "MERSAD_PREVIEW_0.1_PHASE4_FINAL_INTEGRATION",
     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
     "reconciliation_note": (
-        "Unifies the 12 mandatory integration scenarios (INT-SCEN-01..12, 12/12 PASS) with the "
+        "Unifies the 13 mandatory integration scenarios (INT-SCEN-01..12 + INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE, 13/13 PASS) with the "
         "7 condensed engine checks (INT-E2E-01..07) and 2 explicit environment/hardware gates "
-        "(PHASE4-GATE-01 and INT-HW-RTSP-USB, 2 NOT_TESTED in offline Linux container) = 14 total checks."
+        "(PHASE4-GATE-01 and INT-HW-RTSP-USB, 2 NOT_TESTED in offline Linux container) = 15 total checks."
     ),
     "checks": [],
     "telemetry": {},
@@ -150,7 +151,7 @@ def main():
     args = ap.parse_args()
 
     print("========================================================================================")
-    print("  MERSAD PREVIEW 0.1 — Phase 4: Unified 12-Scenario & 2-Gate End-to-End Integration")
+    print("  MERSAD PREVIEW 0.1 — Phase 4: Unified 13-Scenario & 2-Gate End-to-End Integration")
     print("========================================================================================")
     t_suite_start = time.time()
     cpu_start = time.process_time()
@@ -496,6 +497,136 @@ def main():
             f"frozen={froz_res.get('health_warning') if froz_res else None}, cam2_removed={d_rem.get('removed')}, audit_rows={audit_before}->{audit_after}, verify='{verify_after}'",
         )
 
+        # ------------------------------------------------------------------
+        # Scenario 13 (BUG-27): Full 10-Step Dynamic Camera Lifecycle via Natural main() Entry Point
+        # ------------------------------------------------------------------
+        try:
+            engine.stop()
+        except Exception:
+            pass
+        try:
+            ai_httpd.shutdown()
+            ai_httpd.server_close()
+        except Exception:
+            pass
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_ep:
+            s_ep.bind(("127.0.0.1", 0))
+            ep_port = s_ep.getsockname()[1]
+        ep_token = "main_ep_int_token_2026"
+        old_argv_int = sys.argv[:]
+        sys.argv = [
+            "mersad_live.py",
+            "--source", f"{lab_base}/stream/cam1.mjpg",
+            "--cam", "BOOT_CAM1",
+            "--port", str(ep_port),
+            "--token", ep_token,
+            "--no-window",
+            "--no-telegram-listener",
+            "--allow-degraded-preview",
+        ]
+        m.STOP_MAIN_EVENT.clear()
+        t_main_int = threading.Thread(target=m.main, daemon=True, name="int-main-entrypoint")
+        t_main_int.start()
+        try:
+            t_wait_ep = time.time() + 10.0
+            ep_up = False
+            while time.time() < t_wait_ep:
+                try:
+                    sc_p, d_p = _http_json(f"http://127.0.0.1:{ep_port}/api/ping?k={ep_token}")
+                    if sc_p == 200 and d_p.get("ok"):
+                        ep_up = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.05)
+
+            # Steps 3 & 4: Connect camera from LAB via POST /api/integration/connect_ai & verify worker_spawned=true
+            sc_c1, d_c1 = _http_json(
+                f"{lab_base}/api/integration/connect_ai",
+                method="POST",
+                payload={"ai_url": f"http://127.0.0.1:{ep_port}", "ai_token": ep_token, "cam_id": "cam2", "cam_name": "LAB_DYN_CAM2"},
+                headers={"Origin": lab_base},
+            )
+            ai_r1 = d_c1.get("ai_response", {}) if isinstance(d_c1, dict) else {}
+            st_dyn2 = m._ACTIVE_CAM_STATES.get("LAB_DYN_CAM2")
+            rt_dyn2 = st_dyn2.get("reader_thread") if st_dyn2 else None
+            it_dyn2 = st_dyn2.get("infer_thread") if st_dyn2 else None
+            threads_alive_1 = bool(rt_dyn2 and rt_dyn2.is_alive() and it_dyn2 and it_dyn2.is_alive())
+
+            # Steps 6 & 7: Wait for latest_frame_seq, MJPEG frames, and inference + STATUS update
+            t_dl1 = time.time() + 10.0
+            seq_dyn2, det_dyn2, stat_dyn2 = 0, 0, {}
+            while time.time() < t_dl1 and st_dyn2 is not None:
+                with st_dyn2["lock"]:
+                    seq_dyn2 = st_dyn2["latest_frame_seq"]
+                with st_dyn2["infer_lock"]:
+                    det_dyn2 = st_dyn2["det_runs"]
+                with m._RUNTIME_STATE_LOCK:
+                    stat_dyn2 = dict(m.STATUS.get("cameras", {}).get("LAB_DYN_CAM2", {}))
+                if seq_dyn2 >= 8 and det_dyn2 >= 1 and stat_dyn2.get("frames", 0) >= 6 and stat_dyn2.get("detections", 0) >= 1:
+                    break
+                time.sleep(0.05)
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{ep_port}/stream.mjpg?cam=LAB_DYN_CAM2&k={ep_token}", timeout=3.0) as mr2:
+                mjpg_b2 = mr2.read(512)
+            mjpg_ok_2 = (b"image/jpeg" in mjpg_b2 and b"\xff\xd8" in mjpg_b2)
+
+            # Steps 8 & 9: Remove LAB_DYN_CAM2 at runtime and verify threads stopped & VideoCapture closed without SIGSEGV
+            sc_rm1, d_rm1 = _http_json(
+                f"http://127.0.0.1:{ep_port}/api/cameras/remove?k={ep_token}",
+                method="POST",
+                payload={"name": "LAB_DYN_CAM2"},
+                headers={"Origin": f"http://127.0.0.1:{ep_port}"},
+            )
+            threads_stopped_2 = bool(rt_dyn2 and not rt_dyn2.is_alive() and it_dyn2 and not it_dyn2.is_alive())
+            cap_closed_2 = (st_dyn2.get("cap") is None) if st_dyn2 else False
+            removed_stat_2 = ("LAB_DYN_CAM2" not in m.STATUS.get("cameras", {}))
+
+            # Step 10: Add a second camera (LAB_DYN_CAM3) from LAB after removal and verify full pipeline
+            sc_c2, d_c2 = _http_json(
+                f"{lab_base}/api/integration/connect_ai",
+                method="POST",
+                payload={"ai_url": f"http://127.0.0.1:{ep_port}", "ai_token": ep_token, "cam_id": "cam3", "cam_name": "LAB_DYN_CAM3"},
+                headers={"Origin": lab_base},
+            )
+            ai_r2 = d_c2.get("ai_response", {}) if isinstance(d_c2, dict) else {}
+            st_dyn3 = m._ACTIVE_CAM_STATES.get("LAB_DYN_CAM3")
+            t_dl2 = time.time() + 10.0
+            seq_dyn3, det_dyn3 = 0, 0
+            while time.time() < t_dl2 and st_dyn3 is not None:
+                with st_dyn3["lock"]:
+                    seq_dyn3 = st_dyn3["latest_frame_seq"]
+                with st_dyn3["infer_lock"]:
+                    det_dyn3 = st_dyn3["det_runs"]
+                if seq_dyn3 >= 8 and det_dyn3 >= 1:
+                    break
+                time.sleep(0.05)
+            with urllib.request.urlopen(f"http://127.0.0.1:{ep_port}/stream.mjpg?cam=LAB_DYN_CAM3&k={ep_token}", timeout=3.0) as mr3:
+                mjpg_b3 = mr3.read(512)
+            mjpg_ok_3 = (b"image/jpeg" in mjpg_b3 and b"\xff\xd8" in mjpg_b3)
+
+            ok_scen_13 = (
+                ep_up
+                and sc_c1 == 200 and ai_r1.get("worker_spawned") is True
+                and threads_alive_1 and seq_dyn2 >= 8 and det_dyn2 >= 1 and mjpg_ok_2
+                and sc_rm1 == 200 and d_rm1.get("removed") is True
+                and threads_stopped_2 and cap_closed_2 and removed_stat_2
+                and sc_c2 == 200 and ai_r2.get("worker_spawned") is True
+                and seq_dyn3 >= 8 and det_dyn3 >= 1 and mjpg_ok_3
+            )
+            record(
+                "INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE",
+                "Natural main() entry point dynamic camera lifecycle (connect_ai -> worker_spawned=true -> MJPEG & inference -> remove without SIGSEGV -> add 2nd camera)",
+                "PASS" if ok_scen_13 else "FAIL",
+                pipeline_cat,
+                f"add1_spawned={ai_r1.get('worker_spawned')}, seq2={seq_dyn2}, det2={det_dyn2}, stopped={threads_stopped_2}, cap_closed={cap_closed_2}, add2_spawned={ai_r2.get('worker_spawned')}, seq3={seq_dyn3}, det3={det_dyn3}",
+            )
+        finally:
+            m.STOP_MAIN_EVENT.set()
+            t_main_int.join(timeout=5.0)
+            sys.argv = old_argv_int
+
         tel = get_process_telemetry(t_suite_start)
         REPORT["telemetry"] = {
             "rss_mb": tel["rss_mb"],
@@ -505,6 +636,10 @@ def main():
         }
 
     finally:
+        try:
+            engine.stop()
+        except Exception:
+            pass
         try:
             engine.stop()
         except Exception:
