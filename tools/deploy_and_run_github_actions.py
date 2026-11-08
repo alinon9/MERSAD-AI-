@@ -61,6 +61,7 @@ ALLOWED_DEPLOY_BRANCHES = (
 DEFAULT_TARGET_BRANCH = "fix/preview-0.1-postbuild-42273598736"
 TARGET_BRANCH = DEFAULT_TARGET_BRANCH
 
+EXPECTED_AI_BUG46_49_PARENT_SHA = "eaf89c71b3b54de14a1c64bf862bb6e6eec321cc"
 EXPECTED_AI_BUG40_45_PARENT_SHA = "850fbdb450ba98e09994c6b6b01b84e1a5e65fe6"
 EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA = "a1c53f32ff3c5c9ab995de2672ff29f2de13ea38"
 EXPECTED_AI_PREFLIGHT_PARENT_SHA = "05f29af416c4a28ddf59c291819584d1a416d570"
@@ -956,6 +957,10 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA, "HEAD"],
             capture_output=True,
         ).returncode
+        anc_eaf8_rc = subprocess.run(
+            ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG46_49_PARENT_SHA, "HEAD"],
+            capture_output=True,
+        ).returncode
         anc_850f_rc = subprocess.run(
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG40_45_PARENT_SHA, "HEAD"],
             capture_output=True,
@@ -976,6 +981,7 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         and anc_edaf_rc == 0
         and anc_05f2_rc == 0
         and anc_a1c5_rc == 0
+        and anc_eaf8_rc == 0
         and anc_850f_rc == 0
         and lifecycle_in_commit
         and sim_engine_sha_ok
@@ -986,7 +992,9 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         "ok": ok,
         "branch": branch,
         "head_sha": head_sha,
+        "previous_bug46_49_commit_sha": EXPECTED_AI_BUG46_49_PARENT_SHA,
         "previous_bug40_45_commit_sha": EXPECTED_AI_BUG40_45_PARENT_SHA,
+        "descends_from_eaf89c71b3b5": (anc_eaf8_rc == 0),
         "previous_single_run_ci_commit_sha": EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
         "previous_preflight_commit_sha": preflight_tag_sha,
         "reconciled_code_sha": code_tag_sha,
@@ -1146,6 +1154,7 @@ def execute_deployment(
 
         rc, head_sha, err = run_cmd(["git", "rev-parse", "HEAD"], cwd=str(work_repo), env=env)
         required_ancestors = [
+            EXPECTED_AI_BUG46_49_PARENT_SHA,
             EXPECTED_AI_BUG40_45_PARENT_SHA,
             EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
             EXPECTED_AI_PREFLIGHT_PARENT_SHA,
@@ -2984,6 +2993,16 @@ console.log("DASHBOARD_7_CASES_OK");
         ep_data = json.loads(ep_json_path.read_text(encoding="utf-8"))
         ep_ok = bool(ep_data.get("all_passed") is True and len(ep_data.get("steps", [])) == 10 and all(v.get("passed") is True for v in ep_data.get("steps", [])))
     checks.append(("MAIN_ENTRYPOINT_10_STEP_DYNAMIC_CAMERA_LIFECYCLE_PASS", ep_ok))
+    r_ai_z = repo_root / "MERSAD_AI_Preview_0.1_Portable_Source.zip"
+    d_ai_z = repo_root / "RELEASE_DELIVERABLES" / "PREVIEW_0.1" / "MERSAD_AI_Preview_0.1_Portable_Source.zip"
+    r_lab_z = repo_root / "MERSAD_LAB_Preview_0.1_Portable_Source.zip"
+    d_lab_z = repo_root / "RELEASE_DELIVERABLES" / "PREVIEW_0.1" / "MERSAD_LAB_Preview_0.1_Portable_Source.zip"
+    bug50_zip_parity = (
+        d_ai_z.is_file() and (not r_ai_z.is_file() or r_ai_z.read_bytes() == d_ai_z.read_bytes())
+        and hashlib.sha256(d_ai_z.read_bytes()).hexdigest() != "53ed4ae36e18276ca57e2704023a5b6fe2b230e7278fcae4a44c4cd366fbbcf9"
+        and d_lab_z.is_file() and (not r_lab_z.is_file() or r_lab_z.read_bytes() == d_lab_z.read_bytes())
+    )
+    checks.append(("BUG50_01_ALL_PORTABLE_SOURCE_ZIPS_SYNCHRONIZED_AND_NO_STALE_53ED4AE_ARCHIVE", bug50_zip_parity))
 
     all_ok = all(ok for _, ok in checks)
     return {
