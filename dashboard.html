@@ -542,20 +542,87 @@ $("#health-periods")?.addEventListener("click",e=>{const b=e.target.closest("but
 
 /* ---------- Stage 11: Yemeni Plate Evaluation & Manual Field Calibration UI ---------- */
 let PE_POLL_TIMER=null,FC_CACHE=[];
+function formatReadinessPct(val){
+ if(val===null||val===undefined||typeof val==="boolean"||(typeof val==="string"&&val.trim()===""))return {text:"غير متاح (N/A)",color:"var(--mu)",valid:false,num:null};
+ const num=Number(val);
+ if(!Number.isFinite(num)||num<0||num>100)return {text:"غير متاح (N/A)",color:"var(--mu)",valid:false,num:null};
+ const rounded=Math.round(num*10)/10;
+ const color=rounded>=100?"var(--ok)":rounded>0?"var(--wn)":"var(--er)";
+ return {text:rounded+"%",color,valid:true,num:rounded};
+}
+function formatReadinessCount(val){
+ if(val===null||val===undefined||typeof val==="boolean"||(typeof val==="string"&&val.trim()===""))return "غير متاح (N/A)";
+ const num=Number(val);
+ if(!Number.isFinite(num)||num<0)return "غير متاح (N/A)";
+ return String(Math.floor(num));
+}
+function renderReadinessScorecardHtml(r){
+ if(!r||typeof r!=="object")return `<span class="chip er">غير متاح (N/A) — لم ترد بيانات صالحة من الخادم</span>`;
+ const p=r.pillars&&typeof r.pillars==="object"?r.pillars:{};
+ const c1=p.code_and_security&&typeof p.code_and_security==="object"?p.code_and_security:{};
+ const c2=p.windows_build_and_packaging&&typeof p.windows_build_and_packaging==="object"?p.windows_build_and_packaging:{};
+ const c3=p.field_calibration_and_eval_tooling&&typeof p.field_calibration_and_eval_tooling==="object"?p.field_calibration_and_eval_tooling:{};
+ const fs=c3.field_data_stats&&typeof c3.field_data_stats==="object"?c3.field_data_stats:{};
+ const mEng=formatReadinessPct(r.overall_engineering_readiness_pct);
+ const mRun=formatReadinessPct(r.runtime_models_and_deps_readiness_pct);
+ const mFld=formatReadinessPct(r.field_data_calibration_readiness_pct);
+ const p1=formatReadinessPct(c1.score_pct);
+ const p2=formatReadinessPct(c2.score_pct);
+ const p3=formatReadinessPct(c3.score_pct);
+ const rawCls=typeof r.deployment_classification==="string"?r.deployment_classification.trim():"";
+ const allThree100=(mEng.valid&&mEng.num===100&&mRun.valid&&mRun.num===100&&mFld.valid&&mFld.num===100);
+ let clsCode="غير متاح (N/A)",clsAr="تصنيف النشر غير متاح — لم تكتمل بيانات التحقق",clsChip="mu";
+ if(rawCls==="READY_FOR_PRODUCTION"&&allThree100){
+  clsCode="READY_FOR_PRODUCTION";
+  clsAr="مؤهل للنشر بعد استيفاء الكود والنماذج الأربعة والمعايرة الميدانية";
+  clsChip="ok";
+ }else if(rawCls==="READY_FOR_PRODUCTION"&&!allThree100){
+  clsCode="UNVERIFIED_CLASSIFICATION (NOT ESTABLISHED)";
+  clsAr="غير مكتمل الأدلة الميدانية/التشغيلية — لا يثبت الجاهزية الإنتاجية";
+  clsChip="er";
+ }else if(rawCls==="READY_FOR_CONTROLLED_PILOT"){
+  clsCode="READY_FOR_CONTROLLED_PILOT";
+  clsAr="جاهز للتجربة المحدودة (الكود والنماذج متوفرة — بانتظار استكمال المعايرة الميدانية)";
+  clsChip="wn";
+ }else if(rawCls==="READY_FOR_LAPTOP_SETUP_AND_DEMO"){
+  clsCode="READY_FOR_LAPTOP_SETUP_AND_DEMO";
+  clsAr="جاهز للإعداد المحلي والعرض التجريبي فقط (الجاهزية الإنتاجية والميدانية غير متحققة)";
+  clsChip="wn";
+ }else if(rawCls){
+  clsCode=rawCls;
+  clsAr="تصنيف بيئة النشر المبلّغ من الخادم";
+  clsChip="wn";
+ }
+ const compLinks=formatReadinessCount(fs.complete_camera_links_count);
+ const expLinks=formatReadinessCount(fs.explicit_camera_links_count);
+ const linksText=(compLinks.includes("N/A")||expLinks.includes("N/A"))?"غير متاح (N/A)":`${compLinks} / ${expLinks}`;
+ const evalRunsText=formatReadinessCount(fs.automated_plate_eval_runs_count);
+ const ephWarn=r.ephemeral_storage_warning===true?`<span class="chip er">تنبيه: التخزين الحالي مؤقت (Ephemeral)</span>`:"";
+ return `<div class="notice" style="margin:6px 0;border-color:var(--wn)">
+  <b>فصل صارم بين المؤشرات الأربعة (/api/readiness):</b> اكتمال فحوصات الكود والتهيئة الهندسية لا يثبت الجاهزية الميدانية أو الإنتاجية، ولا يُفترض أي رقم افتراضي عند غياب البيانات.
+  <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+   <span>تصنيف بيئة النشر (<code>deployment_classification</code>):</span>
+   <span class="chip ${clsChip}"><b>${esc(clsCode)}</b> — ${esc(clsAr)}</span>
+   ${ephWarn}
+  </div>
+ </div>
+ <div class="ribbon" style="margin:6px 0">
+  <div><b style="color:${mEng.color}">${esc(mEng.text)}</b><span>1. جاهزية الكود والتهيئة الهندسية (<code>overall_engineering_readiness_pct</code>)</span></div>
+  <div><b style="color:${mRun.color}">${esc(mRun.text)}</b><span>2. جاهزية النماذج والاعتماديات Runtime (<code>runtime_models_and_deps_readiness_pct</code>)</span></div>
+  <div><b style="color:${mFld.color}">${esc(mFld.text)}</b><span>3. جاهزية بيانات الميدان والمعايرة (<code>field_data_calibration_readiness_pct</code>)</span></div>
+  <div><b style="color:${p1.color}">${esc(p1.text)}</b><span>${esc(c1.label_ar||"الكود والأمن")}</span></div>
+  <div><b style="color:${p2.color}">${esc(p2.text)}</b><span>${esc(c2.label_ar||"بناء وتوزيع Windows EXE")}</span></div>
+  <div><b style="color:${p3.color}">${esc(p3.text)}</b><span>${esc(c3.label_ar||"أدوات المعايرة والتقييم البرمجية")}</span></div>
+  <div><b>${esc(linksText)}</b><span>روابط كاميرات مكتملة المعايرة</span></div>
+  <div><b>${esc(evalRunsText)}</b><span>عمليات تقييم آلي موثّقة للوحات</span></div>
+ </div>`;
+}
 async function loadReadinessReport(){
  const box=$("#rd-score-box");if(!box)return;
  try{
   const r=await rJson("/api/readiness");
-  if(!r.ok)throw new Error(r.error||"تعذّر تحميل مؤشر الجاهزية");
-  const p=r.pillars||{},c1=p.code_and_security||{},c2=p.windows_build_and_packaging||{},c3=p.field_calibration_and_eval_tooling||{},fs=c3.field_data_stats||{};
-  box.innerHTML=`<div class="ribbon" style="margin:6px 0">
-   <div><b style="color:var(--ok)">${r.overall_engineering_readiness_pct??100}%</b><span>الجاهزية الهندسية والبرمجية الشاملة</span></div>
-   <div><b style="color:var(--ok)">${c1.score_pct??100}%</b><span>${esc(c1.label_ar||"الكود والأمن")}</span></div>
-   <div><b style="color:var(--ok)">${c2.score_pct??100}%</b><span>${esc(c2.label_ar||"بناء وتوزيع Windows EXE")}</span></div>
-   <div><b style="color:var(--ok)">${c3.score_pct??100}%</b><span>${esc(c3.label_ar||"منظومة المعايرة والتقييم")}</span></div>
-   <div><b>${fs.complete_camera_links_count||0} / ${fs.explicit_camera_links_count||0}</b><span>روابط كاميرات مكتملة المعايرة</span></div>
-   <div><b>${fs.automated_plate_eval_runs_count||0}</b><span>عمليات تقييم آلي موثّقة للوحات</span></div>
-  </div>`;
+  if(!r||!r.ok)throw new Error((r&&r.error)||"تعذّر تحميل مؤشر الجاهزية");
+  box.innerHTML=renderReadinessScorecardHtml(r);
  }catch(e){box.innerHTML=`<span class="chip er">${esc(e.message||"تعذّر تحميل مؤشر الجاهزية")}</span>`}
 }
 async function autoCalibrateCameraLinks(){

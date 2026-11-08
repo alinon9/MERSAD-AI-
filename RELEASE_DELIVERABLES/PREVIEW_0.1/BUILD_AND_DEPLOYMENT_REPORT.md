@@ -1,5 +1,5 @@
 # 9. تقرير البناء والتغليف والنشر لنظام Windows x64 — `BUILD_AND_DEPLOYMENT_REPORT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above 05f29af416c4a28ddf59c291819584d1a416d570` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above a1c53f32ff3c5c9ab995de2672ff29f2de13ea38` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 ## 1. معمارية البناء والتوزيع (`Windows x64 Packaging Architecture`)
 
@@ -16,19 +16,19 @@
 | **`MERSAD_LAB_Preview_0.1_Portable_Source.zip`** | حزمة مصدرية محمولة كاملة لمختبر الكاميرات (`14` ملفاً) | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_LAB_Preview_0.1_Portable_Source.zip` | **`PASS` (`14/14 MATCH` — مطابقة `100% Byte-for-Byte` مع التزام الكود `748ac0158761`)** |
 | **`MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip`** | الحزمة الشاملة النهائية للإصدار التجريبي `Preview 0.1` شاملة المشروعين والتقارير وحزمتي Git الجنائيتين | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip` | **`PASS` (`GENERATED & VERIFIED`)** |
 
-## 2. الإصلاحات الهندسية المنفذة على منظومة البناء واستهداف الفرع وتحصين النشر الأحادي (`BUG-03..BUG-39`)
+## 2. الإصلاحات الهندسية المنفذة على منظومة البناء واستهداف الفرع وتحصين النشر الأحادي (`BUG-03..BUG-45`)
 
 1. **توحيد مصدر الحقيقة بين شجرة Git والحزم المصدرية (`BUG-23` & `BUG-34`)**:
    * مزامنة جميع الملفات الـ 58 في `MERSAD_AI_Preview_0.1/` داخل شجرة Git على الفرع `fix/preview-0.1-postbuild-42273598736` في التزام الكود التشغيلي **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (`v0.1.1-postbuild-reconciled-code`)، وتضمين جميع المسارات الـ 17 التي يعتمد عليها سير العمل (**`1 Workflow File + 16 Required Paths = 17 Verified Paths`**) شاملةً `integration/test_main_entrypoint_dynamic_camera_lifecycle.py` و`MERSAD_LAB_Preview_0.1/sim_engine.py` في الالتزام الأب **`05f29af416c4a28ddf59c291819584d1a416d570`** (`v0.1.2-windows-ci-preflight-ready`).
 2. **منع ازدواجية تشغيل GitHub Actions واعتماد مسار `Push-Triggered CI` فقط (`BUG-35`)**:
    * إزالة `workflow_dispatch` من `.github/workflows/release-mersad-preview-0.1-windows.yml` والإبقاء على محفز `on: push: branches: ["preview/mersad-ai-lab-0.1-*", "release/mersad-preview-0.1*", "fix/preview-0.1-*"]` فقط.
    * إزالة جميع استدعاءات `gh workflow run` من `tools/deploy_and_run_github_actions.py` و`PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` و`PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat` بحيث يصبح المسار الوحيد المعتمد هو:
-     `Local Verified HEAD -> git push -> GitHub Actions (event=push) -> Polling -> Jobs Validation -> Artifacts Download -> SHA256 Verification`.
+     `Local Verified HEAD -> Pre-Push Remote & Fail-Closed Run Check -> Single-Branch git push (no tags) -> GitHub Actions (event=push) -> Discovery & Settling Window -> Jobs Validation -> Artifacts Download -> SHA256_CALCULATED_AND_RECORDED`.
 3. **تحصين آلة حالات الاستقصاء وكشف التشغيل المكرر (`Polling State Machine — BUG-36`)**:
    * قبل `git push` (`PREFLIGHT_PASS`): التحقق من اسم الفرع، وانحدار `HEAD` من `05f29af416c4a28ddf59c291819584d1a416d570` و`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`، ونظافة شجرة العمل (`git status --porcelain`)، وعنوان المستودع البعيد، ومصادقة `gh auth status`، وتسجيل جميع معرفات التشغيل السابقة `databaseId` (`prev_run_ids`).
    * بعد `git push` (`PUSH_COMPLETED` ➔ `RUN_DISCOVERED`): استقصاء `gh run list --workflow=release-mersad-preview-0.1-windows.yml --branch=<branch> --event=push --limit 30 --json databaseId,headSha,headBranch,event,status,conclusion,url,createdAt` واشتراط تطابق جميع الشروط الخمسة معاً (`workflow`, `event == "push"`, `headBranch == branch`, `headSha == LOCAL_HEAD_SHA`, و`databaseId not in prev_run_ids`).
    * إذا ظهر أكثر من تشغيل جديد لنفس الالتزام والفرع، تنتقل الأداة فوراً إلى الحالة **`DUPLICATE_RUN_DETECTED`** وتتوقف برمز خروج غير صفري، وإذا انتهت المهلة دون ظهور تشغيل مطابق تنتقل إلى **`RUN_TIMEOUT`** (ولا تتحول أبداً إلى `PASS`).
-   * بعد اكتشاف التشغيل الوحيد (`RUN_IN_PROGRESS`): متابعة التنفيذ والتحقق من أن جميع المهام (`jobs`) اكتملت بـ `conclusion == "success"` (وإلا **`RUN_FAILED`**)، ثم تنزيل Artifacts والتحقق من وجود الملفات الخمسة غير الفارغة وحساب بصمات `SHA-256` (**`ARTIFACTS_VERIFIED`**) قبل إعلان **`PASS`**.
+   * بعد اكتشاف التشغيل الوحيد (`RUN_IN_PROGRESS`): متابعة التنفيذ والتحقق من أن جميع المهام (`jobs`) اكتملت بـ `conclusion == "success"` (وإلا **`RUN_FAILED`**)، ثم تنزيل Artifacts والتحقق من وجود الملفات الخمسة غير الفارغة وحساب بصمات `SHA-256` (**`SHA256_CALCULATED_AND_RECORDED`**) قبل إعلان **`PASS`**.
 4. **إزالة المدخل غير المستخدم `run_extended_stress` وتوحيد تعريف الاختبارات (`BUG-37`)**:
    * أظهر التدقيق أن `run_extended_stress` لم يكن مستخدماً في أي شرط داخل `.github/workflows/release-mersad-preview-0.1-windows.yml`. تم حذفه نهائياً من ملف الـ Workflow ومن سكربتات النشر والاختبارات الذاتية.
    * **الاختبارات التي تعمل دائماً بلا شروط في البناء القياسي لـ Windows CI (`Unconditional Standard CI Phases`)**:
@@ -39,5 +39,12 @@
      - `Phase 4 & Phase 5`: تشغيل اختبار دورة الحياة المستقل `test_main_entrypoint_dynamic_camera_lifecycle.py` (`10` خطوات عبر `main()`) و`test_ai_lab_integration.py --require-real-models`، ثم تجميع الحزمة النهائية وحساب بصمات `SHA-256`.
    * **الاختبارات الميدانية المؤجلة لما بعد استخراج Artifacts (`Post-CI Field & Hardware Acceptance`)**:
      - اختبار الكاميرات الفيزيائية الحقيقية (`INT-HW-RTSP-USB` على كاميرات IP وUSB فعلية)، ومعايرة المسافات الميدانية (`Field Calibration`)، واختبار الاستقرار الميداني المتواصل لمدة ساعتين (`Two-Hour Field Soak`).
-5. **التحقق الذاتي الشامل (`23 / 23 PASS`) دون تنفيذ أي رفع أو تشغيل سحابي قبل موافقة المستخدم**:
-   * تم التحقق من جميع المسارات والسيناريوهات السلبية والإيجابية عبر `python3 tools/deploy_and_run_github_actions.py --self-test` واجتاز **`23 / 23 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
+5. **التحقق الذاتي الشامل (`31 / 31 PASS`) دون تنفيذ أي رفع أو تشغيل سحابي قبل موافقة المستخدم**:
+   * تم التحقق من جميع المسارات والسيناريوهات السلبية والإيجابية عبر `python3 tools/deploy_and_run_github_actions.py --self-test` واجتاز **`31 / 31 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
+
+6. **توحيد مساري `BAT` و`Python` وإزالة دفع الأوسمة والتحصين المغلق عند الفشل (`BUG-40` إلى `BUG-45`)**:
+   * **`BUG-40` & توحيد `BAT`/`Python`**: تحويل `PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` و`PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat` إلى واجهات تشغيل رقيقة (`Thin Wrappers`) تستدعي `python -u tools\deploy_and_run_github_actions.py --live --branch "%TARGET_BRANCH%"` دون أي `git push` مباشر أو دفع للأوسمة (`refs/tags/*`, `--tags`, `--all`) ودون إخفاء الأخطاء (`>nul 2>&1`). (ملاحظة: تم التحقق من بنية ملفي `.bat` برمجياً في حاوية Linux، بينما يتطلب تنفيذهما التفاعلي بيئة Windows فعلية).
+   * **`BUG-41` (Fail-Closed Run Querying & Pagination)**: أي فشل في `gh run list` أو تلف في JSON أو نقص في الحقول الإلزامية (`databaseId`, `headSha`, `headBranch`, `event`, `createdAt`, `workflowName`) يوقف العملية فوراً قبل أي `git push` بالحالة **`PREFLIGHT_FAILED`**، مع دعم التصفح (`Pagination`) وتوثيق حدود نافذة الفحص وخط الأساس الزمني `preflight_started_at_utc`.
+   * **`BUG-42` (Duplicate-Detection Settling Window)**: بعد اكتشاف أول `Run Candidate` (`RUN_DISCOVERED`)، يستمر المتحكم في الاستعلام خلال نافذة استقرار قابلة للضبط (`settling_polls`, `settling_interval_s`) للتأكد من عدم ظهور تشغيل ثانٍ متأخر لنفس البصمة قبل الانتقال إلى `RUN_IN_PROGRESS`.
+   * **`BUG-44` (`REMOTE_ALREADY_AT_LOCAL_HEAD_NO_NEW_PUSH_EVENT`)**: يفحص المتحكم الفرع البعيد مسبقاً عبر `git ls-remote`؛ فإذا كان مساوياً لـ `LOCAL_HEAD_SHA` يتوقف فوراً بالحالة `REMOTE_ALREADY_AT_LOCAL_HEAD_NO_NEW_PUSH_EVENT` دون بدء Polling، وإذا كان متباعداً (`non-fast-forward`) يرفض الدفع بالحالة `REMOTE_DIVERGED_NOT_FAST_FORWARD`.
+   * **`BUG-45` (`SHA256_CALCULATED_AND_RECORDED`)**: تفصل الدالة `verify_and_hash_downloaded_artifacts()` بصرامة بين التحقق من وجود الملفات الخمسة وعدم كونها فارغة وحساب وتسجيل بصماتها (`SHA256_CALCULATED_AND_RECORDED`) وبين مقارنتها بمرجع مستقل موثوق (`trusted_reference_digests_verified = false` ما لم يُمرر مرجع مستقل) أو `Artifact Attestation` (`attestation_verification_status = "NOT_AVAILABLE"`).
