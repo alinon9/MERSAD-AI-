@@ -1,5 +1,5 @@
 # 2. تقرير التدقيق الأمني الشامل — `SECURITY_AUDIT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above de55bcc519366da996e6086d48005f9ad8eafa2a` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above 62b409e2327b86ad0720a526cb3ba8573821b09b` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 ## الملخص التنفيذي للتدقيق الأمني
 أُجري فحص أمني شامل (ساكن عبر تحليل شجرة الصياغة المجردة `AST` لـ **203 استعلامات SQLite**، وديناميكي عبر **10 اختبارات اختراق حية `SEC-AUDIT-01..10`** بالإضافة إلى **12 اختبار أمان في المختبر `LAB-SEC-01..12`** وجميع اختبارات الأمان في `selftest.py` البالغ مجموعها **`234 / 234 PASS`**):

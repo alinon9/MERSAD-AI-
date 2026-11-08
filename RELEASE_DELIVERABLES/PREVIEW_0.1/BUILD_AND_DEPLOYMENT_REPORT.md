@@ -1,5 +1,5 @@
 # 9. تقرير البناء والتغليف والنشر لنظام Windows x64 — `BUILD_AND_DEPLOYMENT_REPORT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above de55bcc519366da996e6086d48005f9ad8eafa2a` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above 62b409e2327b86ad0720a526cb3ba8573821b09b` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 ## 1. معمارية البناء والتوزيع (`Windows x64 Packaging Architecture`)
 
@@ -39,8 +39,8 @@
      - `Phase 4 & Phase 5`: تشغيل اختبار دورة الحياة المستقل `test_main_entrypoint_dynamic_camera_lifecycle.py` (`10` خطوات عبر `main()`) و`test_ai_lab_integration.py --require-real-models`، ثم تجميع الحزمة النهائية وحساب بصمات `SHA-256`.
    * **الاختبارات الميدانية المؤجلة لما بعد استخراج Artifacts (`Post-CI Field & Hardware Acceptance`)**:
      - اختبار الكاميرات الفيزيائية الحقيقية (`INT-HW-RTSP-USB` على كاميرات IP وUSB فعلية)، ومعايرة المسافات الميدانية (`Field Calibration`)، واختبار الاستقرار الميداني المتواصل لمدة ساعتين (`Two-Hour Field Soak`).
-5. **التحقق الذاتي الشامل (`52 / 52 PASS`) دون تنفيذ أي رفع أو تشغيل سحابي قبل موافقة المستخدم**:
-   * تم التحقق من جميع المسارات والسيناريوهات السلبية والإيجابية عبر `python3 tools/deploy_and_run_github_actions.py --self-test` واجتاز **`52 / 52 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
+5. **التحقق الذاتي الشامل (`56 / 56 PASS`) دون تنفيذ أي رفع أو تشغيل سحابي قبل موافقة المستخدم**:
+   * تم التحقق من جميع المسارات والسيناريوهات السلبية والإيجابية عبر `python3 tools/deploy_and_run_github_actions.py --self-test` واجتاز **`56 / 56 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
 
 6. **توحيد مساري `BAT` و`Python` وإزالة دفع الأوسمة والتحصين المغلق عند الفشل (`BUG-40` إلى `BUG-51`)**:
    * **`BUG-40` & توحيد `BAT`/`Python`**: تحويل `PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` و`PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat` إلى واجهات تشغيل رقيقة (`Thin Wrappers`) تستدعي `python -u tools\deploy_and_run_github_actions.py --live --branch "%TARGET_BRANCH%"` دون أي `git push` مباشر أو دفع للأوسمة (`refs/tags/*`, `--tags`, `--all`) ودون إخفاء الأخطاء (`>nul 2>&1`). (ملاحظة: تم التحقق من بنية ملفي `.bat` برمجياً في حاوية Linux، بينما يتطلب تنفيذهما التفاعلي بيئة Windows فعلية).

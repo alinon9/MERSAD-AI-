@@ -61,6 +61,7 @@ ALLOWED_DEPLOY_BRANCHES = (
 DEFAULT_TARGET_BRANCH = "fix/preview-0.1-postbuild-42273598736"
 TARGET_BRANCH = DEFAULT_TARGET_BRANCH
 
+EXPECTED_AI_BUG52_PARENT_SHA = "62b409e2327b86ad0720a526cb3ba8573821b09b"
 EXPECTED_AI_BUG50_51_PARENT_SHA = "de55bcc519366da996e6086d48005f9ad8eafa2a"
 EXPECTED_AI_BUG46_49_PARENT_SHA = "eaf89c71b3b54de14a1c64bf862bb6e6eec321cc"
 EXPECTED_AI_BUG40_45_PARENT_SHA = "850fbdb450ba98e09994c6b6b01b84e1a5e65fe6"
@@ -73,15 +74,14 @@ EXPECTED_AI_RELEASE_BASE_SHA = "25131918a981ac2ac37923d4c738d9f93cdcbc5b"
 EXPECTED_LAB_CODE_SHA = "748ac0158761812a6fff63ff6fe626b9df8c252b"
 EXPECTED_LAB_RELEASE_BASE_SHA = "e9284356f4d1a8205946d5893121c6f8a2f22012"
 
-# Two-tier main SHA constants (ARGON / BUG-52 Live GitHub Preflight Reconciliation):
-#   - EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA: offline main snapshot inside mersad_preview_0_1_verifiable_history.bundle
-#   - EXPECTED_LIVE_GITHUB_MAIN_SHA: actual live refs/heads/main on https://github.com/alinon9/MERSAD-AI-
+# Strict separation between offline bundle snapshot SHA and live GitHub main SHA (ARGON / BUG-53):
+#   - EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA: used EXCLUSIVELY for local Git Bundle snapshot integrity verification.
+#   - EXPECTED_LIVE_GITHUB_MAIN_SHA: used EXCLUSIVELY for actual remote refs/heads/main verification.
+#   - ALLOWED_REMOTE_MAIN_SHAS: contains ONLY EXPECTED_LIVE_GITHUB_MAIN_SHA (never the offline bundle snapshot SHA).
 EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA = "25c9e5bba30dc8f921675e12c23a53571be895c1"
-EXPECTED_MAIN_SHA = EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
 EXPECTED_LIVE_GITHUB_MAIN_SHA = "38a09da9854bcf276386391c5a06c2706bb119c3"
 ALLOWED_REMOTE_MAIN_SHAS = (
     EXPECTED_LIVE_GITHUB_MAIN_SHA,
-    EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA,
 )
 EXPECTED_LIVE_REMOTE_RELEASE_BRANCH_SHA = "b8196e3528d5d6082ea866a46e1cccd1bff5f253"
 EXPECTED_LAB_MAIN_SHA = "1c56dcbf77d62b8d89863e04f215e12f162e9555"
@@ -1132,6 +1132,10 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA, "HEAD"],
             capture_output=True,
         ).returncode
+        anc_62b4_rc = subprocess.run(
+            ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG52_PARENT_SHA, "HEAD"],
+            capture_output=True,
+        ).returncode
         anc_de55_rc = subprocess.run(
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG50_51_PARENT_SHA, "HEAD"],
             capture_output=True,
@@ -1160,20 +1164,23 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         and anc_edaf_rc == 0
         and anc_05f2_rc == 0
         and anc_a1c5_rc == 0
+        and anc_62b4_rc == 0
         and anc_de55_rc == 0
         and anc_eaf8_rc == 0
         and anc_850f_rc == 0
         and lifecycle_in_commit
         and sim_engine_sha_ok
         and len(present_17_paths) == 17
-        and main_sha == EXPECTED_MAIN_SHA
+        and main_sha == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
     )
     return {
         "ok": ok,
         "branch": branch,
         "head_sha": head_sha,
+        "previous_bug52_commit_sha": EXPECTED_AI_BUG52_PARENT_SHA,
         "previous_bug50_51_commit_sha": EXPECTED_AI_BUG50_51_PARENT_SHA,
         "previous_bug46_49_commit_sha": EXPECTED_AI_BUG46_49_PARENT_SHA,
+        "descends_from_62b409e2327b": (anc_62b4_rc == 0),
         "descends_from_de55bcc51936": (anc_de55_rc == 0),
         "previous_bug40_45_commit_sha": EXPECTED_AI_BUG40_45_PARENT_SHA,
         "descends_from_eaf89c71b3b5": (anc_eaf8_rc == 0),
@@ -1188,7 +1195,10 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         "sim_engine_synced_in_commit": sim_engine_sha_ok,
         "workflow_paths_summary": "1 Workflow File + 16 Required Paths = 17 Verified Paths",
         "workflow_verified_paths_count": len(present_17_paths),
-        "main_sha": main_sha,
+        "live_github_main_commit": EXPECTED_LIVE_GITHUB_MAIN_SHA,
+        "bundle_main_snapshot_commit": main_sha,
+        "remote_main_verified_pre_push": EXPECTED_LIVE_GITHUB_MAIN_SHA,
+        "remote_main_verified_post_push": None,
         "total_files": len(all_keys),
         "matched_files": len(all_keys) - len(mismatches),
         "mismatches": mismatches,
@@ -1244,7 +1254,10 @@ def execute_deployment(
         "expected_ai_release_base_sha": EXPECTED_AI_RELEASE_BASE_SHA,
         "expected_lab_code_sha": EXPECTED_LAB_CODE_SHA,
         "expected_lab_release_base_sha": EXPECTED_LAB_RELEASE_BASE_SHA,
-        "expected_main_sha": EXPECTED_MAIN_SHA,
+        "live_github_main_commit": EXPECTED_LIVE_GITHUB_MAIN_SHA,
+        "bundle_main_snapshot_commit": EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA,
+        "remote_main_verified_pre_push": None,
+        "remote_main_verified_post_push": None,
         "workflow_file": WORKFLOW_FILE,
         "remote_url": remote_url,
         "polling_config": {
@@ -1337,6 +1350,7 @@ def execute_deployment(
 
         rc, head_sha, err = run_cmd(["git", "rev-parse", "HEAD"], cwd=str(work_repo), env=env)
         required_ancestors = [
+            EXPECTED_AI_BUG52_PARENT_SHA,
             EXPECTED_AI_BUG50_51_PARENT_SHA,
             EXPECTED_AI_BUG46_49_PARENT_SHA,
             EXPECTED_AI_BUG40_45_PARENT_SHA,
@@ -1384,23 +1398,31 @@ def execute_deployment(
 
         pre_remote_main_sha = out_pre_main.split()[0].strip().lower() if out_pre_main.strip() else ""
         report["pre_push_remote_main_sha"] = pre_remote_main_sha or None
-        report["expected_live_github_main_sha"] = EXPECTED_LIVE_GITHUB_MAIN_SHA
-        report["expected_bundle_main_snapshot_sha"] = EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+        report["remote_main_verified_pre_push"] = None
+        report["live_github_main_commit"] = EXPECTED_LIVE_GITHUB_MAIN_SHA
+        report["bundle_main_snapshot_commit"] = EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
 
         if pre_remote_main_sha:
-            if pre_remote_main_sha not in ALLOWED_REMOTE_MAIN_SHAS:
+            if pre_remote_main_sha != EXPECTED_LIVE_GITHUB_MAIN_SHA or pre_remote_main_sha not in ALLOWED_REMOTE_MAIN_SHAS:
                 set_state("PREFLIGHT_FAILED")
+                extra_note = (
+                    " (offline bundle snapshot SHA is NEVER accepted as live remote main)"
+                    if pre_remote_main_sha == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+                    else ""
+                )
                 msg = (
-                    f"Live remote refs/heads/main is at unexpected SHA {pre_remote_main_sha}, "
-                    f"expected one of ALLOWED_REMOTE_MAIN_SHAS={ALLOWED_REMOTE_MAIN_SHAS}"
+                    f"Live remote refs/heads/main is at {pre_remote_main_sha}{extra_note}, "
+                    f"expected approved live GitHub main {EXPECTED_LIVE_GITHUB_MAIN_SHA}. "
+                    "Halting fail-closed before push; a fresh human-reviewed baseline is required."
                 )
                 add_step("preflight_check_remote_main", False, msg)
                 report["error"] = f"REMOTE_MAIN_SHA_MISMATCH: {msg}"
                 return report
+            report["remote_main_verified_pre_push"] = pre_remote_main_sha
             add_step(
                 "preflight_check_remote_main",
                 True,
-                f"Verified remote refs/heads/main at {pre_remote_main_sha} (in ALLOWED_REMOTE_MAIN_SHAS)",
+                f"Verified live remote refs/heads/main at approved SHA {pre_remote_main_sha}",
             )
         elif remote_url == DEFAULT_REMOTE_URL:
             set_state("PREFLIGHT_FAILED")
@@ -1572,12 +1594,14 @@ def execute_deployment(
         )
         post_remote_main_sha = out_post_main.split()[0].strip().lower() if (rc_post_main == 0 and out_post_main.strip()) else ""
         report["post_push_remote_main_sha"] = post_remote_main_sha or None
+        report["remote_main_verified_post_push"] = None
         if rc_post_main != 0 or post_remote_main_sha != pre_remote_main_sha:
             set_state("RUN_FAILED")
             msg = f"Remote refs/heads/main changed after push: pre={pre_remote_main_sha!r}, post={post_remote_main_sha!r} ({err_post_main})"
             add_step("verify_remote_main_untouched_post_push", False, msg)
             report["error"] = f"POST_PUSH_REMOTE_MAIN_MUTATED: {msg}"
             return report
+        report["remote_main_verified_post_push"] = post_remote_main_sha or None
         add_step(
             "verify_remote_main_untouched_post_push",
             True,
@@ -3298,7 +3322,7 @@ console.log("DASHBOARD_7_CASES_OK");
     checks.append(("BUG50_01_ALL_PORTABLE_SOURCE_ZIPS_SYNCHRONIZED_AND_NO_STALE_53ED4AE_ARCHIVE", bug50_zip_parity))
 
     # =========================================================================
-    # ARGON / BUG-52 Regression Tests: Live GitHub Preflight Reconciliation (8 Tests)
+    # ARGON / BUG-52 & BUG-53 Regression Tests: Live GitHub Preflight & Main Provenance (12 Tests)
     # =========================================================================
 
     # ARGON_01: EXPECTED_WORKFLOW_DISPLAY_NAME matches exact `name:` header in .github/workflows/release-mersad-preview-0.1-windows.yml
@@ -3345,20 +3369,40 @@ console.log("DASHBOARD_7_CASES_OK");
     with tempfile.TemporaryDirectory(prefix="mersad_argon_tests_") as tmp_argon:
         ta_p = Path(tmp_argon)
 
-        # Helper to seed a bare remote with a synthetic commit whose SHA or branch represents remote `main`
+        def write_git_live_main_wrapper(bin_dir: Path, main_sha_state_file: Path, mutate_after_push_to: str = ""):
+            """
+            Create a thin git wrapper in `bin_dir` that delegates 100% of git operations to /usr/bin/git,
+            and for `git ls-remote origin refs/heads/main` returns the simulated remote main SHA from `main_sha_state_file`
+            (optionally mutating `main_sha_state_file` after `git push` to test the post-push main immutability guard).
+            """
+            git_wrap = bin_dir / "git"
+            wrap_code = f"""#!/usr/bin/env python3
+import pathlib, subprocess, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{main_sha_state_file}")
+if len(args) >= 3 and args[0] == "ls-remote" and args[-1] == "refs/heads/main":
+    sha_val = sf.read_text().strip() if sf.exists() else ""
+    if sha_val:
+        print(f"{{sha_val}}\trefs/heads/main")
+    sys.exit(0)
+rc = subprocess.call(["/usr/bin/git"] + args)
+if rc == 0 and len(args) >= 1 and args[0] == "push" and "{mutate_after_push_to}":
+    sf.write_text("{mutate_after_push_to}")
+sys.exit(rc)
+"""
+            git_wrap.write_text(wrap_code, encoding="utf-8")
+            git_wrap.chmod(0o755)
+
         bare_argon_live_main = create_fresh_bare_remote(ta_p, "origin_argon_live_main.git")
-        with tempfile.TemporaryDirectory() as td_seed_m:
-            subprocess.run(["git", "clone", "-q", str(bundle), td_seed_m], check=True)
-            # Push bundle's main (25c9e5bba30dc8f921675e12c23a53571be895c1) to refs/heads/main on bare_argon_live_main
-            subprocess.run(["git", "-C", td_seed_m, "push", "-q", str(bare_argon_live_main), f"{EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA}:refs/heads/main"], check=True)
-            # Also push release/mersad-preview-0.1 fork point (2c22280d84a5fcb7b709075f73b3073bcef0aff2)
-            subprocess.run(["git", "-C", td_seed_m, "push", "-q", str(bare_argon_live_main), f"{EXPECTED_AI_COMMON_FORK_POINT_SHA}:refs/heads/release/mersad-preview-0.1"], check=True)
+        main_sha_file_03 = ta_p / "main_sha_03.txt"
+        main_sha_file_03.write_text(EXPECTED_LIVE_GITHUB_MAIN_SHA, encoding="utf-8")
 
         # ARGON_03: Direct filename lookup returns 404 (because workflow is absent from remote main),
         # resolved via /actions/workflows catalog fallback (ID 147631346) while excluding build-mersad-preview-dispatch.yml (ID 147631347),
-        # and verifies remote main pre-push and post-push!
+        # and verifies live remote main (38a09da9854bcf276386391c5a06c2706bb119c3) pre-push and post-push!
         fake_bin_argon_cat = ta_p / "fake_bin_argon_cat"
         fake_bin_argon_cat.mkdir()
+        write_git_live_main_wrapper(fake_bin_argon_cat, main_sha_file_03)
         state_argon_cat = ta_p / "state_argon_cat.txt"
         catalog_json_str = json.dumps({
             "total_count": 2,
@@ -3426,8 +3470,8 @@ sys.exit(1)
             and res_argon_cat.get("workflow_metadata", {}).get("workflow_id") == 147631346
             and res_argon_cat.get("workflow_metadata", {}).get("resolution_mode") == "WORKFLOWS_CATALOG_FALLBACK"
             and len(res_argon_cat.get("workflow_metadata", {}).get("excluded_remote_workflows", [])) == 1
-            and res_argon_cat.get("pre_push_remote_main_sha") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
-            and res_argon_cat.get("post_push_remote_main_sha") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+            and res_argon_cat.get("remote_main_verified_pre_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and res_argon_cat.get("remote_main_verified_post_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
             and res_argon_cat.get("target_branch_creation_mode") == "CREATE_NEW_REMOTE_BRANCH"
         ))
 
@@ -3435,12 +3479,11 @@ sys.exit(1)
         bare_argon_bad_main = create_fresh_bare_remote(ta_p, "origin_argon_bad_main.git")
         with tempfile.TemporaryDirectory() as td_seed_bad_m:
             subprocess.run(["git", "clone", "-q", str(bundle), td_seed_bad_m], check=True)
-            # Push a non-main commit (e.g. EXPECTED_AI_CODE_SHA) to refs/heads/main on bare_argon_bad_main
             subprocess.run(["git", "-C", td_seed_bad_m, "push", "-q", str(bare_argon_bad_main), f"{EXPECTED_AI_CODE_SHA}:refs/heads/main"], check=True)
 
         res_argon_bad_main = execute_deployment(
             bundle, str(bare_argon_bad_main), wf_file,
-            env_override={"PATH": f"{fake_bin_argon_cat}:/usr/bin:/bin"},
+            env_override={"PATH": "/usr/bin:/bin"},
             poll_attempts=1, poll_interval_s=0.0,
         )
         checks.append((
@@ -3573,16 +3616,171 @@ sys.exit(1)
             and "POST_PUSH_WORKFLOW_NOT_REGISTERED_ON_REMOTE" in res_argon_post_timeout.get("error", "")
         ))
 
-        # ARGON_08: Both EXPECTED_LIVE_GITHUB_MAIN_SHA (38a09da9...) and EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA (25c9e5bb...)
-        # are defined in ALLOWED_REMOTE_MAIN_SHAS and verified
+        # ARGON_08: Strict separation between EXPECTED_LIVE_GITHUB_MAIN_SHA (38a09da9...) and EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA (25c9e5bb...)
         checks.append((
             "ARGON_08_TWO_TIER_MAIN_SHA_CONSTANTS_RECONCILED",
             EXPECTED_LIVE_GITHUB_MAIN_SHA == "38a09da9854bcf276386391c5a06c2706bb119c3"
             and EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA == "25c9e5bba30dc8f921675e12c23a53571be895c1"
-            and ALLOWED_REMOTE_MAIN_SHAS == (
-                "38a09da9854bcf276386391c5a06c2706bb119c3",
-                "25c9e5bba30dc8f921675e12c23a53571be895c1",
-            )
+            and ALLOWED_REMOTE_MAIN_SHAS == ("38a09da9854bcf276386391c5a06c2706bb119c3",)
+            and EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA not in ALLOWED_REMOTE_MAIN_SHAS
+        ))
+
+        # =====================================================================
+        # BUG-53 Mandatory Regression Tests (ARGON_09 .. ARGON_12)
+        # =====================================================================
+
+        # ARGON_09_BUNDLE_SNAPSHOT_MUST_NOT_BE_ACCEPTED_AS_LIVE_MAIN:
+        # Simulate remote main at 25c9e5bba30dc8f921675e12c23a53571be895c1 -> expect preflight rejection & push_executed=False
+        bare_argon_09 = create_fresh_bare_remote(ta_p, "origin_argon_09_bundle_main.git")
+        with tempfile.TemporaryDirectory() as td_seed_09:
+            subprocess.run(["git", "clone", "-q", str(bundle), td_seed_09], check=True)
+            subprocess.run(["git", "-C", td_seed_09, "push", "-q", str(bare_argon_09), f"{EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA}:refs/heads/main"], check=True)
+
+        res_argon_09 = execute_deployment(
+            bundle, str(bare_argon_09), wf_file,
+            env_override={"PATH": "/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+        )
+        checks.append((
+            "ARGON_09_BUNDLE_SNAPSHOT_MUST_NOT_BE_ACCEPTED_AS_LIVE_MAIN",
+            res_argon_09["status"] == "PREFLIGHT_FAILED"
+            and res_argon_09["push_executed"] is False
+            and res_argon_09["build_triggered"] is False
+            and res_argon_09.get("pre_push_remote_main_sha") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+            and res_argon_09.get("remote_main_verified_pre_push") is None
+            and "REMOTE_MAIN_SHA_MISMATCH" in res_argon_09.get("error", "")
+        ))
+
+        # ARGON_10_EXPECTED_LIVE_MAIN_ACCEPTED:
+        # Simulate remote main at 38a09da9854bcf276386391c5a06c2706bb119c3 -> verify expected preflight acceptance
+        bare_argon_10 = create_fresh_bare_remote(ta_p, "origin_argon_10_live_main.git")
+        if state_argon_cat.exists():
+            state_argon_cat.unlink()
+        main_sha_file_03.write_text(EXPECTED_LIVE_GITHUB_MAIN_SHA, encoding="utf-8")
+        res_argon_10 = execute_deployment(
+            bundle, str(bare_argon_10), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_cat}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0, settling_polls=2, settling_interval_s=0.0,
+            artifacts_base_dir=ta_p,
+        )
+        checks.append((
+            "ARGON_10_EXPECTED_LIVE_MAIN_ACCEPTED",
+            res_argon_10["status"] == "PASS"
+            and "PREFLIGHT_PASS" in res_argon_10.get("state_history", [])
+            and res_argon_10.get("live_github_main_commit") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and res_argon_10.get("bundle_main_snapshot_commit") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+            and res_argon_10.get("remote_main_verified_pre_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and res_argon_10.get("remote_main_verified_post_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+        ))
+
+        # ARGON_11_PROVENANCE_FIELDS_ARE_UNAMBIGUOUS:
+        # Validate all relevant manifests, JSON files, and reports; reject any assertion that live main is 25c9e5...
+        mf_check_ok = True
+        for mf_rel in [
+            "MANIFEST.json",
+            "SOURCE_TREE_MANIFEST.json",
+            "RELEASE_DELIVERABLES/PREVIEW_0.1/MANIFEST.json",
+            "RELEASE_DELIVERABLES/PREVIEW_0.1/SOURCE_TREE_MANIFEST.json",
+        ]:
+            mf_p = repo_root / mf_rel
+            if not mf_p.is_file():
+                mf_check_ok = False
+                break
+            mf_d = json.loads(mf_p.read_text(encoding="utf-8"))
+            ai_c = mf_d.get("mersad_ai_commits", {})
+            if (
+                ai_c.get("live_github_main_commit") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                or ai_c.get("bundle_main_snapshot_commit") != EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+                or ai_c.get("remote_main_verified_pre_push") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                or ai_c.get("remote_main_verified_post_push") is not None
+                or "main_branch_untouched_commit" in ai_c
+            ):
+                mf_check_ok = False
+
+        for bm_rel in ["BUNDLE_MANIFEST.json", "RELEASE_DELIVERABLES/PREVIEW_0.1/BUNDLE_MANIFEST.json"]:
+            bm_p_chk = repo_root / bm_rel
+            if bm_p_chk.is_file():
+                bm_d = json.loads(bm_p_chk.read_text(encoding="utf-8"))
+                if (
+                    bm_d.get("live_github_main_commit") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                    or bm_d.get("bundle_main_snapshot_commit") != EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+                    or bm_d.get("remote_main_verified_pre_push") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                    or bm_d.get("remote_main_verified_post_push") is not None
+                ):
+                    mf_check_ok = False
+
+        for tr_rel in ["TEST_RESULTS.json", "RELEASE_DELIVERABLES/PREVIEW_0.1/TEST_RESULTS.json"]:
+            tr_p_chk = repo_root / tr_rel
+            if not tr_p_chk.is_file():
+                mf_check_ok = False
+                break
+            tr_d = json.loads(tr_p_chk.read_text(encoding="utf-8"))
+            tr_c = tr_d.get("commits", {})
+            tr_gb = tr_c.get("mersad_ai_rollback_tags", {})
+            if (
+                tr_c.get("live_github_main_commit") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                or tr_c.get("bundle_main_snapshot_commit") != EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+                or tr_c.get("remote_main_verified_pre_push") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                or tr_c.get("remote_main_verified_post_push") is not None
+                or tr_gb.get("live_github_main_commit") != EXPECTED_LIVE_GITHUB_MAIN_SHA
+                or tr_gb.get("bundle_main_snapshot_commit") != EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+                or "main_untouched" in tr_gb
+            ):
+                mf_check_ok = False
+
+        # Scan all Markdown reports to ensure 25c9e5bba30dc8f921675e12c23a53571be895c1 is never claimed as live untouched main
+        ambiguous_md_occurrences = []
+        for md_p in list(repo_root.glob("*.md")) + list((repo_root / "RELEASE_DELIVERABLES" / "PREVIEW_0.1").glob("*.md")) + list((repo_root / "reports_and_logs").glob("*.md")):
+            md_t = md_p.read_text(encoding="utf-8")
+            for idx_ln, ln_str in enumerate(md_t.splitlines(), 1):
+                if EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA in ln_str:
+                    # Any line mentioning 25c9e5... must identify it as bundle/offline snapshot or BUG-52/53 historical context, never as "الفرع الرئيسي main غير الممسوس: 25c9e5"
+                    if (
+                        "الفرع الرئيسي `main` غير الممسوس**: `25c9e5b" in ln_str
+                        or "الفرع الرئيسي (`main`)**: `25c9e5b" in ln_str
+                        or "| `main` (محفوظ دون أي تعديل) | `25c9e5b" in ln_str
+                        or "- `main` (الأرشيف الأصلي غير الممسوس) -> `25c9e5b" in ln_str
+                    ):
+                        ambiguous_md_occurrences.append(f"{md_p.name}:{idx_ln}")
+
+        checks.append((
+            "ARGON_11_PROVENANCE_FIELDS_ARE_UNAMBIGUOUS",
+            mf_check_ok
+            and ai_prov.get("live_github_main_commit") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and ai_prov.get("bundle_main_snapshot_commit") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+            and ai_prov.get("remote_main_verified_pre_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and ai_prov.get("remote_main_verified_post_push") is None
+            and "main_sha" not in ai_prov
+            and len(ambiguous_md_occurrences) == 0
+        ))
+
+        # ARGON_12_MAIN_UNCHANGED_POST_PUSH_GUARD:
+        # Verify that if remote refs/heads/main changes after git push, deployment aborts with RUN_FAILED (POST_PUSH_REMOTE_MAIN_MUTATED)
+        bare_argon_12 = create_fresh_bare_remote(ta_p, "origin_argon_12_post_mut.git")
+        fake_bin_argon_12 = ta_p / "fake_bin_argon_12"
+        fake_bin_argon_12.mkdir()
+        main_sha_file_12 = ta_p / "main_sha_12.txt"
+        main_sha_file_12.write_text(EXPECTED_LIVE_GITHUB_MAIN_SHA, encoding="utf-8")
+        write_git_live_main_wrapper(
+            fake_bin_argon_12,
+            main_sha_file_12,
+            mutate_after_push_to="9999999999999999999999999999999999999999",
+        )
+        shutil.copy2(fake_bin_argon_cat / "gh", fake_bin_argon_12 / "gh")
+        (fake_bin_argon_12 / "gh").chmod(0o755)
+        res_argon_12_mut = execute_deployment(
+            bundle, str(bare_argon_12), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_12}:/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+        )
+        checks.append((
+            "ARGON_12_MAIN_UNCHANGED_POST_PUSH_GUARD",
+            res_argon_10.get("remote_main_verified_pre_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and res_argon_10.get("remote_main_verified_post_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and res_argon_12_mut["status"] == "RUN_FAILED"
+            and res_argon_12_mut.get("remote_main_verified_pre_push") == EXPECTED_LIVE_GITHUB_MAIN_SHA
+            and res_argon_12_mut.get("remote_main_verified_post_push") is None
+            and "POST_PUSH_REMOTE_MAIN_MUTATED" in res_argon_12_mut.get("error", "")
         ))
 
     all_ok = all(ok for _, ok in checks)
