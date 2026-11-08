@@ -3,7 +3,7 @@
   "active_branch": "fix/preview-0.1-postbuild-42273598736",
   "release_baseline_branch": "release/mersad-preview-0.1",
   "commits": {
-    "mersad_ai_fix_branch_head_commit": "New verified HEAD directly above eaf89c71b3b54de14a1c64bf862bb6e6eec321cc",
+    "mersad_ai_fix_branch_head_commit": "New verified HEAD directly above de55bcc519366da996e6086d48005f9ad8eafa2a",
     "mersad_ai_reconciled_code_commit": "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5",
     "mersad_ai_reconciled_code_tag": "v0.1.1-postbuild-reconciled-code",
     "mersad_ai_initial_postbuild_42273598736_code_commit": "d965d71317e3506e5dce9d316dc81cb8ae45e43b",
@@ -32,14 +32,18 @@
       "main_untouched": "1c56dcbf77d62b8d89863e04f215e12f162e9555"
     },
     "mersad_ai_233_pass_checkpoint_commit": "7f35cb1007a229a72ac0cd1be61fd5a81eb891bd",
-    "mersad_ai_current_branch_head_description": "New verified HEAD directly above eaf89c71b3b54de14a1c64bf862bb6e6eec321cc (fix(release,security): enforce recursive nested archive verification, eliminate stale portable zip, and reconcile provenance (BUG-50..51))",
+    "mersad_ai_current_branch_head_description": "New verified HEAD directly above de55bcc519366da996e6086d48005f9ad8eafa2a (fix(ci,preflight): reconcile live GitHub remote-main verification and workflow metadata resolution (BUG-52))",
     "mersad_ai_previous_preflight_commit": "05f29af416c4a28ddf59c291819584d1a416d570",
     "mersad_ai_previous_preflight_tag": "v0.1.2-windows-ci-preflight-ready",
     "mersad_ai_previous_single_run_ci_commit": "a1c53f32ff3c5c9ab995de2672ff29f2de13ea38",
     "mersad_ai_previous_bug40_45_commit": "850fbdb450ba98e09994c6b6b01b84e1a5e65fe6",
     "mersad_ai_previous_bug46_49_commit": "eaf89c71b3b54de14a1c64bf862bb6e6eec321cc",
     "mersad_ai_previous_bug46_49_subject": "fix(ci,security): remediate legacy push bat, enforce real gh api pagination, workflow identity, and branch allowlist (BUG-46..49)",
-    "mersad_ai_previous_bug40_45_subject": "fix(ci,ui): harden fail-closed deployment, settling window, and dashboard readiness (BUG-40..45)"
+    "mersad_ai_previous_bug40_45_subject": "fix(ci,ui): harden fail-closed deployment, settling window, and dashboard readiness (BUG-40..45)",
+    "mersad_ai_previous_bug50_51_commit": "de55bcc519366da996e6086d48005f9ad8eafa2a",
+    "mersad_ai_previous_bug50_51_subject": "fix(release,security): enforce recursive nested archive verification, eliminate stale portable zip, and reconcile provenance (BUG-50..51)",
+    "mersad_ai_live_github_main_commit": "38a09da9854bcf276386391c5a06c2706bb119c3",
+    "mersad_ai_bundle_main_snapshot_commit": "25c9e5bba30dc8f921675e12c23a53571be895c1"
   },
   "git_bundles_verification": {
     "ai_bundle_path": "reports_and_logs/mersad_preview_0_1_verifiable_history.bundle",
@@ -105,8 +109,8 @@
       "log": "reports_and_logs/logs/10_preview01_ai_lab_integration_real_engine.log"
     },
     "deployment_and_provenance_self_test": {
-      "passed": 44,
-      "total": 44,
+      "passed": 52,
+      "total": 52,
       "status": "PASS",
       "log": "reports_and_logs/logs/15_github_actions_deployment_attempt.log"
     }
@@ -234,7 +238,7 @@
       "id": "MAT-10",
       "suite": "Fail-Closed Push CI, Settling Window, Remote SHA Guard, Dashboard Scorecard & Provenance Self-Test (deploy_and_run_github_actions.py --self-test — Simulated Local Bare Remote)",
       "status": "PASS",
-      "passed": 44,
+      "passed": 52,
       "failed": 0,
       "not_tested": 0,
       "blocked": 0,
@@ -2091,8 +2095,8 @@
       }
     ]
   },
-  "bugs_closed_count": 45,
-  "bugs_closed_range": "BUG-01..BUG-45",
+  "bugs_closed_count": 52,
+  "bugs_closed_range": "BUG-01..BUG-52",
   "historical_selftest_progression": [
     {
       "commit": "3bf86f1eee49b351ac1dcf4e630c149e7d38b777",
@@ -2258,7 +2262,7 @@
       "plaintext_legacy_example_password_occurrences_in_bundle": 0,
       "protection_mechanism": "Regex + SHA-256 token guard in tools/verify_release_bundle_integrity.py detects any unredacted RTSP password or __TEST_SECRET_CANARY__ leak in documentation while allowing <REDACTED_TEST_PASSWORD> and ***."
     },
-    "mersad_ai_current_branch_head_parent": "eaf89c71b3b54de14a1c64bf862bb6e6eec321cc",
+    "mersad_ai_current_branch_head_parent": "de55bcc519366da996e6086d48005f9ad8eafa2a",
     "post_commit_generated_release_artifacts_layer": {
       "description": "Generated immediately after creating the local Git commit to prevent circular SHA-256 self-reference",
       "files": [
@@ -2536,5 +2540,23 @@
       "unified_verdict": "READY FOR USER-APPROVED PUSH",
       "status": "PASS"
     }
+  },
+  "remediation_bug52_argon_live_github_preflight": {
+    "local_bundle_main_snapshot_sha": "25c9e5bba30dc8f921675e12c23a53571be895c1",
+    "live_github_main_sha": "38a09da9854bcf276386391c5a06c2706bb119c3",
+    "live_github_release_branch_sha": "b8196e3528d5d6082ea866a46e1cccd1bff5f253",
+    "common_release_fork_point_sha": "2c22280d84a5fcb7b709075f73b3073bcef0aff2",
+    "target_branch_exists_on_remote_pre_push": false,
+    "target_branch_creation_mode": "CREATE_NEW_REMOTE_BRANCH",
+    "required_workflow_path": ".github/workflows/release-mersad-preview-0.1-windows.yml",
+    "required_workflow_id_on_live_github": 147631346,
+    "required_workflow_display_name": "Build & Verify MERSAD PREVIEW 0.1 Final Windows x64 Release",
+    "forbidden_dispatch_workflow_path_on_main": ".github/workflows/build-mersad-preview-dispatch.yml",
+    "forbidden_dispatch_workflow_id_on_live_github": 147631347,
+    "two_tier_main_verification_enabled": true,
+    "workflows_catalog_fallback_enabled": true,
+    "two_phase_new_branch_workflow_resolution_enabled": true,
+    "deployment_self_tests_passed": "52/52 PASS",
+    "status": "PASS"
   }
 }

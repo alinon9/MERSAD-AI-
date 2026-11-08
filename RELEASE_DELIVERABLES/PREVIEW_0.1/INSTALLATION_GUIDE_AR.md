@@ -1,5 +1,5 @@
 # 8. دليل التثبيت والتشغيل الشامل باللغة العربية — `INSTALLATION_GUIDE_AR.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above eaf89c71b3b54de14a1c64bf862bb6e6eec321cc` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` — `AI Current Branch HEAD`: `New verified HEAD directly above de55bcc519366da996e6086d48005f9ad8eafa2a` | `AI Runtime Code Commit`: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | `LAB HEAD`: `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 # منظومة مرصاد الذكي ومختبر الكاميرات — `MERSAD AI — PREVIEW 0.1`
 ## الإصدار التجريبي الموحد لنظام Windows 10/11 x64

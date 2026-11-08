@@ -61,21 +61,50 @@ ALLOWED_DEPLOY_BRANCHES = (
 DEFAULT_TARGET_BRANCH = "fix/preview-0.1-postbuild-42273598736"
 TARGET_BRANCH = DEFAULT_TARGET_BRANCH
 
+EXPECTED_AI_BUG50_51_PARENT_SHA = "de55bcc519366da996e6086d48005f9ad8eafa2a"
 EXPECTED_AI_BUG46_49_PARENT_SHA = "eaf89c71b3b54de14a1c64bf862bb6e6eec321cc"
 EXPECTED_AI_BUG40_45_PARENT_SHA = "850fbdb450ba98e09994c6b6b01b84e1a5e65fe6"
 EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA = "a1c53f32ff3c5c9ab995de2672ff29f2de13ea38"
 EXPECTED_AI_PREFLIGHT_PARENT_SHA = "05f29af416c4a28ddf59c291819584d1a416d570"
 EXPECTED_AI_CODE_SHA = "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5"
 EXPECTED_AI_PREV_FIX_SHA = "d965d71317e3506e5dce9d316dc81cb8ae45e43b"
+EXPECTED_AI_COMMON_FORK_POINT_SHA = "2c22280d84a5fcb7b709075f73b3073bcef0aff2"
 EXPECTED_AI_RELEASE_BASE_SHA = "25131918a981ac2ac37923d4c738d9f93cdcbc5b"
 EXPECTED_LAB_CODE_SHA = "748ac0158761812a6fff63ff6fe626b9df8c252b"
 EXPECTED_LAB_RELEASE_BASE_SHA = "e9284356f4d1a8205946d5893121c6f8a2f22012"
-EXPECTED_MAIN_SHA = "25c9e5bba30dc8f921675e12c23a53571be895c1"
+
+# Two-tier main SHA constants (ARGON / BUG-52 Live GitHub Preflight Reconciliation):
+#   - EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA: offline main snapshot inside mersad_preview_0_1_verifiable_history.bundle
+#   - EXPECTED_LIVE_GITHUB_MAIN_SHA: actual live refs/heads/main on https://github.com/alinon9/MERSAD-AI-
+EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA = "25c9e5bba30dc8f921675e12c23a53571be895c1"
+EXPECTED_MAIN_SHA = EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+EXPECTED_LIVE_GITHUB_MAIN_SHA = "38a09da9854bcf276386391c5a06c2706bb119c3"
+ALLOWED_REMOTE_MAIN_SHAS = (
+    EXPECTED_LIVE_GITHUB_MAIN_SHA,
+    EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA,
+)
+EXPECTED_LIVE_REMOTE_RELEASE_BRANCH_SHA = "b8196e3528d5d6082ea866a46e1cccd1bff5f253"
 EXPECTED_LAB_MAIN_SHA = "1c56dcbf77d62b8d89863e04f215e12f162e9555"
 
 WORKFLOW_FILE = "release-mersad-preview-0.1-windows.yml"
 WORKFLOW_DEFINITION_PATH = f".github/workflows/{WORKFLOW_FILE}"
-EXPECTED_WORKFLOW_DISPLAY_NAME = "MERSAD PREVIEW 0.1 — Official Windows 10/11 x64 Release Build & Verification"
+EXPECTED_WORKFLOW_DISPLAY_NAME = "Build & Verify MERSAD PREVIEW 0.1 Final Windows x64 Release"
+EXPECTED_LIVE_GITHUB_WORKFLOW_ID = 147631346
+FORBIDDEN_DISPATCH_WORKFLOW_PATH = ".github/workflows/build-mersad-preview-dispatch.yml"
+FORBIDDEN_DISPATCH_WORKFLOW_ID = 147631347
+FORBIDDEN_WORKFLOW_PATHS = (
+    ".github/workflows/build-mersad-preview-dispatch.yml",
+    ".github/workflows/build-mersad-windows.yml",
+    ".github/workflows/windows-build.yml",
+    ".github/workflows/build-mersad-lab-exe.yml",
+    ".github/workflows/export-mersad-source.yml",
+)
+FORBIDDEN_WORKFLOW_NAMES = (
+    "Build MERSAD PREVIEW 0.1 Windows x64",
+    "Build MERSAD AI Windows EXE",
+    "Build MERSAD LAB Windows EXE",
+    "Export MERSAD AI V7.1 patched source",
+)
 DEFAULT_REMOTE_URL = "https://github.com/alinon9/MERSAD-AI-.git"
 DEFAULT_GITHUB_REPO = "alinon9/MERSAD-AI-"
 
@@ -194,52 +223,12 @@ def parse_iso8601_utc(ts_str: str):
         return None
 
 
-def resolve_workflow_metadata_fail_closed(
-    gh_bin: str,
-    work_repo: Path,
-    env: dict,
-    github_repo: str = DEFAULT_GITHUB_REPO,
-    workflow_file: str = WORKFLOW_FILE,
-) -> dict:
-    """
-    Resolve authoritative workflow metadata (`id`, `path`, `name`, `state`) via GitHub REST API (BUG-48):
-      `gh api -X GET repos/{github_repo}/actions/workflows/{workflow_file}`
-    Fails closed if the command fails, returns invalid JSON, or does not match `.github/workflows/{workflow_file}`.
-    """
-    expected_path = f".github/workflows/{workflow_file}"
-    endpoint = f"repos/{github_repo}/actions/workflows/{workflow_file}"
-    rc, out, err = run_cmd([gh_bin, "api", "-X", "GET", endpoint], cwd=str(work_repo), env=env)
-    if rc != 0:
-        combined = f"{err} {out}".strip()
-        low = combined.lower()
-        err_prefix = "GH_API_WORKFLOW_META_EXIT"
-        if "401" in low or "403" in low or "forbidden" in low or "unauthorized" in low:
-            err_prefix = "GH_API_HTTP_401_403_AUTH_ERROR"
-        elif "429" in low or "rate limit" in low:
-            err_prefix = "GH_API_HTTP_429_RATE_LIMIT_ERROR"
-        return {
-            "ok": False,
-            "error": f"{err_prefix}_{rc}: Failed to query workflow metadata ({endpoint}): {combined or 'non-zero exit'}",
-        }
-
-    if not out or not out.strip():
-        return {
-            "ok": False,
-            "error": f"GH_API_WORKFLOW_META_EMPTY_STDOUT: Empty response from {endpoint}",
-        }
-
-    try:
-        meta = json.loads(out)
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error": f"GH_API_WORKFLOW_META_INVALID_JSON: {exc}",
-        }
-
+def _validate_single_workflow_meta_obj(meta: dict, expected_path: str, endpoint_desc: str) -> dict:
+    """Validate a single GitHub Actions workflow metadata JSON object fail-closed."""
     if not isinstance(meta, dict):
         return {
             "ok": False,
-            "error": f"GH_API_WORKFLOW_META_INVALID_TYPE: Expected JSON object, got {type(meta).__name__}",
+            "error": f"GH_API_WORKFLOW_META_INVALID_TYPE: Expected JSON object from {endpoint_desc}, got {type(meta).__name__}",
         }
 
     raw_wf_id = meta.get("id")
@@ -253,6 +242,11 @@ def resolve_workflow_metadata_fail_closed(
         return {"ok": False, "error": f"GH_API_WORKFLOW_META_NONPOSITIVE_ID: {wf_id}"}
 
     wf_path = str(meta.get("path") or "").strip()
+    if wf_path in FORBIDDEN_WORKFLOW_PATHS:
+        return {
+            "ok": False,
+            "error": f"GH_API_FORBIDDEN_WORKFLOW_PATH: {wf_path!r} is a forbidden dispatch/legacy workflow",
+        }
     if wf_path != expected_path:
         return {
             "ok": False,
@@ -262,6 +256,11 @@ def resolve_workflow_metadata_fail_closed(
     wf_name = str(meta.get("name") or "").strip()
     if not wf_name:
         return {"ok": False, "error": "GH_API_WORKFLOW_META_MISSING_NAME: Workflow metadata is missing 'name'"}
+    if wf_name in FORBIDDEN_WORKFLOW_NAMES:
+        return {
+            "ok": False,
+            "error": f"GH_API_FORBIDDEN_WORKFLOW_NAME: {wf_name!r} belongs to a forbidden workflow",
+        }
 
     wf_state = str(meta.get("state") or "active").strip().lower()
     if wf_state != "active":
@@ -274,7 +273,151 @@ def resolve_workflow_metadata_fail_closed(
         "path": wf_path,
         "name": wf_name,
         "state": wf_state,
-        "endpoint": endpoint,
+        "endpoint": endpoint_desc,
+    }
+
+
+def resolve_workflow_metadata_fail_closed(
+    gh_bin: str,
+    work_repo: Path,
+    env: dict,
+    github_repo: str = DEFAULT_GITHUB_REPO,
+    workflow_file: str = WORKFLOW_FILE,
+    allow_deferred_pre_push: bool = False,
+) -> dict:
+    """
+    Resolve authoritative workflow metadata (`id`, `path`, `name`, `state`) via GitHub REST API (BUG-48 & BUG-52 / ARGON):
+      1. Primary lookup: `gh api -X GET repos/{github_repo}/actions/workflows/{workflow_file}`.
+      2. Catalog fallback (when `.github/workflows/{workflow_file}` is absent from remote `main` so filename lookup
+         returns HTTP 404): queries `gh api -X GET "repos/{github_repo}/actions/workflows?per_page=100&page=1"`,
+         audits and excludes non-target workflows (such as `.github/workflows/build-mersad-preview-dispatch.yml`,
+         `id=147631347`), and resolves the workflow whose `path == ".github/workflows/{workflow_file}"`
+         (e.g. `id=147631346`).
+      3. Two-phase pre-push handling for brand-new branch workflows (`allow_deferred_pre_push=True` ONLY when
+         `pre_push_remote_sha is None` before pushing a new branch): if `/actions/workflows` returns 200 OK valid JSON
+         but `.github/workflows/{workflow_file}` has never been pushed to any remote branch yet, returns
+         `deferred_until_branch_push=True` so preflight can proceed to `git push`, after which post-push polling MUST
+         resolve authoritative workflow metadata (`allow_deferred_pre_push=False`) before any run is inspected or accepted.
+    """
+    expected_path = f".github/workflows/{workflow_file}"
+    endpoint = f"repos/{github_repo}/actions/workflows/{workflow_file}"
+    rc, out, err = run_cmd([gh_bin, "api", "-X", "GET", endpoint], cwd=str(work_repo), env=env)
+    if rc == 0:
+        if not out or not out.strip():
+            return {
+                "ok": False,
+                "error": f"GH_API_WORKFLOW_META_EMPTY_STDOUT: Empty response from {endpoint}",
+            }
+        try:
+            meta = json.loads(out)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"GH_API_WORKFLOW_META_INVALID_JSON: {exc}",
+            }
+        res = _validate_single_workflow_meta_obj(meta, expected_path, endpoint)
+        if res["ok"]:
+            res["resolution_mode"] = "DIRECT_WORKFLOW_ENDPOINT"
+            res["deferred_until_branch_push"] = False
+            res["excluded_remote_workflows"] = []
+        return res
+
+    combined = f"{err} {out}".strip()
+    low = combined.lower()
+    if "401" in low or "403" in low or "forbidden" in low or "unauthorized" in low:
+        return {
+            "ok": False,
+            "error": f"GH_API_HTTP_401_403_AUTH_ERROR_{rc}: Failed to query workflow metadata ({endpoint}): {combined or 'auth error'}",
+        }
+    if "429" in low or "rate limit" in low:
+        return {
+            "ok": False,
+            "error": f"GH_API_HTTP_429_RATE_LIMIT_ERROR_{rc}: Failed to query workflow metadata ({endpoint}): {combined or 'rate limit'}",
+        }
+
+    # If the direct filename lookup returned 404 / not found (because the workflow is absent from remote main),
+    # query the repository workflow catalog endpoint `repos/{github_repo}/actions/workflows?per_page=100&page=1`.
+    if "404" in low or "not found" in low:
+        catalog_ep = f"repos/{github_repo}/actions/workflows?per_page=100&page=1"
+        rc_cat, out_cat, err_cat = run_cmd([gh_bin, "api", "-X", "GET", catalog_ep], cwd=str(work_repo), env=env)
+        if rc_cat != 0:
+            comb_cat = f"{err_cat} {out_cat}".strip()
+            return {
+                "ok": False,
+                "error": (
+                    f"GH_API_WORKFLOW_META_EXIT_{rc}: Direct lookup ({endpoint}) returned 404 and catalog lookup "
+                    f"({catalog_ep}) failed (exit={rc_cat}): {comb_cat or combined}"
+                ),
+            }
+        if not out_cat or not out_cat.strip():
+            return {
+                "ok": False,
+                "error": f"GH_API_WORKFLOW_CATALOG_EMPTY_STDOUT: Empty response from {catalog_ep}",
+            }
+        try:
+            cat_data = json.loads(out_cat)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"GH_API_WORKFLOW_CATALOG_INVALID_JSON: {exc}",
+            }
+        if not isinstance(cat_data, dict) or not isinstance(cat_data.get("workflows"), list):
+            return {
+                "ok": False,
+                "error": f"GH_API_WORKFLOW_CATALOG_INVALID_SCHEMA: Expected dict with 'workflows' list from {catalog_ep}",
+            }
+
+        excluded_workflows = []
+        matched_wf_obj = None
+        for wf_item in cat_data["workflows"]:
+            if not isinstance(wf_item, dict):
+                continue
+            item_path = str(wf_item.get("path") or "").strip()
+            item_id = wf_item.get("id")
+            item_name = str(wf_item.get("name") or "").strip()
+            if item_path == expected_path:
+                matched_wf_obj = wf_item
+            else:
+                excluded_workflows.append({
+                    "id": item_id,
+                    "name": item_name,
+                    "path": item_path,
+                    "state": wf_item.get("state"),
+                })
+
+        if matched_wf_obj is not None:
+            res = _validate_single_workflow_meta_obj(matched_wf_obj, expected_path, catalog_ep)
+            if res["ok"]:
+                res["resolution_mode"] = "WORKFLOWS_CATALOG_FALLBACK"
+                res["deferred_until_branch_push"] = False
+                res["excluded_remote_workflows"] = excluded_workflows
+            return res
+
+        if allow_deferred_pre_push:
+            return {
+                "ok": True,
+                "error": None,
+                "workflow_id": None,
+                "path": expected_path,
+                "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+                "state": "pending_first_branch_push",
+                "endpoint": catalog_ep,
+                "resolution_mode": "DEFERRED_PRE_PUSH_NEW_BRANCH_WORKFLOW",
+                "deferred_until_branch_push": True,
+                "excluded_remote_workflows": excluded_workflows,
+            }
+
+        return {
+            "ok": False,
+            "error": (
+                f"GH_API_WORKFLOW_NOT_REGISTERED_ON_REMOTE: Workflow {expected_path!r} is absent from {endpoint} (404) "
+                f"and not present in {catalog_ep} (found {len(excluded_workflows)} other workflow(s))"
+            ),
+        }
+
+    return {
+        "ok": False,
+        "error": f"GH_API_WORKFLOW_META_EXIT_{rc}: Failed to query workflow metadata ({endpoint}): {combined or 'non-zero exit'}",
     }
 
 
@@ -285,9 +428,11 @@ def validate_and_normalize_run_record(
     expected_workflow_name: str = None,
 ) -> tuple[bool, dict, str]:
     """
-    Fail-closed validator for a single GitHub Actions workflow run record (BUG-41 & BUG-48).
+    Fail-closed validator for a single GitHub Actions workflow run record (BUG-41, BUG-48, BUG-52 / ARGON).
     Strictly requires explicit workflow identity fields (`workflow_id` and `path` / `name` / `workflowName`)
-    from the source record and NEVER substitutes or invents `WORKFLOW_FILE` when missing!
+    from the source record, NEVER substitutes or invents `WORKFLOW_FILE` when missing, and strictly rejects
+    `.github/workflows/build-mersad-preview-dispatch.yml` (`Build MERSAD PREVIEW 0.1 Windows x64`) without any
+    loose substring matching!
     """
     if not isinstance(raw_run, dict):
         return False, {}, f"Run record is not a JSON object: {type(raw_run).__name__}"
@@ -312,10 +457,12 @@ def validate_and_normalize_run_record(
         return False, {}, f"Run {run_id} has invalid non-integer workflow_id: {raw_wf_id!r}"
     if wf_id <= 0:
         return False, {}, f"Run {run_id} has non-positive workflow_id: {wf_id}"
+    if wf_id == FORBIDDEN_DISPATCH_WORKFLOW_ID:
+        return False, {}, f"Run {run_id} belongs to forbidden dispatch workflow_id={wf_id} ({FORBIDDEN_DISPATCH_WORKFLOW_PATH})"
     if expected_workflow_id is not None and wf_id != int(expected_workflow_id):
         return False, {}, f"Run {run_id} workflow_id mismatch: got {wf_id}, expected {expected_workflow_id}"
 
-    # BUG-48: Require explicit workflow path and/or workflow name WITHOUT any default fallback
+    # BUG-48 & BUG-52: Require explicit workflow path and/or workflow name WITHOUT any default or substring fallback
     has_path_key = "path" in raw_run and raw_run.get("path") is not None
     has_name_key = ("name" in raw_run and raw_run.get("name") is not None) or (
         "workflowName" in raw_run and raw_run.get("workflowName") is not None
@@ -333,18 +480,21 @@ def validate_and_normalize_run_record(
     if has_path_key:
         if not wf_path:
             return False, {}, f"Run {run_id} has empty workflow 'path' field"
-        # GitHub REST API `path` may include `@refs/...` suffix in some enterprise versions or exact `.github/workflows/...`
         clean_wf_path = wf_path.split("@", 1)[0].strip()
+        if clean_wf_path in FORBIDDEN_WORKFLOW_PATHS:
+            return False, {}, f"Run {run_id} workflow path mismatch (forbidden workflow path): got {clean_wf_path!r}, expected {expected_workflow_path!r}"
         if expected_workflow_path and clean_wf_path != expected_workflow_path:
             return False, {}, f"Run {run_id} workflow path mismatch: got {clean_wf_path!r}, expected {expected_workflow_path!r}"
 
     if has_name_key:
         if not wf_name:
             return False, {}, f"Run {run_id} has empty workflow 'name'/'workflowName' field"
+        if wf_name in FORBIDDEN_WORKFLOW_NAMES:
+            return False, {}, f"Run {run_id} belongs to forbidden workflow name: {wf_name!r}"
         allowed_names = {WORKFLOW_FILE, EXPECTED_WORKFLOW_DISPLAY_NAME}
         if expected_workflow_name:
             allowed_names.add(expected_workflow_name)
-        if wf_name not in allowed_names and "MERSAD PREVIEW 0.1" not in wf_name:
+        if wf_name not in allowed_names:
             return False, {}, f"Run {run_id} workflow name mismatch: got {wf_name!r}, expected one of {sorted(allowed_names)}"
 
     head_sha = str(raw_run.get("head_sha") or raw_run.get("headSha") or "").strip()
@@ -367,7 +517,7 @@ def validate_and_normalize_run_record(
     norm = {
         "databaseId": run_id,
         "workflowId": wf_id,
-        "workflowPath": wf_path or expected_workflow_path,
+        "workflowPath": wf_path.split("@", 1)[0].strip() if wf_path else expected_workflow_path,
         "workflowName": wf_name or expected_workflow_name or EXPECTED_WORKFLOW_DISPLAY_NAME,
         "headSha": head_sha.lower(),
         "headBranch": head_branch,
@@ -390,15 +540,18 @@ def query_workflow_runs_fail_closed(
     per_page: int = DEFAULT_PREFLIGHT_PER_PAGE,
     github_repo: str = DEFAULT_GITHUB_REPO,
     resolved_workflow_meta: dict = None,
+    allow_deferred_pre_push: bool = False,
 ) -> dict:
     """
-    Fail-closed query of GitHub Actions workflow runs using real GitHub REST API pagination (BUG-41, BUG-47, BUG-48):
-      1. Resolves workflow metadata (`workflow_id`, `path`, `name`) via `gh api repos/{github_repo}/actions/workflows/{workflow_file}`
-         (unless already resolved and passed via `resolved_workflow_meta`).
+    Fail-closed query of GitHub Actions workflow runs using real GitHub REST API pagination (BUG-41, BUG-47, BUG-48, BUG-52):
+      1. Resolves workflow metadata (`workflow_id`, `path`, `name`) via `resolve_workflow_metadata_fail_closed()`.
+         If `allow_deferred_pre_push=True` (only before pushing a new branch when the workflow is absent from remote `main`
+         and not yet registered in `/actions/workflows`), returns an empty pre-push run baseline with
+         `deferred_until_branch_push=True` so preflight can proceed to push and then resolve the workflow post-push.
       2. Queries each page via `gh api -X GET "repos/{github_repo}/actions/workflows/{workflow_id}/runs?per_page={per_page}&page={page_idx}"`
          with ZERO synthetic page environment variables.
       3. Validates every run record via `validate_and_normalize_run_record()`, enforcing explicit `workflow_id` and
-         `path`/`name` match without default fallbacks.
+         exact `path`/`name` match without default or substring fallbacks.
       4. Detects duplicate page results (`GH_API_DUPLICATE_PAGE_RESULTS`), chronological ordering violations
          (`GH_API_CHRONOLOGICAL_ORDER_VIOLATION`), and incomplete history when `max_pages` is reached while
          `len(all_runs) < total_count` (`GH_API_MAX_PAGES_LIMIT_REACHED_INCOMPLETE_HISTORY`).
@@ -416,13 +569,14 @@ def query_workflow_runs_fail_closed(
         }
 
     wf_meta = resolved_workflow_meta
-    if not wf_meta:
+    if not wf_meta or wf_meta.get("deferred_until_branch_push"):
         wf_meta = resolve_workflow_metadata_fail_closed(
             gh_bin=gh_bin,
             work_repo=work_repo,
             env=env,
             github_repo=github_repo,
             workflow_file=workflow_file,
+            allow_deferred_pre_push=allow_deferred_pre_push,
         )
     if not wf_meta.get("ok"):
         return {
@@ -434,6 +588,26 @@ def query_workflow_runs_fail_closed(
             "max_pages_configured": max_pages,
             "per_page_configured": per_page,
             "endpoints_queried": [],
+        }
+
+    if wf_meta.get("deferred_until_branch_push"):
+        return {
+            "ok": True,
+            "error": None,
+            "workflow_metadata": wf_meta,
+            "deferred_until_branch_push": True,
+            "total_count": 0,
+            "runs": [],
+            "run_ids": set(),
+            "pages_fetched": 0,
+            "max_pages_configured": max(1, int(max_pages)),
+            "per_page_configured": per_page,
+            "endpoints_queried": [wf_meta.get("endpoint", f"repos/{github_repo}/actions/workflows?per_page=100&page=1")],
+            "bounded_window_note": (
+                f"Workflow {wf_meta.get('path')} is absent from remote main and not yet registered in GitHub Actions "
+                "prior to first push of new branch; verified workflow catalog endpoint (200 OK) with 0 pre-existing runs "
+                "and deferred workflow_id resolution to post-push polling."
+            ),
         }
 
     expected_wf_id = int(wf_meta["workflow_id"])
@@ -655,6 +829,7 @@ def query_workflow_runs_fail_closed(
         "ok": True,
         "error": None,
         "workflow_metadata": wf_meta,
+        "deferred_until_branch_push": False,
         "total_count": reported_total_count if reported_total_count is not None else len(all_runs),
         "runs": all_runs,
         "run_ids": seen_ids,
@@ -957,6 +1132,10 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA, "HEAD"],
             capture_output=True,
         ).returncode
+        anc_de55_rc = subprocess.run(
+            ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG50_51_PARENT_SHA, "HEAD"],
+            capture_output=True,
+        ).returncode
         anc_eaf8_rc = subprocess.run(
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG46_49_PARENT_SHA, "HEAD"],
             capture_output=True,
@@ -981,6 +1160,7 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         and anc_edaf_rc == 0
         and anc_05f2_rc == 0
         and anc_a1c5_rc == 0
+        and anc_de55_rc == 0
         and anc_eaf8_rc == 0
         and anc_850f_rc == 0
         and lifecycle_in_commit
@@ -992,7 +1172,9 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         "ok": ok,
         "branch": branch,
         "head_sha": head_sha,
+        "previous_bug50_51_commit_sha": EXPECTED_AI_BUG50_51_PARENT_SHA,
         "previous_bug46_49_commit_sha": EXPECTED_AI_BUG46_49_PARENT_SHA,
+        "descends_from_de55bcc51936": (anc_de55_rc == 0),
         "previous_bug40_45_commit_sha": EXPECTED_AI_BUG40_45_PARENT_SHA,
         "descends_from_eaf89c71b3b5": (anc_eaf8_rc == 0),
         "previous_single_run_ci_commit_sha": EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
@@ -1117,12 +1299,13 @@ def execute_deployment(
         add_step("clone_bundle", True, f"Cloned bundle {bundle_path.name}")
 
         rc, main_sha, err = run_cmd(["git", "rev-parse", "origin/main"], cwd=str(work_repo), env=env)
-        if rc != 0 or main_sha != EXPECTED_MAIN_SHA:
+        if rc != 0 or main_sha != EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA:
             set_state("PREFLIGHT_FAILED")
-            add_step("verify_main_untouched", False, f"main SHA mismatch: got {main_sha}, expected {EXPECTED_MAIN_SHA}")
+            add_step("verify_main_untouched", False, f"Bundle main snapshot SHA mismatch: got {main_sha}, expected {EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA}")
             report["error"] = f"MAIN_SHA_MISMATCH: {main_sha}"
             return report
-        add_step("verify_main_untouched", True, f"main branch untouched at {main_sha}")
+        report["bundle_main_snapshot_sha"] = main_sha
+        add_step("verify_main_untouched", True, f"Bundle offline main snapshot untouched at {main_sha}")
 
         rc, out, err = run_cmd(["git", "checkout", "-B", branch_to_use, f"origin/{branch_to_use}"], cwd=str(work_repo), env=env)
         if rc != 0:
@@ -1154,12 +1337,14 @@ def execute_deployment(
 
         rc, head_sha, err = run_cmd(["git", "rev-parse", "HEAD"], cwd=str(work_repo), env=env)
         required_ancestors = [
+            EXPECTED_AI_BUG50_51_PARENT_SHA,
             EXPECTED_AI_BUG46_49_PARENT_SHA,
             EXPECTED_AI_BUG40_45_PARENT_SHA,
             EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
             EXPECTED_AI_PREFLIGHT_PARENT_SHA,
             EXPECTED_AI_CODE_SHA,
             EXPECTED_AI_PREV_FIX_SHA,
+            EXPECTED_AI_COMMON_FORK_POINT_SHA,
             EXPECTED_AI_RELEASE_BASE_SHA,
         ]
 
@@ -1184,7 +1369,48 @@ def execute_deployment(
             return report
         add_step("verify_remote_url", True, f"Verified origin remote URL: {out_rem}")
 
-        # Step 1B: Pre-push check of remote branch state via git ls-remote (BUG-44: Fail-Closed & Fast-Forward check)
+        # Step 1B: Pre-push check of live remote main AND target branch via git ls-remote (BUG-44 & BUG-52 / ARGON)
+        rc_pre_main, out_pre_main, err_pre_main = run_cmd(
+            ["git", "ls-remote", "origin", "refs/heads/main"],
+            cwd=str(work_repo),
+            env=env,
+        )
+        if rc_pre_main != 0:
+            set_state("PREFLIGHT_FAILED")
+            msg = f"Pre-push git ls-remote refs/heads/main failed (exit={rc_pre_main}): {err_pre_main or out_pre_main}"
+            add_step("preflight_check_remote_main", False, msg)
+            report["error"] = f"REMOTE_UNREACHABLE_PREFLIGHT_FAILED: {msg}"
+            return report
+
+        pre_remote_main_sha = out_pre_main.split()[0].strip().lower() if out_pre_main.strip() else ""
+        report["pre_push_remote_main_sha"] = pre_remote_main_sha or None
+        report["expected_live_github_main_sha"] = EXPECTED_LIVE_GITHUB_MAIN_SHA
+        report["expected_bundle_main_snapshot_sha"] = EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+
+        if pre_remote_main_sha:
+            if pre_remote_main_sha not in ALLOWED_REMOTE_MAIN_SHAS:
+                set_state("PREFLIGHT_FAILED")
+                msg = (
+                    f"Live remote refs/heads/main is at unexpected SHA {pre_remote_main_sha}, "
+                    f"expected one of ALLOWED_REMOTE_MAIN_SHAS={ALLOWED_REMOTE_MAIN_SHAS}"
+                )
+                add_step("preflight_check_remote_main", False, msg)
+                report["error"] = f"REMOTE_MAIN_SHA_MISMATCH: {msg}"
+                return report
+            add_step(
+                "preflight_check_remote_main",
+                True,
+                f"Verified remote refs/heads/main at {pre_remote_main_sha} (in ALLOWED_REMOTE_MAIN_SHAS)",
+            )
+        elif remote_url == DEFAULT_REMOTE_URL:
+            set_state("PREFLIGHT_FAILED")
+            msg = f"Live remote {remote_url} is missing refs/heads/main"
+            add_step("preflight_check_remote_main", False, msg)
+            report["error"] = f"REMOTE_MAIN_MISSING: {msg}"
+            return report
+        else:
+            add_step("preflight_check_remote_main", True, "Simulated empty bare remote has no refs/heads/main prior to push")
+
         rc_pre_ls, out_pre_ls, err_pre_ls = run_cmd(
             ["git", "ls-remote", "origin", f"refs/heads/{branch_to_use}"],
             cwd=str(work_repo),
@@ -1199,6 +1425,8 @@ def execute_deployment(
 
         pre_remote_sha = out_pre_ls.split()[0].strip() if out_pre_ls.strip() else ""
         report["pre_push_remote_sha"] = pre_remote_sha or None
+        is_new_remote_branch = (pre_remote_sha == "")
+        report["target_branch_creation_mode"] = "CREATE_NEW_REMOTE_BRANCH" if is_new_remote_branch else "FAST_FORWARD_EXISTING_BRANCH"
 
         if pre_remote_sha and pre_remote_sha.lower() == head_sha.lower():
             msg = (
@@ -1249,7 +1477,7 @@ def execute_deployment(
             return report
         add_step("verify_gh_cli_authenticated", True, "gh auth status verified")
 
-        # Step 1D: Fail-Closed query of workflow metadata + pre-push workflow runs via REST API pagination (BUG-41, BUG-47, BUG-48)
+        # Step 1D: Fail-Closed query of workflow metadata + pre-push workflow runs via REST API pagination (BUG-41, BUG-47, BUG-48, BUG-52)
         pre_query = query_workflow_runs_fail_closed(
             gh_bin=gh_bin,
             work_repo=work_repo,
@@ -1258,6 +1486,7 @@ def execute_deployment(
             max_pages=preflight_max_pages,
             per_page=preflight_per_page,
             github_repo=github_repo,
+            allow_deferred_pre_push=is_new_remote_branch,
         )
         if not pre_query["ok"]:
             set_state("PREFLIGHT_FAILED")
@@ -1267,8 +1496,6 @@ def execute_deployment(
             return report
 
         resolved_wf_meta = pre_query["workflow_metadata"]
-        expected_wf_id = int(resolved_wf_meta["workflow_id"])
-        expected_wf_path = str(resolved_wf_meta["path"])
         report["workflow_metadata"] = resolved_wf_meta
 
         pre_existing_ids = set(pre_query["run_ids"])
@@ -1276,8 +1503,11 @@ def execute_deployment(
         report["pre_existing_run_ids"] = sorted(pre_existing_ids)
         report["max_pre_existing_run_id"] = max_pre_existing_id
         report["pre_existing_runs_query_summary"] = {
-            "workflow_id": expected_wf_id,
-            "workflow_path": expected_wf_path,
+            "workflow_id": resolved_wf_meta.get("workflow_id"),
+            "workflow_path": resolved_wf_meta.get("path"),
+            "resolution_mode": resolved_wf_meta.get("resolution_mode"),
+            "deferred_until_branch_push": bool(resolved_wf_meta.get("deferred_until_branch_push")),
+            "excluded_remote_workflows": resolved_wf_meta.get("excluded_remote_workflows", []),
             "total_count_reported": pre_query["total_count"],
             "runs_inspected_count": len(pre_query["runs"]),
             "pages_fetched": pre_query["pages_fetched"],
@@ -1320,7 +1550,7 @@ def execute_deployment(
         report["push_executed"] = True
         add_step("git_push_target_branch", True, f"Pushed single allowlisted branch {branch_to_use} (no tags, no --force) to {remote_url}")
 
-        # Step 3: Verify remote SHA via git ls-remote
+        # Step 3A: Verify remote SHA of target branch via git ls-remote
         rc_ls, out_ls, err_ls = run_cmd(
             ["git", "ls-remote", "origin", f"refs/heads/{branch_to_use}"],
             cwd=str(work_repo),
@@ -1333,18 +1563,39 @@ def execute_deployment(
             report["error"] = f"REMOTE_SHA_MISMATCH: {remote_sha} != {head_sha}"
             return report
         report["verified_remote_sha"] = remote_sha
+
+        # Step 3B: Verify remote refs/heads/main remained 100% untouched after git push (BUG-52 / ARGON)
+        rc_post_main, out_post_main, err_post_main = run_cmd(
+            ["git", "ls-remote", "origin", "refs/heads/main"],
+            cwd=str(work_repo),
+            env=env,
+        )
+        post_remote_main_sha = out_post_main.split()[0].strip().lower() if (rc_post_main == 0 and out_post_main.strip()) else ""
+        report["post_push_remote_main_sha"] = post_remote_main_sha or None
+        if rc_post_main != 0 or post_remote_main_sha != pre_remote_main_sha:
+            set_state("RUN_FAILED")
+            msg = f"Remote refs/heads/main changed after push: pre={pre_remote_main_sha!r}, post={post_remote_main_sha!r} ({err_post_main})"
+            add_step("verify_remote_main_untouched_post_push", False, msg)
+            report["error"] = f"POST_PUSH_REMOTE_MAIN_MUTATED: {msg}"
+            return report
+        add_step(
+            "verify_remote_main_untouched_post_push",
+            True,
+            f"Verified remote refs/heads/main remained untouched after push: {post_remote_main_sha or 'absent'}",
+        )
+
         report["build_triggered"] = True
         set_state("PUSH_COMPLETED")
         add_step("verify_remote_sha", True, f"PUSH_COMPLETED: Verified remote SHA on origin matches local HEAD: {remote_sha}")
 
-        # Helper to filter candidate runs matching ALL criteria (BUG-41, BUG-42, BUG-48):
+        # Helper to filter candidate runs matching ALL criteria (BUG-41, BUG-42, BUG-48, BUG-52):
         #   - workflowId == expected_wf_id AND workflowPath == expected_wf_path
         #   - event == "push"
         #   - headBranch == branch_to_use
         #   - headSha == head_sha
         #   - databaseId not in pre_existing_ids AND databaseId > max_pre_existing_id
         #   - createdAt >= preflight_started_dt - 2s tolerance
-        def filter_matching_new_runs(runs_list: list) -> list:
+        def filter_matching_new_runs(runs_list: list, exp_wf_id: int, exp_wf_path: str) -> list:
             candidates = []
             earliest_allowed = preflight_started_dt - datetime.timedelta(seconds=2)
             for r in runs_list:
@@ -1357,8 +1608,8 @@ def execute_deployment(
                 r_dt = parse_iso8601_utc(r["createdAt"])
                 if (
                     r_id > 0
-                    and r_wf_id == expected_wf_id
-                    and r_wf_path == expected_wf_path
+                    and r_wf_id == exp_wf_id
+                    and r_wf_path == exp_wf_path
                     and r_id not in pre_existing_ids
                     and r_id > max_pre_existing_id
                     and r_evt == "push"
@@ -1372,9 +1623,38 @@ def execute_deployment(
 
         # Step 4A: Poll for initial matching run candidate across paginated REST API results
         matched_run = None
+        last_deferred_wf_err = None
         for attempt in range(1, max(1, poll_attempts) + 1):
             if poll_interval_s > 0:
                 time.sleep(poll_interval_s)
+
+            # If workflow metadata was deferred pre-push (new branch workflow absent from remote main),
+            # resolve authoritative workflow metadata post-push (allow_deferred_pre_push=False) before querying runs!
+            if resolved_wf_meta.get("deferred_until_branch_push") or not resolved_wf_meta.get("workflow_id"):
+                post_wf_meta = resolve_workflow_metadata_fail_closed(
+                    gh_bin=gh_bin,
+                    work_repo=work_repo,
+                    env=env,
+                    github_repo=github_repo,
+                    workflow_file=WORKFLOW_FILE,
+                    allow_deferred_pre_push=False,
+                )
+                if not post_wf_meta.get("ok"):
+                    err_str = post_wf_meta.get("error") or ""
+                    if "GH_API_WORKFLOW_NOT_REGISTERED_ON_REMOTE" in err_str:
+                        last_deferred_wf_err = err_str
+                        continue
+                    set_state("RUN_FAILED")
+                    msg = f"Post-push workflow metadata resolution failed on attempt {attempt}: {err_str}"
+                    add_step("poll_matching_run_id", False, msg)
+                    report["error"] = f"POLL_QUERY_FAILED: {err_str}"
+                    return report
+                resolved_wf_meta = post_wf_meta
+                report["workflow_metadata"] = resolved_wf_meta
+
+            expected_wf_id = int(resolved_wf_meta["workflow_id"])
+            expected_wf_path = str(resolved_wf_meta["path"])
+
             poll_q = query_workflow_runs_fail_closed(
                 gh_bin=gh_bin,
                 work_repo=work_repo,
@@ -1384,6 +1664,7 @@ def execute_deployment(
                 per_page=preflight_per_page,
                 github_repo=github_repo,
                 resolved_workflow_meta=resolved_wf_meta,
+                allow_deferred_pre_push=False,
             )
             if not poll_q["ok"]:
                 set_state("RUN_FAILED")
@@ -1392,7 +1673,7 @@ def execute_deployment(
                 report["error"] = f"POLL_QUERY_FAILED: {poll_q['error']}"
                 return report
 
-            matching_new_runs = filter_matching_new_runs(poll_q["runs"])
+            matching_new_runs = filter_matching_new_runs(poll_q["runs"], expected_wf_id, expected_wf_path)
             if len(matching_new_runs) > 1:
                 dup_ids = [int(x["databaseId"]) for x in matching_new_runs]
                 msg = f"Duplicate new runs detected immediately ({len(matching_new_runs)} runs: {dup_ids}) for headSha={head_sha} on branch {branch_to_use}."
@@ -1407,12 +1688,23 @@ def execute_deployment(
                 break
 
         if matched_run is None:
+            if last_deferred_wf_err and not resolved_wf_meta.get("workflow_id"):
+                msg = (
+                    f"Workflow {WORKFLOW_DEFINITION_PATH} was still not registered on remote after pushing {branch_to_use} "
+                    f"across {poll_attempts} poll attempt(s): {last_deferred_wf_err}"
+                )
+                set_state("RUN_TIMEOUT")
+                add_step("poll_matching_run_id", False, msg)
+                report["error"] = f"POST_PUSH_WORKFLOW_NOT_REGISTERED_ON_REMOTE: {msg}"
+                return report
             msg = f"No new push run matching headSha={head_sha} on branch {branch_to_use} appeared after {poll_attempts} poll attempt(s)."
             set_state("RUN_TIMEOUT")
             add_step("poll_matching_run_id", False, msg)
             report["error"] = f"RUN_TIMEOUT: {msg}"
             return report
 
+        expected_wf_id = int(resolved_wf_meta["workflow_id"])
+        expected_wf_path = str(resolved_wf_meta["path"])
         run_id = str(matched_run["databaseId"])
         report["run_id"] = run_id
         report["run_url"] = matched_run.get("url")
@@ -1432,6 +1724,7 @@ def execute_deployment(
                 per_page=preflight_per_page,
                 github_repo=github_repo,
                 resolved_workflow_meta=resolved_wf_meta,
+                allow_deferred_pre_push=False,
             )
             if not settle_q["ok"]:
                 set_state("RUN_FAILED")
@@ -1440,7 +1733,7 @@ def execute_deployment(
                 report["error"] = f"SETTLING_QUERY_FAILED: {settle_q['error']}"
                 return report
 
-            settle_matches = filter_matching_new_runs(settle_q["runs"])
+            settle_matches = filter_matching_new_runs(settle_q["runs"], expected_wf_id, expected_wf_path)
             if len(settle_matches) > 1:
                 dup_ids = [int(x["databaseId"]) for x in settle_matches]
                 msg = (
@@ -3003,6 +3296,294 @@ console.log("DASHBOARD_7_CASES_OK");
         and d_lab_z.is_file() and (not r_lab_z.is_file() or r_lab_z.read_bytes() == d_lab_z.read_bytes())
     )
     checks.append(("BUG50_01_ALL_PORTABLE_SOURCE_ZIPS_SYNCHRONIZED_AND_NO_STALE_53ED4AE_ARCHIVE", bug50_zip_parity))
+
+    # =========================================================================
+    # ARGON / BUG-52 Regression Tests: Live GitHub Preflight Reconciliation (8 Tests)
+    # =========================================================================
+
+    # ARGON_01: EXPECTED_WORKFLOW_DISPLAY_NAME matches exact `name:` header in .github/workflows/release-mersad-preview-0.1-windows.yml
+    wf_first_line = wf_text.splitlines()[0].strip()
+    checks.append((
+        "ARGON_01_EXACT_WORKFLOW_DISPLAY_NAME_MATCHES_YAML_HEADER",
+        wf_first_line == f"name: {EXPECTED_WORKFLOW_DISPLAY_NAME}"
+        and EXPECTED_WORKFLOW_DISPLAY_NAME == "Build & Verify MERSAD PREVIEW 0.1 Final Windows x64 Release"
+    ))
+
+    # ARGON_02: Dispatch workflow 147631347 (.github/workflows/build-mersad-preview-dispatch.yml, "Build MERSAD PREVIEW 0.1 Windows x64")
+    # is strictly rejected even though its name contains "MERSAD PREVIEW 0.1"
+    ok_disp_id, _, err_disp_id = validate_and_normalize_run_record(
+        {
+            "id": 9001,
+            "workflow_id": 147631347,
+            "path": ".github/workflows/build-mersad-preview-dispatch.yml",
+            "name": "Build MERSAD PREVIEW 0.1 Windows x64",
+            "head_sha": local_head,
+            "head_branch": DEFAULT_TARGET_BRANCH,
+            "event": "push",
+            "created_at": now_utc_iso,
+        },
+        expected_workflow_id=147631346,
+    )
+    ok_disp_name, _, err_disp_name = validate_and_normalize_run_record(
+        {
+            "id": 9002,
+            "workflow_id": 147631346,
+            "name": "Build MERSAD PREVIEW 0.1 Windows x64",
+            "head_sha": local_head,
+            "head_branch": DEFAULT_TARGET_BRANCH,
+            "event": "push",
+            "created_at": now_utc_iso,
+        },
+        expected_workflow_id=147631346,
+    )
+    checks.append((
+        "ARGON_02_DISPATCH_WORKFLOW_147631347_AND_NAME_STRICTLY_REJECTED_NO_SUBSTRING_BYPASS",
+        ok_disp_id is False and "forbidden" in err_disp_id.lower()
+        and ok_disp_name is False and "forbidden" in err_disp_name.lower()
+    ))
+
+    with tempfile.TemporaryDirectory(prefix="mersad_argon_tests_") as tmp_argon:
+        ta_p = Path(tmp_argon)
+
+        # Helper to seed a bare remote with a synthetic commit whose SHA or branch represents remote `main`
+        bare_argon_live_main = create_fresh_bare_remote(ta_p, "origin_argon_live_main.git")
+        with tempfile.TemporaryDirectory() as td_seed_m:
+            subprocess.run(["git", "clone", "-q", str(bundle), td_seed_m], check=True)
+            # Push bundle's main (25c9e5bba30dc8f921675e12c23a53571be895c1) to refs/heads/main on bare_argon_live_main
+            subprocess.run(["git", "-C", td_seed_m, "push", "-q", str(bare_argon_live_main), f"{EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA}:refs/heads/main"], check=True)
+            # Also push release/mersad-preview-0.1 fork point (2c22280d84a5fcb7b709075f73b3073bcef0aff2)
+            subprocess.run(["git", "-C", td_seed_m, "push", "-q", str(bare_argon_live_main), f"{EXPECTED_AI_COMMON_FORK_POINT_SHA}:refs/heads/release/mersad-preview-0.1"], check=True)
+
+        # ARGON_03: Direct filename lookup returns 404 (because workflow is absent from remote main),
+        # resolved via /actions/workflows catalog fallback (ID 147631346) while excluding build-mersad-preview-dispatch.yml (ID 147631347),
+        # and verifies remote main pre-push and post-push!
+        fake_bin_argon_cat = ta_p / "fake_bin_argon_cat"
+        fake_bin_argon_cat.mkdir()
+        state_argon_cat = ta_p / "state_argon_cat.txt"
+        catalog_json_str = json.dumps({
+            "total_count": 2,
+            "workflows": [
+                {
+                    "id": 147631346,
+                    "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+                    "path": WORKFLOW_DEFINITION_PATH,
+                    "state": "active",
+                },
+                {
+                    "id": 147631347,
+                    "name": "Build MERSAD PREVIEW 0.1 Windows x64",
+                    "path": ".github/workflows/build-mersad-preview-dispatch.yml",
+                    "state": "active",
+                },
+            ],
+        })
+        argon_cat_script = f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{state_argon_cat}")
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print("HTTP 404 Not Found: workflow file absent from default branch main", file=sys.stderr)
+        sys.exit(1)
+    if "/actions/workflows?per_page=100&page=1" in ep:
+        print({catalog_json_str!r})
+        sys.exit(0)
+    if "/workflows/147631346/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        else:
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 9101, "workflow_id": 147631346, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}", "html_url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/9101"}}
+            ]}}))
+        sys.exit(0)
+if args[:2] == ["run", "watch"] and args[2] == "9101":
+    sys.exit(0)
+if args[:2] == ["run", "view"] and args[2] == "9101":
+    print(json.dumps({{"status": "completed", "conclusion": "success", "jobs": [{{"name": "build-and-verify-windows-x64", "conclusion": "success"}}]}}))
+    sys.exit(0)
+if args[:2] == ["run", "download"] and args[2] == "9101":
+    out_dir = pathlib.Path(args[args.index("--dir") + 1])
+    for fn in {REQUIRED_WINDOWS_ARTIFACTS!r}:
+        (out_dir / fn).write_bytes(f"SIM_ARGON_CAT_{{fn}}".encode("utf-8"))
+    sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_argon_cat / "gh").write_text(argon_cat_script, encoding="utf-8")
+        (fake_bin_argon_cat / "gh").chmod(0o755)
+        res_argon_cat = execute_deployment(
+            bundle, str(bare_argon_live_main), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_cat}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0, settling_polls=2, settling_interval_s=0.0,
+            artifacts_base_dir=ta_p,
+        )
+        checks.append((
+            "ARGON_03_WORKFLOW_404_BY_FILENAME_RESOLVED_VIA_CATALOG_147631346_AND_REMOTE_MAIN_VERIFIED",
+            res_argon_cat["status"] == "PASS"
+            and res_argon_cat.get("workflow_metadata", {}).get("workflow_id") == 147631346
+            and res_argon_cat.get("workflow_metadata", {}).get("resolution_mode") == "WORKFLOWS_CATALOG_FALLBACK"
+            and len(res_argon_cat.get("workflow_metadata", {}).get("excluded_remote_workflows", [])) == 1
+            and res_argon_cat.get("pre_push_remote_main_sha") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+            and res_argon_cat.get("post_push_remote_main_sha") == EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA
+            and res_argon_cat.get("target_branch_creation_mode") == "CREATE_NEW_REMOTE_BRANCH"
+        ))
+
+        # ARGON_04: Unexpected/tampered remote main SHA is rejected before push with PREFLIGHT_FAILED (REMOTE_MAIN_SHA_MISMATCH)
+        bare_argon_bad_main = create_fresh_bare_remote(ta_p, "origin_argon_bad_main.git")
+        with tempfile.TemporaryDirectory() as td_seed_bad_m:
+            subprocess.run(["git", "clone", "-q", str(bundle), td_seed_bad_m], check=True)
+            # Push a non-main commit (e.g. EXPECTED_AI_CODE_SHA) to refs/heads/main on bare_argon_bad_main
+            subprocess.run(["git", "-C", td_seed_bad_m, "push", "-q", str(bare_argon_bad_main), f"{EXPECTED_AI_CODE_SHA}:refs/heads/main"], check=True)
+
+        res_argon_bad_main = execute_deployment(
+            bundle, str(bare_argon_bad_main), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_cat}:/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+        )
+        checks.append((
+            "ARGON_04_UNEXPECTED_REMOTE_MAIN_SHA_REJECTED_BEFORE_PUSH",
+            res_argon_bad_main["status"] == "PREFLIGHT_FAILED"
+            and res_argon_bad_main["push_executed"] is False
+            and "REMOTE_MAIN_SHA_MISMATCH" in res_argon_bad_main.get("error", "")
+        ))
+
+        # ARGON_05: Workflow unregistered before first push of new branch (`DEFERRED_PRE_PUSH_NEW_BRANCH_WORKFLOW`),
+        # then registered upon push and resolved authoritatively post-push without bypassing workflow identity!
+        bare_argon_def = create_fresh_bare_remote(ta_p, "origin_argon_def.git")
+        fake_bin_argon_def = ta_p / "fake_bin_argon_def"
+        fake_bin_argon_def.mkdir()
+        state_argon_def = ta_p / "state_argon_def.txt"
+        pre_push_cat_json = json.dumps({
+            "total_count": 1,
+            "workflows": [
+                {
+                    "id": 147631347,
+                    "name": "Build MERSAD PREVIEW 0.1 Windows x64",
+                    "path": ".github/workflows/build-mersad-preview-dispatch.yml",
+                    "state": "active",
+                },
+            ],
+        })
+        argon_def_script = f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{state_argon_def}")
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print("HTTP 404 Not Found", file=sys.stderr)
+        sys.exit(1)
+    if "/actions/workflows?per_page=100&page=1" in ep:
+        if not sf.exists():
+            sf.write_text("pushed")
+            print({pre_push_cat_json!r})
+        else:
+            print({catalog_json_str!r})
+        sys.exit(0)
+    if "/workflows/147631346/runs?" in ep:
+        print(json.dumps({{"total_count": 1, "workflow_runs": [
+            {{"id": 9201, "workflow_id": 147631346, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}", "html_url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/9201"}}
+        ]}}))
+        sys.exit(0)
+if args[:2] == ["run", "watch"] and args[2] == "9201":
+    sys.exit(0)
+if args[:2] == ["run", "view"] and args[2] == "9201":
+    print(json.dumps({{"status": "completed", "conclusion": "success", "jobs": [{{"name": "build-and-verify-windows-x64", "conclusion": "success"}}]}}))
+    sys.exit(0)
+if args[:2] == ["run", "download"] and args[2] == "9201":
+    out_dir = pathlib.Path(args[args.index("--dir") + 1])
+    for fn in {REQUIRED_WINDOWS_ARTIFACTS!r}:
+        (out_dir / fn).write_bytes(f"SIM_ARGON_DEF_{{fn}}".encode("utf-8"))
+    sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_argon_def / "gh").write_text(argon_def_script, encoding="utf-8")
+        (fake_bin_argon_def / "gh").chmod(0o755)
+        res_argon_def = execute_deployment(
+            bundle, str(bare_argon_def), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_def}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0, settling_polls=2, settling_interval_s=0.0,
+            artifacts_base_dir=ta_p,
+        )
+        checks.append((
+            "ARGON_05_NEW_BRANCH_DEFERRED_WORKFLOW_RESOLVED_POST_PUSH_WITH_FULL_IDENTITY_VERIFICATION",
+            res_argon_def["status"] == "PASS"
+            and res_argon_def.get("pre_existing_runs_query_summary", {}).get("deferred_until_branch_push") is True
+            and res_argon_def.get("workflow_metadata", {}).get("workflow_id") == 147631346
+            and res_argon_def.get("workflow_metadata", {}).get("deferred_until_branch_push") is False
+            and res_argon_def.get("run_id") == "9201"
+        ))
+
+        # ARGON_06: If branch already exists on remote (`pre_push_remote_sha` is an ancestor) and workflow is missing from catalog,
+        # preflight MUST NOT defer and MUST fail closed before push (`PREFLIGHT_FAILED`)!
+        bare_argon_existing_no_wf = create_fresh_bare_remote(ta_p, "origin_argon_existing_no_wf.git")
+        with tempfile.TemporaryDirectory() as td_seed_ex:
+            subprocess.run(["git", "clone", "-q", str(bundle), td_seed_ex], check=True)
+            subprocess.run(["git", "-C", td_seed_ex, "push", "-q", str(bare_argon_existing_no_wf), f"{EXPECTED_AI_PREFLIGHT_PARENT_SHA}:refs/heads/{DEFAULT_TARGET_BRANCH}"], check=True)
+
+        fake_bin_argon_never_reg = ta_p / "fake_bin_argon_never_reg"
+        fake_bin_argon_never_reg.mkdir()
+        never_reg_script = f"""#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print("HTTP 404 Not Found", file=sys.stderr)
+        sys.exit(1)
+    if "/actions/workflows?per_page=100&page=1" in ep:
+        print({pre_push_cat_json!r})
+        sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_argon_never_reg / "gh").write_text(never_reg_script, encoding="utf-8")
+        (fake_bin_argon_never_reg / "gh").chmod(0o755)
+        res_argon_ex_no_wf = execute_deployment(
+            bundle, str(bare_argon_existing_no_wf), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_never_reg}:/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+        )
+        checks.append((
+            "ARGON_06_EXISTING_REMOTE_BRANCH_WITH_UNREGISTERED_WORKFLOW_FAILS_CLOSED_BEFORE_PUSH",
+            res_argon_ex_no_wf["status"] == "PREFLIGHT_FAILED"
+            and res_argon_ex_no_wf["push_executed"] is False
+            and "GH_API_WORKFLOW_NOT_REGISTERED_ON_REMOTE" in res_argon_ex_no_wf.get("error", "")
+        ))
+
+        # ARGON_07: If new branch is pushed but workflow still never registers on remote after all poll attempts,
+        # halts fail-closed with RUN_TIMEOUT (POST_PUSH_WORKFLOW_NOT_REGISTERED_ON_REMOTE) and never bypasses identity!
+        bare_argon_post_timeout = create_fresh_bare_remote(ta_p, "origin_argon_post_timeout.git")
+        res_argon_post_timeout = execute_deployment(
+            bundle, str(bare_argon_post_timeout), wf_file,
+            env_override={"PATH": f"{fake_bin_argon_never_reg}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+        )
+        checks.append((
+            "ARGON_07_UNREGISTERED_WORKFLOW_AFTER_NEW_BRANCH_PUSH_TIMES_OUT_FAIL_CLOSED",
+            res_argon_post_timeout["status"] == "RUN_TIMEOUT"
+            and res_argon_post_timeout["push_executed"] is True
+            and res_argon_post_timeout["run_id"] is None
+            and "POST_PUSH_WORKFLOW_NOT_REGISTERED_ON_REMOTE" in res_argon_post_timeout.get("error", "")
+        ))
+
+        # ARGON_08: Both EXPECTED_LIVE_GITHUB_MAIN_SHA (38a09da9...) and EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA (25c9e5bb...)
+        # are defined in ALLOWED_REMOTE_MAIN_SHAS and verified
+        checks.append((
+            "ARGON_08_TWO_TIER_MAIN_SHA_CONSTANTS_RECONCILED",
+            EXPECTED_LIVE_GITHUB_MAIN_SHA == "38a09da9854bcf276386391c5a06c2706bb119c3"
+            and EXPECTED_BUNDLE_MAIN_SNAPSHOT_SHA == "25c9e5bba30dc8f921675e12c23a53571be895c1"
+            and ALLOWED_REMOTE_MAIN_SHAS == (
+                "38a09da9854bcf276386391c5a06c2706bb119c3",
+                "25c9e5bba30dc8f921675e12c23a53571be895c1",
+            )
+        ))
 
     all_ok = all(ok for _, ok in checks)
     return {
