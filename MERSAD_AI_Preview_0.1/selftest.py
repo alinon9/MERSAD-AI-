@@ -4920,32 +4920,22 @@ def run_stage15_forensic_remediation_tests():
     ok_bld_15, bld_info_15 = chk_mod.verify_build_config_consistency(WORK)
 
     build_rep_15 = open(os.path.join(WORK, "BUILD_REPORT.md"), encoding="utf-8").read()
-    has_all_12_steps = all(f"[{step_i}/12]" in push_bat_txt for step_i in range(1, 13))
-    has_gh_commands = all(
-        kw in push_bat_txt
-        for kw in (
-            "where git",
-            "where gh",
-            "gh auth status",
-            "gh auth login",
-            "alinon9/MERSAD-AI-",
-            ".github\\workflows\\windows-build.yml",
-            "git clone",
-            "git fetch origin --prune",
-            "git merge --ff-only",
-            "git cat-file -e",
-            "LOCAL_HEAD_SHA",
-            "select(.headSha ==",
-            "VERIFY_MODELS_RC",
-            "if !VERIFY_MODELS_RC! NEQ 0",
-            "PTH_COUNT",
-            "DLL_COUNT",
-            "gh workflow run",
-            "gh run watch",
-            "gh run download",
-            "MERSAD_AI_Windows_x64_Distribution",
-            "MERSAD_AI.exe",
-        )
+    push_non_comment_15 = [
+        ln.strip().lower()
+        for ln in push_bat_txt.splitlines()
+        if ln.strip() and not ln.strip().upper().startswith(("REM ", "ECHO "))
+    ]
+    has_all_12_steps = (
+        'set "ALLOWED_DEPLOY_BRANCH=fix/preview-0.1-postbuild-42273598736"' in push_bat_txt
+        and "BRANCH_NOT_IN_ALLOWLIST" in push_bat_txt
+        and 'tools\\deploy_and_run_github_actions.py" --live --branch "%TARGET_BRANCH%"' in push_bat_txt
+        and "exit /b !DEPLOY_EXIT_CODE!" in push_bat_txt
+    )
+    has_gh_commands = (
+        not any("git push" in ln for ln in push_non_comment_15)
+        and not any("gh workflow run" in ln for ln in push_non_comment_15)
+        and not any("default_branch=main" in ln for ln in push_non_comment_15)
+        and not any("_register_wf_" in ln for ln in push_non_comment_15)
     )
     no_hardcoded_pat = (
         ("ghp_" not in push_bat_txt)

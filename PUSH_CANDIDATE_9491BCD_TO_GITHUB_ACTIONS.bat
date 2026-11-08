@@ -3,19 +3,35 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-if "%MERSAD_DEPLOY_BRANCH%"=="" (
-    set "TARGET_BRANCH=fix/preview-0.1-postbuild-42273598736"
-) else (
-    set "TARGET_BRANCH=%MERSAD_DEPLOY_BRANCH%"
+set "ALLOWED_DEPLOY_BRANCH=fix/preview-0.1-postbuild-42273598736"
+set "TARGET_BRANCH=%ALLOWED_DEPLOY_BRANCH%"
+
+if defined MERSAD_DEPLOY_BRANCH (
+    if not "!MERSAD_DEPLOY_BRANCH!"=="!ALLOWED_DEPLOY_BRANCH!" (
+        echo [ERROR] BRANCH_NOT_IN_ALLOWLIST: MERSAD_DEPLOY_BRANCH="!MERSAD_DEPLOY_BRANCH!" is not in ALLOWED_DEPLOY_BRANCHES ^("!ALLOWED_DEPLOY_BRANCH!"^).
+        exit /b 3
+    )
 )
-if not "%~1"=="" set "TARGET_BRANCH=%~1"
+if defined MERSAD_BUILD_BRANCH (
+    if not "!MERSAD_BUILD_BRANCH!"=="!ALLOWED_DEPLOY_BRANCH!" (
+        echo [ERROR] BRANCH_NOT_IN_ALLOWLIST: MERSAD_BUILD_BRANCH="!MERSAD_BUILD_BRANCH!" is not in ALLOWED_DEPLOY_BRANCHES ^("!ALLOWED_DEPLOY_BRANCH!"^).
+        exit /b 3
+    )
+)
+if not "%~1"=="" (
+    if not "%~1"=="%ALLOWED_DEPLOY_BRANCH%" (
+        echo [ERROR] BRANCH_NOT_IN_ALLOWLIST: CLI branch argument "%~1" is not in ALLOWED_DEPLOY_BRANCHES ^("%ALLOWED_DEPLOY_BRANCH%"^).
+        exit /b 3
+    )
+    set "TARGET_BRANCH=%~1"
+)
 
 echo ========================================================================================
 echo   MERSAD AI ^& MERSAD LAB — Preview 0.1
 echo   واجهة التشغيل الموحدة للنشر والتحقق عبر المتحكم المركزي ^(tools\deploy_and_run_github_actions.py^)
-echo   الفرع المستهدف ^(Target Branch^): %TARGET_BRANCH%
+echo   الفرع المسموح حصرياً ^(Allowlisted Branch^): %TARGET_BRANCH%
 echo   ملاحظة أمنية: لا ينفذ هذا الملف أي git push مباشر أو دفع للأوسمة ^(Tags^) أو إخفاء للأخطاء؛
-echo   يتم تفويض جميع فحوصات Preflight والدفع الأحادي والاستقصاء المصفّى إلى المتحكم المركزي.
+echo   يتم فرض قائمة الفروع المسموحة ^(Allowlist^) وتفويض جميع فحوصات Preflight للمتحكم المركزي.
 echo ========================================================================================
 
 set "PY_CMD="

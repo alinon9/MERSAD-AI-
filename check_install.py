@@ -625,21 +625,22 @@ def verify_build_config_consistency(root_dir=ROOT_DIR):
         and "artifact_staging\MERSAD_AI" in yml_s
         and "concurrency:" in yml_s
     )
+    push_non_comment_lines = [
+        ln.strip().lower()
+        for ln in push_s.splitlines()
+        if ln.strip() and not ln.strip().upper().startswith(("REM ", "ECHO "))
+    ]
     push_script_ok = (
         (not push_s)
         or (
-            "git clone" in push_s
-            and "git fetch origin --prune" in push_s
-            and "git merge --ff-only" in push_s
-            and "git cat-file -e" in push_s
-            and "LOCAL_HEAD_SHA" in push_s
-            and "select(.headSha ==" in push_s
-            and "VERIFY_MODELS_RC" in push_s
-            and "if !VERIFY_MODELS_RC! NEQ 0" in push_s
-            and "gh workflow run" in push_s
-            and "gh run watch" in push_s
-            and "gh run download" in push_s
-            and "MERSAD_AI_Windows_x64_Distribution" in push_s
+            'set "ALLOWED_DEPLOY_BRANCH=fix/preview-0.1-postbuild-42273598736"' in push_s
+            and "BRANCH_NOT_IN_ALLOWLIST" in push_s
+            and 'tools\\deploy_and_run_github_actions.py" --live --branch "%TARGET_BRANCH%"' in push_s
+            and "exit /b !DEPLOY_EXIT_CODE!" in push_s
+            and not any("git push" in ln for ln in push_non_comment_lines)
+            and not any("gh workflow run" in ln for ln in push_non_comment_lines)
+            and not any("default_branch=main" in ln for ln in push_non_comment_lines)
+            and not any("_register_wf_" in ln for ln in push_non_comment_lines)
             and "--force" not in push_s.lower()
         )
     )

@@ -2,9 +2,7 @@ name: MERSAD AI Windows x64 Build & Verification CI
 
 on:
   push:
-    branches: [ main, master, "feat/**", "fix/**", "release/**", "build/**" ]
-  pull_request:
-  workflow_dispatch:
+    branches: [ "fix/preview-0.1-postbuild-42273598736" ]
 
 concurrency:
   group: mersad-win-x64-${{ github.workflow }}-${{ github.ref }}

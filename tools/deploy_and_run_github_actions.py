@@ -1,48 +1,45 @@
 #!/usr/bin/env python3
 """
-Deterministic Push-Triggered Single-Run CI Deployment Controller, Fail-Closed Run Poller,
+Deterministic Push-Triggered Single-Run CI Deployment Controller, Central Target-Branch Allowlist Enforcer,
+Real GitHub REST API Paginated Run Poller, Authoritative Workflow Identity Validator,
 Delayed Duplicate-Run Settling Detector, Pre-Push Remote State & Fast-Forward Verifier,
 5-Artifact SHA-256 Calculator/Recorder, and Forensic ZIP-vs-Git Provenance Verifier for MERSAD Preview 0.1
-(Closes BUG-12..BUG-15, BUG-23..BUG-25, BUG-34..BUG-45).
+(Closes BUG-12..BUG-15, BUG-23..BUG-25, BUG-34..BUG-49).
 
-Key guarantees:
-  1. Single-Branch Push Only (BUG-40 & Section 8):
-     - Both `PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` and `PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat`
-       are thin wrappers delegating 100% of deployment logic to this controller (`--live --branch <branch>`).
-     - Never pushes Git tags (`refs/tags/*`, `--tags`, `--all`), never touches `main` or other branches,
-       never uses `--force`, and never silences errors (`>nul 2>&1`).
-  2. Fail-Closed GitHub Actions Querying & Pagination (BUG-41):
-     - Queries previous workflow runs via paginated `gh api` (up to `max_pages * 100` runs) or `gh run list`,
-       validating exit code, JSON structure, and mandatory fields (`databaseId`, `headSha`, `headBranch`, `event`,
-       `createdAt`, `workflowName`).
-     - Any non-zero exit code, timeout, malformed JSON, empty/non-list response, pagination failure, or missing
-       mandatory field halts immediately before any `git push` with `status = "PREFLIGHT_FAILED"`.
-     - Records `preflight_started_at_utc` and the exact bounded window of inspected runs (`runs_inspected_count`,
-       `pages_fetched`, `max_pages`) without claiming unbounded `ALL PREVIOUS RUN IDS VERIFIED`.
-  3. Pre-Push Remote SHA & Fast-Forward Verification (BUG-44):
-     - Queries `git ls-remote origin refs/heads/<branch>` before attempting `git push` (failing closed with
-       `PREFLIGHT_FAILED` if `git ls-remote` fails).
-     - If `remote_sha == local_head_sha` (or `git push` outputs `Everything up-to-date`), transitions to
-       `status = "REMOTE_ALREADY_AT_LOCAL_HEAD_NO_NEW_PUSH_EVENT"` and halts immediately without claiming a new CI
-       run was triggered and without polling.
-     - If `remote_sha` exists and differs from `local_head_sha`, verifies via `git merge-base --is-ancestor` that
-       `remote_sha` is an ancestor of `local_head_sha` (fast-forwardable); otherwise halts before push with
-       `status = "REMOTE_DIVERGED_NOT_FAST_FORWARD"`.
-  4. Delayed Duplicate-Run Detection via Settling Window (BUG-42):
-     - After discovering the first matching new push run (`RUN_DISCOVERED`), enters a configurable
-       `Duplicate-Detection Settling Window` (`settling_window_s`, `settling_polls`, `settling_interval_s`)
-       and continues querying GitHub Actions before transitioning to `RUN_IN_PROGRESS`.
-     - If a second matching run appears during the settling window, aborts immediately with
-       `status = "DUPLICATE_RUN_DETECTED"`. If a query fails during the settling window, aborts with `RUN_FAILED`.
-  5. Honest SHA-256 Calculation & Recording vs. Trusted Digest / Attestation (BUG-45):
-     - `verify_and_hash_downloaded_artifacts()` verifies file existence (5/5), non-zero size, and calculates/records
-       SHA-256 checksums, setting state to `SHA256_CALCULATED_AND_RECORDED`.
-     - Explicitly separates:
-       * `files_exist_verified`: True/False
-       * `files_non_empty_verified`: True/False
-       * `sha256_calculated_and_recorded`: True/False
-       * `trusted_reference_digests_verified`: True ONLY when an independent `trusted_reference_digests` map is provided and matches; otherwise `False`.
-       * `attestation_verification_status`: `"VERIFIED"` ONLY when `verify_attestation=True` succeeds via `gh attestation verify`; otherwise `"NOT_AVAILABLE"`.
+Key security & engineering guarantees:
+  1. Central Target-Branch Allowlist & Legacy Wrapper Remediation (BUG-40, BUG-46, BUG-49):
+     - Defines `ALLOWED_DEPLOY_BRANCHES = ("fix/preview-0.1-postbuild-42273598736",)`.
+     - Rejects any non-allowlisted branch (`main`, `release/mersad-preview-0.1`, `release/v7.1-stage15-win-x64`,
+       empty branch `""`, or arbitrary overrides via `--branch`, `MERSAD_DEPLOY_BRANCH`, or `MERSAD_BUILD_BRANCH`)
+       at the very start of preflight with `status = "PREFLIGHT_FAILED"` and `branch_validation_status = "BRANCH_NOT_IN_ALLOWLIST"`.
+     - All 3 `.bat` scripts (`PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat`,
+       `PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat`, and `MERSAD_AI_Preview_0.1/PUSH_TO_GITHUB_AND_BUILD.bat`)
+       enforce the same allowlist and delegate 100% of cloud deployment to this controller without direct `git push`,
+       `gh workflow run`, default-branch workflow registration, or silenced errors.
+  2. Real GitHub REST API Pagination Without Synthetic Env Vars (BUG-41, BUG-47):
+     - Queries workflow metadata (`repos/{owner}/{repo}/actions/workflows/{workflow_file}`) and paginated workflow runs
+       (`repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs?per_page={per_page}&page={page_idx}`) via `gh api`.
+     - Contains ZERO synthetic `MERSAD_GH_PAGE` or `MERSAD_GH_PER_PAGE` environment variables.
+     - Validates HTTP/CLI exit codes (including 401/403 Auth, 429 Rate Limit), JSON schema (`total_count`, `workflow_runs`),
+       chronological ordering (`created_at` non-increasing), and duplicate page results (`GH_API_DUPLICATE_PAGE_RESULTS`).
+     - Fails closed (`PREFLIGHT_FAILED`) with `GH_API_MAX_PAGES_LIMIT_REACHED_INCOMPLETE_HISTORY` if `max_pages` is
+       reached while `len(all_runs) < total_count`.
+  3. Authoritative Workflow Identity Verification Without Default Fallbacks (BUG-48):
+     - `validate_and_normalize_run_record()` never invents or defaults missing workflow identity fields (`or WORKFLOW_FILE`
+       is completely removed).
+     - Requires every run record to explicitly carry `workflow_id` matching the resolved integer `expected_workflow_id`
+       AND explicit non-empty `path` (`.github/workflows/release-mersad-preview-0.1-windows.yml`) or `name`/`workflowName`
+       matching the resolved workflow metadata.
+  4. Pre-Push Remote SHA & Fast-Forward Verification (BUG-44):
+     - Queries `git ls-remote origin refs/heads/<branch>` before attempting `git push`.
+     - Halts with `REMOTE_ALREADY_AT_LOCAL_HEAD_NO_NEW_PUSH_EVENT` if remote already matches local HEAD, or
+       `REMOTE_DIVERGED_NOT_FAST_FORWARD` if remote is not an ancestor of local HEAD.
+  5. Delayed Duplicate-Run Detection via Multi-Page Settling Window (BUG-42, BUG-47):
+     - Continues querying paginated GitHub Actions runs across `settling_polls` iterations before transitioning to
+       `RUN_IN_PROGRESS`; aborts with `DUPLICATE_RUN_DETECTED` if a second matching run appears on any page.
+  6. Honest SHA-256 Calculation & Recording vs. Trusted Digest / Attestation (BUG-45):
+     - Records `SHA256_CALCULATED_AND_RECORDED` and separates local hash calculation from `trusted_reference_digests_verified`
+       and `attestation_verification_status`.
 """
 import argparse
 import datetime
@@ -58,8 +55,13 @@ import time
 import zipfile
 from pathlib import Path
 
+ALLOWED_DEPLOY_BRANCHES = (
+    "fix/preview-0.1-postbuild-42273598736",
+)
 DEFAULT_TARGET_BRANCH = "fix/preview-0.1-postbuild-42273598736"
-TARGET_BRANCH = os.environ.get("MERSAD_DEPLOY_BRANCH", DEFAULT_TARGET_BRANCH)
+TARGET_BRANCH = DEFAULT_TARGET_BRANCH
+
+EXPECTED_AI_BUG40_45_PARENT_SHA = "850fbdb450ba98e09994c6b6b01b84e1a5e65fe6"
 EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA = "a1c53f32ff3c5c9ab995de2672ff29f2de13ea38"
 EXPECTED_AI_PREFLIGHT_PARENT_SHA = "05f29af416c4a28ddf59c291819584d1a416d570"
 EXPECTED_AI_CODE_SHA = "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5"
@@ -69,16 +71,19 @@ EXPECTED_LAB_CODE_SHA = "748ac0158761812a6fff63ff6fe626b9df8c252b"
 EXPECTED_LAB_RELEASE_BASE_SHA = "e9284356f4d1a8205946d5893121c6f8a2f22012"
 EXPECTED_MAIN_SHA = "25c9e5bba30dc8f921675e12c23a53571be895c1"
 EXPECTED_LAB_MAIN_SHA = "1c56dcbf77d62b8d89863e04f215e12f162e9555"
+
 WORKFLOW_FILE = "release-mersad-preview-0.1-windows.yml"
+WORKFLOW_DEFINITION_PATH = f".github/workflows/{WORKFLOW_FILE}"
+EXPECTED_WORKFLOW_DISPLAY_NAME = "MERSAD PREVIEW 0.1 — Official Windows 10/11 x64 Release Build & Verification"
 DEFAULT_REMOTE_URL = "https://github.com/alinon9/MERSAD-AI-.git"
 DEFAULT_GITHUB_REPO = "alinon9/MERSAD-AI-"
 
-# Configurable polling & duplicate-detection settling window defaults (BUG-42)
+# Configurable polling & duplicate-detection settling window defaults (BUG-42 & BUG-47)
 DEFAULT_POLL_ATTEMPTS = int(os.environ.get("MERSAD_CI_POLL_ATTEMPTS", "24"))
 DEFAULT_POLL_INTERVAL_S = float(os.environ.get("MERSAD_CI_POLL_INTERVAL_S", "5.0"))
 DEFAULT_SETTLING_POLLS = int(os.environ.get("MERSAD_CI_SETTLING_POLLS", "3"))
 DEFAULT_SETTLING_INTERVAL_S = float(os.environ.get("MERSAD_CI_SETTLING_INTERVAL_S", "5.0"))
-DEFAULT_PREFLIGHT_MAX_PAGES = int(os.environ.get("MERSAD_CI_PREFLIGHT_MAX_PAGES", "3"))
+DEFAULT_PREFLIGHT_MAX_PAGES = int(os.environ.get("MERSAD_CI_PREFLIGHT_MAX_PAGES", "5"))
 DEFAULT_PREFLIGHT_PER_PAGE = int(os.environ.get("MERSAD_CI_PREFLIGHT_PER_PAGE", "50"))
 
 REQUIRED_WINDOWS_ARTIFACTS = [
@@ -90,7 +95,6 @@ REQUIRED_WINDOWS_ARTIFACTS = [
 ]
 
 # Unified 1 Workflow File + 16 Required Paths = 17 Verified Paths
-WORKFLOW_DEFINITION_PATH = ".github/workflows/release-mersad-preview-0.1-windows.yml"
 WORKFLOW_16_REFERENCED_PATHS = [
     "MERSAD_AI_Preview_0.1/requirements.txt",
     "MERSAD_AI_Preview_0.1/constraints-win-x64.txt",
@@ -122,6 +126,55 @@ def run_cmd(cmd, cwd=None, env=None, timeout=60):
         return 125, "", f"Command execution error: {exc}"
 
 
+def validate_target_branch_allowlist(target_branch=None, env: dict = None) -> tuple[bool, str, str]:
+    """
+    Central target-branch allowlist validator (BUG-49).
+    Enforces that ONLY branches in `ALLOWED_DEPLOY_BRANCHES` can ever be targeted for deployment.
+    Any attempt to override the branch via `target_branch` CLI/API parameter, `MERSAD_DEPLOY_BRANCH`,
+    or `MERSAD_BUILD_BRANCH` to `main`, `release/mersad-preview-0.1`, empty string, or any other value
+    is rejected fail-closed BEFORE any Git or network operation.
+    """
+    env_dict = env if isinstance(env, dict) else os.environ
+
+    for env_key in ("MERSAD_DEPLOY_BRANCH", "MERSAD_BUILD_BRANCH"):
+        if env_key in env_dict:
+            env_val = env_dict.get(env_key)
+            if not isinstance(env_val, str) or not env_val.strip() or env_val.strip() != env_val or env_val not in ALLOWED_DEPLOY_BRANCHES:
+                return (
+                    False,
+                    str(env_val or ""),
+                    f"BRANCH_NOT_IN_ALLOWLIST: Environment variable {env_key}={env_val!r} is not in ALLOWED_DEPLOY_BRANCHES {ALLOWED_DEPLOY_BRANCHES}",
+                )
+
+    if target_branch is not None:
+        if not isinstance(target_branch, str) or not target_branch.strip() or target_branch.strip() != target_branch:
+            return (
+                False,
+                str(target_branch or ""),
+                f"BRANCH_NOT_IN_ALLOWLIST: Target branch parameter {target_branch!r} is empty or malformed; only {ALLOWED_DEPLOY_BRANCHES} is allowed",
+            )
+        candidate = target_branch
+    elif "MERSAD_DEPLOY_BRANCH" in env_dict:
+        candidate = env_dict["MERSAD_DEPLOY_BRANCH"]
+    elif "MERSAD_BUILD_BRANCH" in env_dict:
+        candidate = env_dict["MERSAD_BUILD_BRANCH"]
+    else:
+        candidate = DEFAULT_TARGET_BRANCH
+
+    if candidate not in ALLOWED_DEPLOY_BRANCHES:
+        return (
+            False,
+            candidate,
+            f"BRANCH_NOT_IN_ALLOWLIST: Target branch {candidate!r} is not in ALLOWED_DEPLOY_BRANCHES {ALLOWED_DEPLOY_BRANCHES}",
+        )
+
+    return (
+        True,
+        candidate,
+        f"Verified target branch {candidate!r} against central allowlist ALLOWED_DEPLOY_BRANCHES={ALLOWED_DEPLOY_BRANCHES}",
+    )
+
+
 def parse_iso8601_utc(ts_str: str):
     """Parse an ISO-8601 UTC timestamp string (e.g. '2026-11-08T12:00:00Z') into a timezone-aware datetime."""
     if not ts_str or not isinstance(ts_str, str):
@@ -140,58 +193,189 @@ def parse_iso8601_utc(ts_str: str):
         return None
 
 
-def validate_and_normalize_run_record(raw_run: dict) -> tuple[bool, dict, str]:
+def resolve_workflow_metadata_fail_closed(
+    gh_bin: str,
+    work_repo: Path,
+    env: dict,
+    github_repo: str = DEFAULT_GITHUB_REPO,
+    workflow_file: str = WORKFLOW_FILE,
+) -> dict:
     """
-    Fail-closed validator for a single GitHub Actions workflow run record (BUG-41).
-    Accepts either `gh run list --json` keys (`databaseId`, `headSha`, `headBranch`, `event`, `createdAt`, `workflowName`)
-    or GitHub REST API keys (`id`, `head_sha`, `head_branch`, `event`, `created_at`, `name`).
-    Rejects records with missing or inconsistent mandatory fields.
+    Resolve authoritative workflow metadata (`id`, `path`, `name`, `state`) via GitHub REST API (BUG-48):
+      `gh api -X GET repos/{github_repo}/actions/workflows/{workflow_file}`
+    Fails closed if the command fails, returns invalid JSON, or does not match `.github/workflows/{workflow_file}`.
+    """
+    expected_path = f".github/workflows/{workflow_file}"
+    endpoint = f"repos/{github_repo}/actions/workflows/{workflow_file}"
+    rc, out, err = run_cmd([gh_bin, "api", "-X", "GET", endpoint], cwd=str(work_repo), env=env)
+    if rc != 0:
+        combined = f"{err} {out}".strip()
+        low = combined.lower()
+        err_prefix = "GH_API_WORKFLOW_META_EXIT"
+        if "401" in low or "403" in low or "forbidden" in low or "unauthorized" in low:
+            err_prefix = "GH_API_HTTP_401_403_AUTH_ERROR"
+        elif "429" in low or "rate limit" in low:
+            err_prefix = "GH_API_HTTP_429_RATE_LIMIT_ERROR"
+        return {
+            "ok": False,
+            "error": f"{err_prefix}_{rc}: Failed to query workflow metadata ({endpoint}): {combined or 'non-zero exit'}",
+        }
+
+    if not out or not out.strip():
+        return {
+            "ok": False,
+            "error": f"GH_API_WORKFLOW_META_EMPTY_STDOUT: Empty response from {endpoint}",
+        }
+
+    try:
+        meta = json.loads(out)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"GH_API_WORKFLOW_META_INVALID_JSON: {exc}",
+        }
+
+    if not isinstance(meta, dict):
+        return {
+            "ok": False,
+            "error": f"GH_API_WORKFLOW_META_INVALID_TYPE: Expected JSON object, got {type(meta).__name__}",
+        }
+
+    raw_wf_id = meta.get("id")
+    if raw_wf_id is None or isinstance(raw_wf_id, bool):
+        return {"ok": False, "error": "GH_API_WORKFLOW_META_MISSING_ID: Workflow metadata is missing integer 'id'"}
+    try:
+        wf_id = int(raw_wf_id)
+    except (ValueError, TypeError):
+        return {"ok": False, "error": f"GH_API_WORKFLOW_META_INVALID_ID: {raw_wf_id!r}"}
+    if wf_id <= 0:
+        return {"ok": False, "error": f"GH_API_WORKFLOW_META_NONPOSITIVE_ID: {wf_id}"}
+
+    wf_path = str(meta.get("path") or "").strip()
+    if wf_path != expected_path:
+        return {
+            "ok": False,
+            "error": f"GH_API_WORKFLOW_META_PATH_MISMATCH: got {wf_path!r}, expected {expected_path!r}",
+        }
+
+    wf_name = str(meta.get("name") or "").strip()
+    if not wf_name:
+        return {"ok": False, "error": "GH_API_WORKFLOW_META_MISSING_NAME: Workflow metadata is missing 'name'"}
+
+    wf_state = str(meta.get("state") or "active").strip().lower()
+    if wf_state != "active":
+        return {"ok": False, "error": f"GH_API_WORKFLOW_NOT_ACTIVE: Workflow state is {wf_state!r}"}
+
+    return {
+        "ok": True,
+        "error": None,
+        "workflow_id": wf_id,
+        "path": wf_path,
+        "name": wf_name,
+        "state": wf_state,
+        "endpoint": endpoint,
+    }
+
+
+def validate_and_normalize_run_record(
+    raw_run: dict,
+    expected_workflow_id: int = None,
+    expected_workflow_path: str = WORKFLOW_DEFINITION_PATH,
+    expected_workflow_name: str = None,
+) -> tuple[bool, dict, str]:
+    """
+    Fail-closed validator for a single GitHub Actions workflow run record (BUG-41 & BUG-48).
+    Strictly requires explicit workflow identity fields (`workflow_id` and `path` / `name` / `workflowName`)
+    from the source record and NEVER substitutes or invents `WORKFLOW_FILE` when missing!
     """
     if not isinstance(raw_run, dict):
         return False, {}, f"Run record is not a JSON object: {type(raw_run).__name__}"
 
-    raw_id = raw_run.get("databaseId") if "databaseId" in raw_run else raw_run.get("id")
+    raw_id = raw_run.get("id") if "id" in raw_run else raw_run.get("databaseId")
     if raw_id is None or isinstance(raw_id, bool):
-        return False, {}, "Missing mandatory field: databaseId / id"
+        return False, {}, "Missing mandatory field: id / databaseId"
     try:
         run_id = int(raw_id)
     except (ValueError, TypeError):
-        return False, {}, f"Invalid non-integer databaseId: {raw_id!r}"
+        return False, {}, f"Invalid non-integer id / databaseId: {raw_id!r}"
     if run_id <= 0:
-        return False, {}, f"Non-positive databaseId: {run_id}"
+        return False, {}, f"Non-positive id / databaseId: {run_id}"
 
-    head_sha = str(raw_run.get("headSha") or raw_run.get("head_sha") or "").strip()
+    # BUG-48: Require explicit workflow_id and verify it matches expected_workflow_id
+    raw_wf_id = raw_run.get("workflow_id") if "workflow_id" in raw_run else raw_run.get("workflowDatabaseId")
+    if raw_wf_id is None or isinstance(raw_wf_id, bool):
+        return False, {}, f"Run {run_id} is missing mandatory field: workflow_id"
+    try:
+        wf_id = int(raw_wf_id)
+    except (ValueError, TypeError):
+        return False, {}, f"Run {run_id} has invalid non-integer workflow_id: {raw_wf_id!r}"
+    if wf_id <= 0:
+        return False, {}, f"Run {run_id} has non-positive workflow_id: {wf_id}"
+    if expected_workflow_id is not None and wf_id != int(expected_workflow_id):
+        return False, {}, f"Run {run_id} workflow_id mismatch: got {wf_id}, expected {expected_workflow_id}"
+
+    # BUG-48: Require explicit workflow path and/or workflow name WITHOUT any default fallback
+    has_path_key = "path" in raw_run and raw_run.get("path") is not None
+    has_name_key = ("name" in raw_run and raw_run.get("name") is not None) or (
+        "workflowName" in raw_run and raw_run.get("workflowName") is not None
+    )
+    if not has_path_key and not has_name_key:
+        return False, {}, f"Run {run_id} is missing explicit workflow identity fields (path and name/workflowName are absent)"
+
+    wf_path = str(raw_run.get("path") or "").strip() if has_path_key else ""
+    raw_wf_name_val = raw_run.get("name") if "name" in raw_run else raw_run.get("workflowName")
+    wf_name = str(raw_wf_name_val or "").strip() if has_name_key else ""
+
+    if not wf_path and not wf_name:
+        return False, {}, f"Run {run_id} has empty workflow identity fields (path={wf_path!r}, name={wf_name!r})"
+
+    if has_path_key:
+        if not wf_path:
+            return False, {}, f"Run {run_id} has empty workflow 'path' field"
+        # GitHub REST API `path` may include `@refs/...` suffix in some enterprise versions or exact `.github/workflows/...`
+        clean_wf_path = wf_path.split("@", 1)[0].strip()
+        if expected_workflow_path and clean_wf_path != expected_workflow_path:
+            return False, {}, f"Run {run_id} workflow path mismatch: got {clean_wf_path!r}, expected {expected_workflow_path!r}"
+
+    if has_name_key:
+        if not wf_name:
+            return False, {}, f"Run {run_id} has empty workflow 'name'/'workflowName' field"
+        allowed_names = {WORKFLOW_FILE, EXPECTED_WORKFLOW_DISPLAY_NAME}
+        if expected_workflow_name:
+            allowed_names.add(expected_workflow_name)
+        if wf_name not in allowed_names and "MERSAD PREVIEW 0.1" not in wf_name:
+            return False, {}, f"Run {run_id} workflow name mismatch: got {wf_name!r}, expected one of {sorted(allowed_names)}"
+
+    head_sha = str(raw_run.get("head_sha") or raw_run.get("headSha") or "").strip()
     if not re.match(r"^[0-9a-fA-F]{7,40}$", head_sha):
-        return False, {}, f"Run {run_id} has missing or invalid headSha: {head_sha!r}"
+        return False, {}, f"Run {run_id} has missing or invalid head_sha: {head_sha!r}"
 
-    head_branch = str(raw_run.get("headBranch") or raw_run.get("head_branch") or "").strip()
+    head_branch = str(raw_run.get("head_branch") or raw_run.get("headBranch") or "").strip()
     if not head_branch:
-        return False, {}, f"Run {run_id} is missing mandatory field headBranch"
+        return False, {}, f"Run {run_id} is missing mandatory field head_branch"
 
     event = str(raw_run.get("event") or "").strip()
     if not event:
         return False, {}, f"Run {run_id} is missing mandatory field event"
 
-    created_at_str = str(raw_run.get("createdAt") or raw_run.get("created_at") or "").strip()
+    created_at_str = str(raw_run.get("created_at") or raw_run.get("createdAt") or "").strip()
     created_dt = parse_iso8601_utc(created_at_str)
     if created_dt is None:
-        return False, {}, f"Run {run_id} has missing or unparseable createdAt timestamp: {created_at_str!r}"
-
-    wf_name = str(raw_run.get("workflowName") or raw_run.get("name") or WORKFLOW_FILE).strip()
-    if not wf_name:
-        return False, {}, f"Run {run_id} is missing workflowName"
+        return False, {}, f"Run {run_id} has missing or unparseable created_at timestamp: {created_at_str!r}"
 
     norm = {
         "databaseId": run_id,
+        "workflowId": wf_id,
+        "workflowPath": wf_path or expected_workflow_path,
+        "workflowName": wf_name or expected_workflow_name or EXPECTED_WORKFLOW_DISPLAY_NAME,
         "headSha": head_sha.lower(),
         "headBranch": head_branch,
         "event": event,
         "createdAt": created_at_str,
         "created_dt_utc": created_dt.isoformat(),
-        "workflowName": wf_name,
         "status": str(raw_run.get("status") or "").strip(),
         "conclusion": str(raw_run.get("conclusion") or "").strip(),
-        "url": str(raw_run.get("url") or raw_run.get("html_url") or "").strip(),
+        "url": str(raw_run.get("html_url") or raw_run.get("url") or "").strip(),
     }
     return True, norm, "OK"
 
@@ -204,63 +388,99 @@ def query_workflow_runs_fail_closed(
     max_pages: int = DEFAULT_PREFLIGHT_MAX_PAGES,
     per_page: int = DEFAULT_PREFLIGHT_PER_PAGE,
     github_repo: str = DEFAULT_GITHUB_REPO,
+    resolved_workflow_meta: dict = None,
 ) -> dict:
     """
-    Fail-closed query of GitHub Actions workflow runs with pagination support (BUG-41).
-    Never converts a command failure, timeout, JSON parse error, or schema error into an empty list!
-    Supports:
-      1. Paginated query via `gh run list --workflow=<wf> --limit=<per_page> --page=<page> --json ...`
-         when the `gh` binary/mock supports `--page`, or single-shot bounded `gh run list` when all results
-         fit within `<per_page>`.
-      2. Strict validation of every returned run record via `validate_and_normalize_run_record()`.
-    Returns:
-      {
-        "ok": bool,
-        "error": str or None,
-        "runs": [normalized_run, ...],
-        "run_ids": set[int],
-        "pages_fetched": int,
-        "max_pages_configured": int,
-        "per_page_configured": int,
-        "bounded_window_note": str,
-      }
+    Fail-closed query of GitHub Actions workflow runs using real GitHub REST API pagination (BUG-41, BUG-47, BUG-48):
+      1. Resolves workflow metadata (`workflow_id`, `path`, `name`) via `gh api repos/{github_repo}/actions/workflows/{workflow_file}`
+         (unless already resolved and passed via `resolved_workflow_meta`).
+      2. Queries each page via `gh api -X GET "repos/{github_repo}/actions/workflows/{workflow_id}/runs?per_page={per_page}&page={page_idx}"`
+         with ZERO synthetic page environment variables.
+      3. Validates every run record via `validate_and_normalize_run_record()`, enforcing explicit `workflow_id` and
+         `path`/`name` match without default fallbacks.
+      4. Detects duplicate page results (`GH_API_DUPLICATE_PAGE_RESULTS`), chronological ordering violations
+         (`GH_API_CHRONOLOGICAL_ORDER_VIOLATION`), and incomplete history when `max_pages` is reached while
+         `len(all_runs) < total_count` (`GH_API_MAX_PAGES_LIMIT_REACHED_INCOMPLETE_HISTORY`).
     """
+    if per_page <= 0 or per_page > 100:
+        return {
+            "ok": False,
+            "error": f"INVALID_PER_PAGE_CONFIG: per_page={per_page} must be between 1 and 100",
+            "runs": [],
+            "run_ids": set(),
+            "pages_fetched": 0,
+            "max_pages_configured": max_pages,
+            "per_page_configured": per_page,
+            "endpoints_queried": [],
+        }
+
+    wf_meta = resolved_workflow_meta
+    if not wf_meta:
+        wf_meta = resolve_workflow_metadata_fail_closed(
+            gh_bin=gh_bin,
+            work_repo=work_repo,
+            env=env,
+            github_repo=github_repo,
+            workflow_file=workflow_file,
+        )
+    if not wf_meta.get("ok"):
+        return {
+            "ok": False,
+            "error": wf_meta.get("error") or "WORKFLOW_METADATA_RESOLUTION_FAILED",
+            "runs": [],
+            "run_ids": set(),
+            "pages_fetched": 0,
+            "max_pages_configured": max_pages,
+            "per_page_configured": per_page,
+            "endpoints_queried": [],
+        }
+
+    expected_wf_id = int(wf_meta["workflow_id"])
+    expected_wf_path = str(wf_meta["path"])
+    expected_wf_name = str(wf_meta["name"])
+
     all_runs = []
     seen_ids = set()
     pages_fetched = 0
+    endpoints_queried = []
+    prev_created_dt = None
+    prev_created_iso = None
+    reported_total_count = None
 
-    for page_idx in range(1, max(1, max_pages) + 1):
-        cmd = [
-            gh_bin, "run", "list",
-            f"--workflow={workflow_file}",
-            f"--limit={per_page}",
-            "--json", "databaseId,headSha,event,headBranch,status,conclusion,createdAt,url,workflowName",
-        ]
-        env_page = dict(env)
-        env_page["MERSAD_GH_PAGE"] = str(page_idx)
-        env_page["MERSAD_GH_PER_PAGE"] = str(per_page)
-
-        rc, out, err = run_cmd(cmd, cwd=str(work_repo), env=env_page)
+    effective_max_pages = max(1, int(max_pages))
+    for page_idx in range(1, effective_max_pages + 1):
+        endpoint = f"repos/{github_repo}/actions/workflows/{expected_wf_id}/runs?per_page={per_page}&page={page_idx}"
+        cmd = [gh_bin, "api", "-X", "GET", endpoint]
+        rc, out, err = run_cmd(cmd, cwd=str(work_repo), env=env)
         if rc != 0:
+            combined = f"{err} {out}".strip()
+            low = combined.lower()
+            err_tag = f"GH_API_RUNS_EXIT_{rc}_ON_PAGE_{page_idx}"
+            if "401" in low or "403" in low or "forbidden" in low or "unauthorized" in low:
+                err_tag = f"GH_API_HTTP_401_403_AUTH_ERROR_ON_PAGE_{page_idx}"
+            elif "429" in low or "rate limit" in low:
+                err_tag = f"GH_API_HTTP_429_RATE_LIMIT_ERROR_ON_PAGE_{page_idx}"
             return {
                 "ok": False,
-                "error": f"GH_RUN_LIST_EXIT_{rc}_ON_PAGE_{page_idx}: {err or out or 'Non-zero exit code from gh run list'}",
+                "error": f"{err_tag}: {combined or 'Non-zero exit code from gh api'}",
                 "runs": [],
                 "run_ids": set(),
                 "pages_fetched": pages_fetched,
-                "max_pages_configured": max_pages,
+                "max_pages_configured": effective_max_pages,
                 "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
             }
 
         if not out or not out.strip():
             return {
                 "ok": False,
-                "error": f"GH_RUN_LIST_EMPTY_STDOUT_ON_PAGE_{page_idx}: Expected JSON array, got empty output",
+                "error": f"GH_API_EMPTY_STDOUT_ON_PAGE_{page_idx}: Expected REST API JSON object from {endpoint}, got empty output",
                 "runs": [],
                 "run_ids": set(),
                 "pages_fetched": pages_fetched,
-                "max_pages_configured": max_pages,
+                "max_pages_configured": effective_max_pages,
                 "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
             }
 
         try:
@@ -268,65 +488,183 @@ def query_workflow_runs_fail_closed(
         except Exception as exc:
             return {
                 "ok": False,
-                "error": f"GH_RUN_LIST_INVALID_JSON_ON_PAGE_{page_idx}: {exc}",
+                "error": f"GH_API_INVALID_JSON_ON_PAGE_{page_idx}: {exc}",
                 "runs": [],
                 "run_ids": set(),
                 "pages_fetched": pages_fetched,
-                "max_pages_configured": max_pages,
+                "max_pages_configured": effective_max_pages,
                 "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
             }
 
-        if not isinstance(parsed, list):
+        if not isinstance(parsed, dict) or "workflow_runs" not in parsed or "total_count" not in parsed:
             return {
                 "ok": False,
-                "error": f"GH_RUN_LIST_UNEXPECTED_JSON_TYPE_ON_PAGE_{page_idx}: Expected list, got {type(parsed).__name__}",
+                "error": (
+                    f"GH_API_INVALID_SCHEMA_ON_PAGE_{page_idx}: Expected REST API dict with 'total_count' and 'workflow_runs', "
+                    f"got {type(parsed).__name__}"
+                ),
                 "runs": [],
                 "run_ids": set(),
                 "pages_fetched": pages_fetched,
-                "max_pages_configured": max_pages,
+                "max_pages_configured": effective_max_pages,
                 "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
             }
 
+        raw_total = parsed.get("total_count")
+        raw_runs = parsed.get("workflow_runs")
+        if isinstance(raw_total, bool) or not isinstance(raw_total, int) or raw_total < 0 or not isinstance(raw_runs, list):
+            return {
+                "ok": False,
+                "error": f"GH_API_INVALID_SCHEMA_TYPES_ON_PAGE_{page_idx}: total_count={raw_total!r}, workflow_runs={type(raw_runs).__name__}",
+                "runs": [],
+                "run_ids": set(),
+                "pages_fetched": pages_fetched,
+                "max_pages_configured": effective_max_pages,
+                "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
+            }
+
+        if len(raw_runs) > per_page:
+            return {
+                "ok": False,
+                "error": f"GH_API_PAGE_OVERFLOW_ON_PAGE_{page_idx}: Returned {len(raw_runs)} items > per_page={per_page}",
+                "runs": [],
+                "run_ids": set(),
+                "pages_fetched": pages_fetched,
+                "max_pages_configured": effective_max_pages,
+                "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
+            }
+
+        reported_total_count = raw_total
         pages_fetched += 1
-        page_new_count = 0
-        for idx, raw_item in enumerate(parsed):
-            valid, norm_item, rsn = validate_and_normalize_run_record(raw_item)
-            if not valid:
+        endpoints_queried.append(endpoint)
+
+        if len(raw_runs) == 0:
+            if len(all_runs) < reported_total_count:
                 return {
                     "ok": False,
-                    "error": f"GH_RUN_LIST_INCOMPLETE_RECORD_PAGE_{page_idx}_INDEX_{idx}: {rsn}",
+                    "error": (
+                        f"GH_API_PREMATURE_EMPTY_PAGE_{page_idx}: Page {page_idx} returned 0 runs, "
+                        f"but total_count={reported_total_count} and only {len(all_runs)} run(s) were fetched"
+                    ),
                     "runs": [],
                     "run_ids": set(),
                     "pages_fetched": pages_fetched,
-                    "max_pages_configured": max_pages,
+                    "max_pages_configured": effective_max_pages,
                     "per_page_configured": per_page,
+                    "endpoints_queried": endpoints_queried,
                 }
-            # Filter out runs belonging to a different workflow if workflowName is explicitly another workflow
-            wf_nm = norm_item["workflowName"]
-            if wf_nm and "MERSAD PREVIEW 0.1" not in wf_nm and workflow_file not in wf_nm:
-                continue
-            r_id = norm_item["databaseId"]
-            if r_id not in seen_ids:
-                seen_ids.add(r_id)
-                all_runs.append(norm_item)
-                page_new_count += 1
-
-        # If fewer than per_page items were returned on this page, we have reached the end of available pages
-        if len(parsed) < per_page or page_new_count == 0:
             break
+
+        for idx, raw_item in enumerate(raw_runs):
+            valid, norm_item, rsn = validate_and_normalize_run_record(
+                raw_item,
+                expected_workflow_id=expected_wf_id,
+                expected_workflow_path=expected_wf_path,
+                expected_workflow_name=expected_wf_name,
+            )
+            if not valid:
+                return {
+                    "ok": False,
+                    "error": f"GH_API_INCOMPLETE_OR_MISMATCHED_RECORD_PAGE_{page_idx}_INDEX_{idx}: {rsn}",
+                    "runs": [],
+                    "run_ids": set(),
+                    "pages_fetched": pages_fetched,
+                    "max_pages_configured": effective_max_pages,
+                    "per_page_configured": per_page,
+                    "endpoints_queried": endpoints_queried,
+                }
+
+            r_id = norm_item["databaseId"]
+            if r_id in seen_ids:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"GH_API_DUPLICATE_PAGE_RESULTS_ON_PAGE_{page_idx}: Run ID {r_id} was already returned on an earlier page "
+                        "or earlier in the same page (broken pagination)"
+                    ),
+                    "runs": [],
+                    "run_ids": set(),
+                    "pages_fetched": pages_fetched,
+                    "max_pages_configured": effective_max_pages,
+                    "per_page_configured": per_page,
+                    "endpoints_queried": endpoints_queried,
+                }
+
+            created_dt = parse_iso8601_utc(norm_item["createdAt"])
+            if prev_created_dt is not None and created_dt > prev_created_dt:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"GH_API_CHRONOLOGICAL_ORDER_VIOLATION_ON_PAGE_{page_idx}: Run ID {r_id} created_at={norm_item['createdAt']} "
+                        f"is newer than preceding run created_at={prev_created_iso}"
+                    ),
+                    "runs": [],
+                    "run_ids": set(),
+                    "pages_fetched": pages_fetched,
+                    "max_pages_configured": effective_max_pages,
+                    "per_page_configured": per_page,
+                    "endpoints_queried": endpoints_queried,
+                }
+
+            prev_created_dt = created_dt
+            prev_created_iso = norm_item["createdAt"]
+            seen_ids.add(r_id)
+            all_runs.append(norm_item)
+
+        if len(raw_runs) < per_page:
+            if len(all_runs) < reported_total_count:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"GH_API_INCONSISTENT_TOTAL_COUNT_ON_PAGE_{page_idx}: Partial page returned {len(raw_runs)} runs "
+                        f"(fetched {len(all_runs)}) < total_count={reported_total_count}"
+                    ),
+                    "runs": [],
+                    "run_ids": set(),
+                    "pages_fetched": pages_fetched,
+                    "max_pages_configured": effective_max_pages,
+                    "per_page_configured": per_page,
+                    "endpoints_queried": endpoints_queried,
+                }
+            break
+
+        if len(all_runs) >= reported_total_count:
+            break
+
+        if page_idx == effective_max_pages and len(all_runs) < reported_total_count:
+            return {
+                "ok": False,
+                "error": (
+                    f"GH_API_MAX_PAGES_LIMIT_REACHED_INCOMPLETE_HISTORY: Reached max_pages={effective_max_pages} "
+                    f"with {len(all_runs)}/{reported_total_count} runs fetched; halting fail-closed rather than proceeding with partial history"
+                ),
+                "runs": [],
+                "run_ids": set(),
+                "pages_fetched": pages_fetched,
+                "max_pages_configured": effective_max_pages,
+                "per_page_configured": per_page,
+                "endpoints_queried": endpoints_queried,
+            }
 
     return {
         "ok": True,
         "error": None,
+        "workflow_metadata": wf_meta,
+        "total_count": reported_total_count if reported_total_count is not None else len(all_runs),
         "runs": all_runs,
         "run_ids": seen_ids,
         "pages_fetched": pages_fetched,
-        "max_pages_configured": max_pages,
+        "max_pages_configured": effective_max_pages,
         "per_page_configured": per_page,
+        "endpoints_queried": endpoints_queried,
         "bounded_window_note": (
-            f"Inspected {len(all_runs)} workflow run(s) across {pages_fetched} page(s) "
-            f"(bounded limit: up to {max_pages} page(s) x {per_page} runs/page = {max_pages * per_page} runs max, "
-            "combined with UTC timestamp baseline preflight_started_at_utc)."
+            f"Inspected {len(all_runs)}/{reported_total_count if reported_total_count is not None else len(all_runs)} workflow run(s) "
+            f"for workflow_id={expected_wf_id} ({expected_wf_path}) across {pages_fetched} REST API page(s) "
+            f"(per_page={per_page}, max_pages={effective_max_pages}, combined with UTC baseline preflight_started_at_utc)."
         ),
     }
 
@@ -335,7 +673,7 @@ def validate_workflow_push_only(workflow_yaml_path: Path) -> tuple[bool, str]:
     """
     Verify that workflow_yaml_path is configured for single-run Push-triggered CI ONLY:
       - Exists on disk
-      - Defines `push:` with `fix/preview-0.1-*` and `release/mersad-preview-0.1*`
+      - Defines `push:` with `fix/preview-0.1-*`
       - Does NOT define `workflow_dispatch` (prevents duplicate runs from git push + workflow_dispatch)
       - Does NOT contain the unused `run_extended_stress` input
     """
@@ -355,21 +693,30 @@ def validate_workflow_push_only(workflow_yaml_path: Path) -> tuple[bool, str]:
 
 def validate_bat_thin_wrappers_no_tag_or_extra_push(repo_root: Path) -> dict:
     """
-    Verify that PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat and PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat:
-      1. Do NOT contain any `git push` command (all pushing is delegated to this Python controller).
-      2. Do NOT push tags (`refs/tags`, `--tags`, `--all`).
-      3. Do NOT hide git/gh/python errors via `>nul 2>&1`.
-      4. Invoke `tools\\deploy_and_run_github_actions.py --live --branch` and propagate `!ERRORLEVEL!`.
-    Also verifies that `deploy_and_run_github_actions.py` itself contains NO `refs/tags`, `--tags`, or `--all` push.
+    Verify that all 3 deployment batch wrappers (`BUG-40`, `BUG-46`, `BUG-49`):
+      1. `PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat`
+      2. `PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat`
+      3. `MERSAD_AI_Preview_0.1/PUSH_TO_GITHUB_AND_BUILD.bat`
+    Strictly satisfy:
+      - Enforce `set "ALLOWED_DEPLOY_BRANCH=fix/preview-0.1-postbuild-42273598736"` and `BRANCH_NOT_IN_ALLOWLIST`.
+      - Do NOT contain any direct `git push` command.
+      - Do NOT contain any `gh workflow run` command.
+      - Do NOT contain `_register_wf_` or `DEFAULT_BRANCH=main` fallback.
+      - Do NOT push tags (`refs/tags`, `--tags`, `--all`) or use `--force`.
+      - Do NOT hide git/gh/python deployment errors via `>nul 2>&1` or `>nul 2>nul`.
+      - Delegate cloud deployment to `tools\\deploy_and_run_github_actions.py" --live --branch "%TARGET_BRANCH%"`
+        and propagate `exit /b !DEPLOY_EXIT_CODE!`.
     """
     bat_files = [
         repo_root / "PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat",
         repo_root / "PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat",
+        repo_root / "MERSAD_AI_Preview_0.1" / "PUSH_TO_GITHUB_AND_BUILD.bat",
     ]
     issues = []
     for bf in bat_files:
+        rel_name = bf.relative_to(repo_root).as_posix() if bf.is_relative_to(repo_root) else bf.name
         if not bf.is_file():
-            issues.append(f"Missing batch file: {bf.name}")
+            issues.append(f"Missing batch file: {rel_name}")
             continue
         txt = bf.read_text(encoding="utf-8")
         for line_no, raw_line in enumerate(txt.splitlines(), 1):
@@ -378,25 +725,32 @@ def validate_bat_thin_wrappers_no_tag_or_extra_push(repo_root: Path) -> dict:
                 continue
             low = stripped.lower()
             if "git push" in low:
-                issues.append(f"{bf.name}:{line_no} contains direct 'git push' instead of delegating to Python controller")
-            if "refs/tags" in low or "--tags" in low or "git push --all" in low:
-                issues.append(f"{bf.name}:{line_no} contains forbidden tag/all push reference")
+                issues.append(f"{rel_name}:{line_no} contains direct 'git push' instead of delegating to Python controller")
+            if "gh workflow run" in low:
+                issues.append(f"{rel_name}:{line_no} contains 'gh workflow run' (independent workflow_dispatch trigger)")
+            if "_register_wf_" in low or "default_branch=main" in low:
+                issues.append(f"{rel_name}:{line_no} contains legacy default-branch / main fallback logic")
+            if "refs/tags" in low or "--tags" in low or "git push --all" in low or "--force" in low:
+                issues.append(f"{rel_name}:{line_no} contains forbidden tag/all/force push reference")
             if ">nul 2>&1" in low or ">nul 2>nul" in low:
                 if "where python" not in low and "where py" not in low:
-                    issues.append(f"{bf.name}:{line_no} masks command errors via >nul 2>&1: {stripped}")
+                    issues.append(f"{rel_name}:{line_no} masks command errors via >nul 2>&1: {stripped}")
+        if 'set "ALLOWED_DEPLOY_BRANCH=fix/preview-0.1-postbuild-42273598736"' not in txt:
+            issues.append(f"{rel_name} does not define ALLOWED_DEPLOY_BRANCH=fix/preview-0.1-postbuild-42273598736")
+        if "BRANCH_NOT_IN_ALLOWLIST" not in txt:
+            issues.append(f"{rel_name} does not enforce BRANCH_NOT_IN_ALLOWLIST rejection")
         if 'tools\\deploy_and_run_github_actions.py" --live --branch "%TARGET_BRANCH%"' not in txt:
-            issues.append(f"{bf.name} does not delegate to tools\\deploy_and_run_github_actions.py --live --branch")
+            issues.append(f"{rel_name} does not delegate to tools\\deploy_and_run_github_actions.py --live --branch")
         if "exit /b !DEPLOY_EXIT_CODE!" not in txt:
-            issues.append(f"{bf.name} does not propagate Python exit code (!DEPLOY_EXIT_CODE!)")
+            issues.append(f"{rel_name} does not propagate Python exit code (!DEPLOY_EXIT_CODE!)")
 
     py_txt = (repo_root / "tools" / "deploy_and_run_github_actions.py").read_text(encoding="utf-8")
-    # Extract execute_deployment body and verify its git push invocation never includes --tags, --all, or refs/tags
     exec_body = py_txt.partition("def execute_deployment(")[2].partition("def run_self_test(")[0]
     for line_no, raw_line in enumerate(exec_body.splitlines(), 1):
         if ("refs/tags" in raw_line or "--tags" in raw_line or "--all" in raw_line) and not raw_line.strip().startswith("#"):
             issues.append(f"execute_deployment line {line_no} contains forbidden tag/all push")
 
-    return {"ok": len(issues) == 0, "issues": issues}
+    return {"ok": len(issues) == 0, "checked_files": [bf.relative_to(repo_root).as_posix() for bf in bat_files if bf.exists()], "issues": issues}
 
 
 def verify_and_hash_downloaded_artifacts(
@@ -410,15 +764,6 @@ def verify_and_hash_downloaded_artifacts(
     """
     Search artifacts_dir for all 5 required Windows release files, verify existence and non-zero size,
     and calculate/record SHA-256 for each file (BUG-45).
-
-    Strictly distinguishes between:
-      1. `files_exist_verified`: All 5 required filenames exist on disk.
-      2. `files_non_empty_verified`: All 5 files have size_bytes > 0.
-      3. `sha256_calculated_and_recorded`: SHA-256 digest was locally computed and written to disk.
-      4. `trusted_reference_digests_verified`: True ONLY if `trusted_reference_digests` (an independent
-         map of filename -> expected sha256) was supplied and every file's digest matched it; otherwise False.
-      5. `attestation_verification_status`: `"VERIFIED"` ONLY if `verify_attestation=True` and `gh attestation verify`
-         succeeded for all 5 files; otherwise `"NOT_AVAILABLE"` (or `"FAILED"` if requested and failed).
     """
     found_files = {}
     if artifacts_dir.is_dir():
@@ -611,6 +956,10 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA, "HEAD"],
             capture_output=True,
         ).returncode
+        anc_850f_rc = subprocess.run(
+            ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_BUG40_45_PARENT_SHA, "HEAD"],
+            capture_output=True,
+        ).returncode
         lifecycle_in_commit = (clone_dir / "integration" / "test_main_entrypoint_dynamic_camera_lifecycle.py").is_file()
         sim_engine_in_commit = (clone_dir / "MERSAD_LAB_Preview_0.1" / "sim_engine.py")
         sim_engine_sha_ok = (
@@ -627,6 +976,7 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         and anc_edaf_rc == 0
         and anc_05f2_rc == 0
         and anc_a1c5_rc == 0
+        and anc_850f_rc == 0
         and lifecycle_in_commit
         and sim_engine_sha_ok
         and len(present_17_paths) == 17
@@ -636,9 +986,11 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         "ok": ok,
         "branch": branch,
         "head_sha": head_sha,
+        "previous_bug40_45_commit_sha": EXPECTED_AI_BUG40_45_PARENT_SHA,
         "previous_single_run_ci_commit_sha": EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
         "previous_preflight_commit_sha": preflight_tag_sha,
         "reconciled_code_sha": code_tag_sha,
+        "descends_from_850fbdb450ba": (anc_850f_rc == 0),
         "descends_from_a1c53f32ff3c": (anc_a1c5_rc == 0),
         "descends_from_05f29af416c4": (anc_05f2_rc == 0),
         "descends_from_edaf651321ec": (anc_edaf_rc == 0),
@@ -670,12 +1022,14 @@ def execute_deployment(
     simulate_dirty_working_tree: bool = False,
     trusted_reference_digests: dict = None,
     verify_attestation: bool = False,
+    github_repo: str = DEFAULT_GITHUB_REPO,
 ) -> dict:
     env = os.environ.copy()
-    if env_override:
+    # Strip any ambient MERSAD_DEPLOY_BRANCH / MERSAD_BUILD_BRANCH unless explicitly provided in env_override or validated
+    if env_override is not None:
         env.update(env_override)
 
-    branch_to_use = (target_branch or env.get("MERSAD_DEPLOY_BRANCH") or TARGET_BRANCH).strip()
+    ok_allowlist, branch_to_use, allowlist_msg = validate_target_branch_allowlist(target_branch, env=env)
 
     if workflow_yaml_path is None:
         workflow_yaml_path = bundle_path.parent.parent / ".github" / "workflows" / WORKFLOW_FILE
@@ -688,8 +1042,11 @@ def execute_deployment(
     report = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "preflight_started_at_utc": preflight_started_iso,
+        "allowed_deploy_branches": list(ALLOWED_DEPLOY_BRANCHES),
         "target_branch": branch_to_use,
+        "branch_validation_status": "ALLOWED" if ok_allowlist else "BRANCH_NOT_IN_ALLOWLIST",
         "trigger_mode": "push_only_single_run",
+        "expected_ai_bug40_45_parent_sha": EXPECTED_AI_BUG40_45_PARENT_SHA,
         "expected_ai_single_run_ci_parent_sha": EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
         "expected_ai_preflight_parent_sha": EXPECTED_AI_PREFLIGHT_PARENT_SHA,
         "expected_ai_code_sha": EXPECTED_AI_CODE_SHA,
@@ -725,7 +1082,14 @@ def execute_deployment(
     def add_step(name, ok, detail):
         report["steps"].append({"step": name, "ok": bool(ok), "detail": detail})
 
-    # Step 0: Validate that workflow YAML uses push trigger ONLY (no workflow_dispatch, no unused run_extended_stress)
+    # Step 0A: Enforce Central Target Branch Allowlist before any Git or network action (BUG-49)
+    add_step("validate_target_branch_allowlist", ok_allowlist, allowlist_msg)
+    if not ok_allowlist:
+        set_state("PREFLIGHT_FAILED")
+        report["error"] = allowlist_msg
+        return report
+
+    # Step 0B: Validate that workflow YAML uses push trigger ONLY (no workflow_dispatch, no unused run_extended_stress)
     ok_wf_yaml, msg_wf_yaml = validate_workflow_push_only(workflow_yaml_path)
     add_step("validate_workflow_push_only", ok_wf_yaml, msg_wf_yaml)
     if not ok_wf_yaml:
@@ -759,6 +1123,16 @@ def execute_deployment(
             report["error"] = f"CHECKOUT_FAILED: {err or out}"
             return report
 
+        # Verify checked-out local branch matches allowlisted target branch (BUG-49)
+        rc_cur_br, cur_br_name, err_cur_br = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(work_repo), env=env)
+        if rc_cur_br != 0 or cur_br_name != branch_to_use or cur_br_name not in ALLOWED_DEPLOY_BRANCHES:
+            set_state("PREFLIGHT_FAILED")
+            msg = f"Checked-out local branch {cur_br_name!r} does not match allowlisted branch {branch_to_use!r} ({err_cur_br})"
+            add_step("verify_checked_out_branch_allowlist", False, msg)
+            report["error"] = f"LOCAL_BRANCH_MISMATCH: {msg}"
+            return report
+        add_step("verify_checked_out_branch_allowlist", True, f"Checked-out local branch is {cur_br_name!r} (allowlisted)")
+
         if simulate_dirty_working_tree:
             (work_repo / "UNCOMMITTED_DIRTY_FILE.tmp").write_text("dirty", encoding="utf-8")
 
@@ -771,15 +1145,14 @@ def execute_deployment(
         add_step("verify_clean_working_tree", True, "git status --porcelain is clean (0 uncommitted changes)")
 
         rc, head_sha, err = run_cmd(["git", "rev-parse", "HEAD"], cwd=str(work_repo), env=env)
-        required_ancestors = [EXPECTED_AI_RELEASE_BASE_SHA]
-        if branch_to_use == DEFAULT_TARGET_BRANCH:
-            required_ancestors = [
-                EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
-                EXPECTED_AI_PREFLIGHT_PARENT_SHA,
-                EXPECTED_AI_CODE_SHA,
-                EXPECTED_AI_PREV_FIX_SHA,
-                EXPECTED_AI_RELEASE_BASE_SHA,
-            ]
+        required_ancestors = [
+            EXPECTED_AI_BUG40_45_PARENT_SHA,
+            EXPECTED_AI_SINGLE_RUN_CI_PARENT_SHA,
+            EXPECTED_AI_PREFLIGHT_PARENT_SHA,
+            EXPECTED_AI_CODE_SHA,
+            EXPECTED_AI_PREV_FIX_SHA,
+            EXPECTED_AI_RELEASE_BASE_SHA,
+        ]
 
         for req_anc in required_ancestors:
             rc_anc, _, _ = run_cmd(["git", "merge-base", "--is-ancestor", req_anc, "HEAD"], cwd=str(work_repo), env=env)
@@ -831,10 +1204,8 @@ def execute_deployment(
             return report
 
         if pre_remote_sha:
-            # Verify that pre_remote_sha is an ancestor of local HEAD (i.e. fast-forwardable without --force)
             rc_cat_rem, _, _ = run_cmd(["git", "cat-file", "-e", f"{pre_remote_sha}^{{commit}}"], cwd=str(work_repo), env=env)
             if rc_cat_rem != 0:
-                # Fetch remote branch ref to inspect ancestry
                 run_cmd(["git", "fetch", "origin", f"refs/heads/{branch_to_use}:refs/remotes/origin/_preflight_check"], cwd=str(work_repo), env=env)
             rc_ff, _, _ = run_cmd(["git", "merge-base", "--is-ancestor", pre_remote_sha, "HEAD"], cwd=str(work_repo), env=env)
             if rc_ff != 0:
@@ -869,7 +1240,7 @@ def execute_deployment(
             return report
         add_step("verify_gh_cli_authenticated", True, "gh auth status verified")
 
-        # Step 1D: Fail-Closed query of pre-push workflow runs with pagination & timestamp baseline (BUG-41)
+        # Step 1D: Fail-Closed query of workflow metadata + pre-push workflow runs via REST API pagination (BUG-41, BUG-47, BUG-48)
         pre_query = query_workflow_runs_fail_closed(
             gh_bin=gh_bin,
             work_repo=work_repo,
@@ -877,6 +1248,7 @@ def execute_deployment(
             workflow_file=WORKFLOW_FILE,
             max_pages=preflight_max_pages,
             per_page=preflight_per_page,
+            github_repo=github_repo,
         )
         if not pre_query["ok"]:
             set_state("PREFLIGHT_FAILED")
@@ -885,15 +1257,24 @@ def execute_deployment(
             report["error"] = f"PREFLIGHT_RUN_LIST_FAILED: {pre_query['error']}"
             return report
 
+        resolved_wf_meta = pre_query["workflow_metadata"]
+        expected_wf_id = int(resolved_wf_meta["workflow_id"])
+        expected_wf_path = str(resolved_wf_meta["path"])
+        report["workflow_metadata"] = resolved_wf_meta
+
         pre_existing_ids = set(pre_query["run_ids"])
         max_pre_existing_id = max(pre_existing_ids) if pre_existing_ids else 0
         report["pre_existing_run_ids"] = sorted(pre_existing_ids)
         report["max_pre_existing_run_id"] = max_pre_existing_id
         report["pre_existing_runs_query_summary"] = {
+            "workflow_id": expected_wf_id,
+            "workflow_path": expected_wf_path,
+            "total_count_reported": pre_query["total_count"],
             "runs_inspected_count": len(pre_query["runs"]),
             "pages_fetched": pre_query["pages_fetched"],
             "max_pages_configured": pre_query["max_pages_configured"],
             "per_page_configured": pre_query["per_page_configured"],
+            "endpoints_queried": pre_query["endpoints_queried"],
             "preflight_started_at_utc": preflight_started_iso,
             "max_pre_existing_run_id": max_pre_existing_id,
             "bounded_window_note": pre_query["bounded_window_note"],
@@ -905,7 +1286,7 @@ def execute_deployment(
             f"PREFLIGHT_PASS: {pre_query['bounded_window_note']} Recorded {len(pre_existing_ids)} run ID(s) (max_id={max_pre_existing_id}).",
         )
 
-        # Step 2: Push ONLY target branch without --force and without any tags (BUG-40)
+        # Step 2: Push ONLY allowlisted target branch without --force and without any tags (BUG-40 & BUG-49)
         rc_push, out_push, err_push = run_cmd(
             ["git", "push", "-u", "origin", f"refs/heads/{branch_to_use}:refs/heads/{branch_to_use}"],
             cwd=str(work_repo),
@@ -918,7 +1299,6 @@ def execute_deployment(
             report["error"] = f"GIT_PUSH_FAILED: {combined_push_out}"
             return report
 
-        # Check if git push reported "Everything up-to-date" (race condition where remote was updated to same SHA just before push)
         if "everything up-to-date" in combined_push_out.lower():
             msg = f"git push reported 'Everything up-to-date' for {branch_to_use} ({head_sha}); no new push event was generated."
             add_step("git_push_target_branch", True, msg)
@@ -929,7 +1309,7 @@ def execute_deployment(
             return report
 
         report["push_executed"] = True
-        add_step("git_push_target_branch", True, f"Pushed single branch {branch_to_use} (no tags, no --force) to {remote_url}")
+        add_step("git_push_target_branch", True, f"Pushed single allowlisted branch {branch_to_use} (no tags, no --force) to {remote_url}")
 
         # Step 3: Verify remote SHA via git ls-remote
         rc_ls, out_ls, err_ls = run_cmd(
@@ -948,8 +1328,8 @@ def execute_deployment(
         set_state("PUSH_COMPLETED")
         add_step("verify_remote_sha", True, f"PUSH_COMPLETED: Verified remote SHA on origin matches local HEAD: {remote_sha}")
 
-        # Helper to filter candidate runs matching ALL criteria (BUG-41 & BUG-42):
-        #   - workflow matches WORKFLOW_FILE
+        # Helper to filter candidate runs matching ALL criteria (BUG-41, BUG-42, BUG-48):
+        #   - workflowId == expected_wf_id AND workflowPath == expected_wf_path
         #   - event == "push"
         #   - headBranch == branch_to_use
         #   - headSha == head_sha
@@ -960,12 +1340,16 @@ def execute_deployment(
             earliest_allowed = preflight_started_dt - datetime.timedelta(seconds=2)
             for r in runs_list:
                 r_id = r["databaseId"]
+                r_wf_id = r["workflowId"]
+                r_wf_path = r["workflowPath"]
                 r_sha = r["headSha"]
                 r_evt = r["event"]
                 r_br = r["headBranch"]
                 r_dt = parse_iso8601_utc(r["createdAt"])
                 if (
                     r_id > 0
+                    and r_wf_id == expected_wf_id
+                    and r_wf_path == expected_wf_path
                     and r_id not in pre_existing_ids
                     and r_id > max_pre_existing_id
                     and r_evt == "push"
@@ -977,7 +1361,7 @@ def execute_deployment(
                     candidates.append(r)
             return candidates
 
-        # Step 4A: Poll for initial matching run candidate
+        # Step 4A: Poll for initial matching run candidate across paginated REST API results
         matched_run = None
         for attempt in range(1, max(1, poll_attempts) + 1):
             if poll_interval_s > 0:
@@ -987,8 +1371,10 @@ def execute_deployment(
                 work_repo=work_repo,
                 env=env,
                 workflow_file=WORKFLOW_FILE,
-                max_pages=1,
+                max_pages=preflight_max_pages,
                 per_page=preflight_per_page,
+                github_repo=github_repo,
+                resolved_workflow_meta=resolved_wf_meta,
             )
             if not poll_q["ok"]:
                 set_state("RUN_FAILED")
@@ -1024,9 +1410,7 @@ def execute_deployment(
         set_state("RUN_DISCOVERED")
         add_step("poll_matching_run_id", True, f"RUN_DISCOVERED: Discovered initial candidate push Run ID {run_id} for headSha={head_sha}")
 
-        # Step 4B: Duplicate-Detection Settling Window (BUG-42)
-        # Continue polling for `settling_polls` iterations before transitioning to RUN_IN_PROGRESS
-        # so any delayed second run is caught!
+        # Step 4B: Duplicate-Detection Settling Window across paginated REST API results (BUG-42 & BUG-47)
         for s_idx in range(1, max(0, settling_polls) + 1):
             if settling_interval_s > 0:
                 time.sleep(settling_interval_s)
@@ -1035,8 +1419,10 @@ def execute_deployment(
                 work_repo=work_repo,
                 env=env,
                 workflow_file=WORKFLOW_FILE,
-                max_pages=1,
+                max_pages=preflight_max_pages,
                 per_page=preflight_per_page,
+                github_repo=github_repo,
+                resolved_workflow_meta=resolved_wf_meta,
             )
             if not settle_q["ok"]:
                 set_state("RUN_FAILED")
@@ -1169,23 +1555,27 @@ def execute_deployment(
 
 def run_self_test(repo_root: Path) -> dict:
     """
-    Comprehensive local regression test suite covering BUG-01..BUG-45 (Simulated Local Bare Remote + Node.js UI tests + Provenance).
+    Comprehensive local regression test suite covering BUG-01..BUG-49 (Simulated Local Bare Remote + Real REST API URL Pagination + Node.js UI tests + Provenance).
     NOTE: All Git/GitHub CLI execution tests use an isolated local bare Git repository (`git init --bare`) and simulated
-    `gh` binaries; no remote GitHub push or cloud workflow execution is performed.
+    `gh` binaries inspecting real `gh api` URL query parameters; no remote GitHub push or cloud workflow execution is performed.
     """
     bundle = repo_root / "reports_and_logs" / "mersad_preview_0_1_verifiable_history.bundle"
     bat_file = repo_root / "PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat"
     bat_rel_file = repo_root / "PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat"
+    bat_ai_sub_file = repo_root / "MERSAD_AI_Preview_0.1" / "PUSH_TO_GITHUB_AND_BUILD.bat"
     wf_file = repo_root / ".github" / "workflows" / WORKFLOW_FILE
     deploy_py_file = repo_root / "tools" / "deploy_and_run_github_actions.py"
 
     bat_text = bat_file.read_text(encoding="utf-8")
     bat_rel_text = bat_rel_file.read_text(encoding="utf-8")
+    bat_ai_sub_text = bat_ai_sub_file.read_text(encoding="utf-8")
     wf_text = wf_file.read_text(encoding="utf-8")
     deploy_py_text = deploy_py_file.read_text(encoding="utf-8")
 
     checks = []
-    now_utc_iso = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_utc_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=3600)
+    now_utc_iso = now_utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_utc_plus1_iso = (now_utc_dt + datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def create_fresh_bare_remote(base_dir: Path, name: str) -> Path:
         br = base_dir / name
@@ -1194,8 +1584,19 @@ def run_self_test(repo_root: Path) -> dict:
         subprocess.run(["git", "init", "--bare", str(br)], check=True, capture_output=True)
         return br
 
-    # 1. BUG-35: No script calls `gh workflow run` after `git push`
-    no_gh_wf_run_in_bat = ("gh workflow run" not in bat_text and "gh workflow run" not in bat_rel_text)
+    wf_meta_json_str = json.dumps({
+        "id": 99001,
+        "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+        "path": WORKFLOW_DEFINITION_PATH,
+        "state": "active",
+    })
+
+    # 1. BUG-35 & BUG-46: No script calls `gh workflow run` after `git push` (across all 3 .bat files and Python controller)
+    no_gh_wf_run_in_bat = (
+        "gh workflow run" not in bat_text
+        and "gh workflow run" not in bat_rel_text
+        and "gh workflow run" not in bat_ai_sub_text
+    )
     no_gh_wf_run_in_py = (re.search(r'\[\s*gh_bin\s*,\s*"workflow"\s*,\s*"run"', deploy_py_text) is None)
     checks.append((
         "TEST_01_NO_SCRIPT_CALLS_GH_WORKFLOW_RUN_AFTER_PUSH",
@@ -1219,33 +1620,82 @@ def run_self_test(repo_root: Path) -> dict:
         "run_extended_stress" not in wf_text
         and "run_extended_stress" not in bat_text
         and "run_extended_stress" not in bat_rel_text
+        and "run_extended_stress" not in bat_ai_sub_text
     ))
 
-    # 4. BUG-40 & Section 8: BAT files are thin wrappers delegating to Python controller, zero tag push, zero hidden errors
+    # 4. BUG-40 & BUG-46: All 3 BAT files are thin wrappers delegating to Python controller, zero direct git push, zero tag push, zero main fallback
     bat_audit = validate_bat_thin_wrappers_no_tag_or_extra_push(repo_root)
     checks.append((
-        "BUG40_01_BAT_THIN_WRAPPERS_DELEGATE_TO_PYTHON_NO_TAG_PUSH_OR_SILENT_ERRORS",
-        bat_audit["ok"] is True and len(bat_audit["issues"]) == 0
+        "BUG40_46_01_ALL_THREE_BAT_WRAPPERS_DELEGATE_TO_PYTHON_NO_DIRECT_PUSH_OR_MAIN_FALLBACK",
+        bat_audit["ok"] is True
+        and len(bat_audit["issues"]) == 0
+        and len(bat_audit["checked_files"]) == 3
     ))
 
-    # 5. BUG-40 Negative Self-Test: Verify validator catches any hypothetical tag push or direct git push in BAT
+    # 5. BUG-40 & BUG-46 Negative Self-Test: Verify validator catches legacy PUSH_TO_GITHUB_AND_BUILD.bat (git push, gh workflow run, DEFAULT_BRANCH=main, >nul 2>nul)
     with tempfile.TemporaryDirectory(prefix="mersad_bat_neg_") as tmp_bat_d:
         fake_root = Path(tmp_bat_d)
         (fake_root / "tools").mkdir()
+        (fake_root / "MERSAD_AI_Preview_0.1").mkdir()
         shutil.copy2(deploy_py_file, fake_root / "tools" / "deploy_and_run_github_actions.py")
         (fake_root / "PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat").write_text(
             bat_rel_text + "\ngit push origin refs/tags/v0.1.0-preview-code >nul 2>&1\n", encoding="utf-8"
         )
         (fake_root / "PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat").write_text(bat_text, encoding="utf-8")
+        (fake_root / "MERSAD_AI_Preview_0.1" / "PUSH_TO_GITHUB_AND_BUILD.bat").write_text(
+            '@echo off\nset "DEFAULT_BRANCH=main"\ngit push -u origin "%MERSAD_BUILD_BRANCH%"\n'
+            'git push origin "_register_wf_%DEFAULT_BRANCH%:refs/heads/%DEFAULT_BRANCH%" >nul 2>nul\n'
+            'gh workflow run "%MERSAD_WORKFLOW_FILE%"\n',
+            encoding="utf-8",
+        )
         neg_bat_audit = validate_bat_thin_wrappers_no_tag_or_extra_push(fake_root)
     checks.append((
-        "BUG40_02_VALIDATOR_DETECTS_AND_REJECTS_ANY_TAG_PUSH_OR_SILENCED_ERROR",
-        neg_bat_audit["ok"] is False and len(neg_bat_audit["issues"]) >= 2
+        "BUG40_46_02_VALIDATOR_DETECTS_AND_REJECTS_LEGACY_SUBDIR_PUSH_BAT_AND_TAG_PUSH",
+        neg_bat_audit["ok"] is False and len(neg_bat_audit["issues"]) >= 6
+    ))
+
+    # =========================================================================
+    # BUG-49 Regression Tests: Central Target Branch Allowlist
+    # =========================================================================
+    ok_br_canonical, res_br_canonical, _ = validate_target_branch_allowlist(DEFAULT_TARGET_BRANCH, env={})
+    ok_br_main, _, err_br_main = validate_target_branch_allowlist("main", env={})
+    ok_br_rel, _, err_br_rel = validate_target_branch_allowlist("release/mersad-preview-0.1", env={})
+    ok_br_stage15, _, _ = validate_target_branch_allowlist("release/v7.1-stage15-win-x64", env={})
+    ok_br_empty, _, _ = validate_target_branch_allowlist("", env={})
+    ok_br_env_main, _, _ = validate_target_branch_allowlist(None, env={"MERSAD_DEPLOY_BRANCH": "main"})
+    ok_br_env_bld, _, _ = validate_target_branch_allowlist(DEFAULT_TARGET_BRANCH, env={"MERSAD_BUILD_BRANCH": "release/mersad-preview-0.1"})
+    checks.append((
+        "BUG49_01_ALLOWLIST_UNIT_ACCEPTS_ONLY_FIX_BRANCH_AND_REJECTS_ALL_OVERRIDES",
+        ok_br_canonical is True
+        and res_br_canonical == "fix/preview-0.1-postbuild-42273598736"
+        and ok_br_main is False and "BRANCH_NOT_IN_ALLOWLIST" in err_br_main
+        and ok_br_rel is False and "BRANCH_NOT_IN_ALLOWLIST" in err_br_rel
+        and ok_br_stage15 is False
+        and ok_br_empty is False
+        and ok_br_env_main is False
+        and ok_br_env_bld is False
     ))
 
     with tempfile.TemporaryDirectory(prefix="mersad_bare_remote_") as tmpdir:
         tmp_p = Path(tmpdir)
         bare_remote_0 = create_fresh_bare_remote(tmp_p, "origin_0.git")
+
+        # BUG49-02: execute_deployment rejects main, release/mersad-preview-0.1, empty branch, and env overrides before any push
+        res_49_main = execute_deployment(bundle, str(bare_remote_0), wf_file, target_branch="main", env_override={})
+        res_49_rel = execute_deployment(bundle, str(bare_remote_0), wf_file, target_branch="release/mersad-preview-0.1", env_override={})
+        res_49_empty = execute_deployment(bundle, str(bare_remote_0), wf_file, target_branch="", env_override={})
+        res_49_env = execute_deployment(bundle, str(bare_remote_0), wf_file, target_branch=None, env_override={"MERSAD_DEPLOY_BRANCH": "main"})
+        checks.append((
+            "BUG49_02_EXECUTE_DEPLOYMENT_BLOCKS_NON_ALLOWLISTED_BRANCHES_BEFORE_CLONE_OR_PUSH",
+            all(
+                r["status"] == "PREFLIGHT_FAILED"
+                and r["branch_validation_status"] == "BRANCH_NOT_IN_ALLOWLIST"
+                and r["push_executed"] is False
+                and r["build_triggered"] is False
+                and "BRANCH_NOT_IN_ALLOWLIST" in r.get("error", "")
+                for r in (res_49_main, res_49_rel, res_49_empty, res_49_env)
+            )
+        ))
 
         # Missing gh in PATH must halt with PREFLIGHT_FAILED before push
         res_no_gh = execute_deployment(
@@ -1288,14 +1738,121 @@ def run_self_test(repo_root: Path) -> dict:
         ))
 
         # =========================================================================
-        # BUG-41 Regression Tests: Fail-Closed GitHub Actions Run Querying & Pagination
+        # BUG-48 Regression Tests: Authoritative Workflow Identity Without Fallbacks
         # =========================================================================
+        ok_48_no_wf_id, _, err_48_no_wf_id = validate_and_normalize_run_record(
+            {
+                "id": 1001,
+                "path": WORKFLOW_DEFINITION_PATH,
+                "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+                "head_sha": local_head,
+                "head_branch": DEFAULT_TARGET_BRANCH,
+                "event": "push",
+                "created_at": "2026-11-01T00:00:00Z",
+            },
+            expected_workflow_id=99001,
+        )
+        ok_48_wrong_wf_id, _, err_48_wrong_wf_id = validate_and_normalize_run_record(
+            {
+                "id": 1002,
+                "workflow_id": 88888,
+                "path": WORKFLOW_DEFINITION_PATH,
+                "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+                "head_sha": local_head,
+                "head_branch": DEFAULT_TARGET_BRANCH,
+                "event": "push",
+                "created_at": "2026-11-01T00:00:00Z",
+            },
+            expected_workflow_id=99001,
+        )
+        ok_48_no_name_or_path, _, err_48_no_name_or_path = validate_and_normalize_run_record(
+            {
+                "id": 1003,
+                "workflow_id": 99001,
+                "head_sha": local_head,
+                "head_branch": DEFAULT_TARGET_BRANCH,
+                "event": "push",
+                "created_at": "2026-11-01T00:00:00Z",
+            },
+            expected_workflow_id=99001,
+        )
+        ok_48_empty_name, _, err_48_empty_name = validate_and_normalize_run_record(
+            {
+                "id": 1004,
+                "workflow_id": 99001,
+                "name": "",
+                "head_sha": local_head,
+                "head_branch": DEFAULT_TARGET_BRANCH,
+                "event": "push",
+                "created_at": "2026-11-01T00:00:00Z",
+            },
+            expected_workflow_id=99001,
+        )
+        ok_48_wrong_path, _, err_48_wrong_path = validate_and_normalize_run_record(
+            {
+                "id": 1005,
+                "workflow_id": 99001,
+                "path": ".github/workflows/windows-build.yml",
+                "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+                "head_sha": local_head,
+                "head_branch": DEFAULT_TARGET_BRANCH,
+                "event": "push",
+                "created_at": "2026-11-01T00:00:00Z",
+            },
+            expected_workflow_id=99001,
+        )
+        ok_48_valid, norm_48_valid, _ = validate_and_normalize_run_record(
+            {
+                "id": 1006,
+                "workflow_id": 99001,
+                "path": WORKFLOW_DEFINITION_PATH,
+                "name": EXPECTED_WORKFLOW_DISPLAY_NAME,
+                "head_sha": local_head,
+                "head_branch": DEFAULT_TARGET_BRANCH,
+                "event": "push",
+                "created_at": "2026-11-01T00:00:00Z",
+            },
+            expected_workflow_id=99001,
+        )
+        val_fn_body = deploy_py_text.partition("def validate_and_normalize_run_record(")[2].partition("def query_workflow_runs_fail_closed(")[0]
+        no_or_workflow_file_fallback = ("or WORKFLOW_FILE" not in val_fn_body)
+        checks.append((
+            "BUG48_01_RUN_VALIDATOR_REQUIRES_EXPLICIT_WORKFLOW_ID_AND_PATH_OR_NAME_WITHOUT_FALLBACK",
+            no_or_workflow_file_fallback
+            and ok_48_no_wf_id is False and "workflow_id" in err_48_no_wf_id
+            and ok_48_wrong_wf_id is False and "workflow_id mismatch" in err_48_wrong_wf_id
+            and ok_48_no_name_or_path is False and "missing explicit workflow identity" in err_48_no_name_or_path
+            and ok_48_empty_name is False
+            and ok_48_wrong_path is False and "workflow path mismatch" in err_48_wrong_path
+            and ok_48_valid is True and norm_48_valid.get("workflowId") == 99001
+        ))
 
-        # BUG41-01: GH CLI returns non-zero exit code on `gh run list` -> PREFLIGHT_FAILED (push_executed=False)
+        # =========================================================================
+        # BUG-41, BUG-47, BUG-48 Regression Tests: Real GitHub REST API Pagination (`gh api`)
+        # =========================================================================
+        query_fn_body = deploy_py_text.partition("def query_workflow_runs_fail_closed(")[2].partition("def validate_workflow_push_only(")[0]
+        checks.append((
+            "BUG47_01_NO_SYNTHETIC_MERSAD_GH_PAGE_ENV_VAR_IN_QUERY_CONTROLLER",
+            "MERSAD_GH_PAGE" not in query_fn_body
+            and "MERSAD_GH_PER_PAGE" not in query_fn_body
+            and "?per_page={per_page}&page={page_idx}" in query_fn_body
+        ))
+
+        # BUG41/47-01: GH API returns non-zero exit code / HTTP 403 / HTTP 429 -> PREFLIGHT_FAILED (push_executed=False)
         fake_bin_41_rc = tmp_p / "fake_bin_41_rc"
         fake_bin_41_rc.mkdir()
         (fake_bin_41_rc / "gh").write_text(
-            "#!/usr/bin/env python3\nimport sys\nif sys.argv[1:3] == ['auth', 'status']: sys.exit(0)\nsys.stderr.write('HTTP 502 Bad Gateway\\n')\nsys.exit(1)\n",
+            f"""#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    sys.exit(0)
+if args[:3] == ['api', '-X', 'GET'] and args[3].endswith('/workflows/{WORKFLOW_FILE}'):
+    print({wf_meta_json_str!r})
+    sys.exit(0)
+sys.stderr.write('HTTP 403 Forbidden: Resource not accessible by integration\\n')
+sys.exit(1)
+""",
             encoding="utf-8",
         )
         (fake_bin_41_rc / "gh").chmod(0o755)
@@ -1305,18 +1862,28 @@ def run_self_test(repo_root: Path) -> dict:
             poll_attempts=1, poll_interval_s=0.0,
         )
         checks.append((
-            "BUG41_01_GH_RUN_LIST_NONZERO_EXIT_HALTS_WITH_PREFLIGHT_FAILED_BEFORE_PUSH",
+            "BUG41_47_01_GH_API_HTTP_403_OR_NONZERO_EXIT_HALTS_WITH_PREFLIGHT_FAILED_BEFORE_PUSH",
             res_41_rc["status"] == "PREFLIGHT_FAILED"
             and res_41_rc["push_executed"] is False
             and "PREFLIGHT_PASS" not in res_41_rc.get("state_history", [])
-            and "GH_RUN_LIST_EXIT_1" in res_41_rc.get("error", "")
+            and "GH_API_HTTP_401_403_AUTH_ERROR_ON_PAGE_1" in res_41_rc.get("error", "")
         ))
 
-        # BUG41-02: GH CLI returns corrupted/malformed JSON -> PREFLIGHT_FAILED (never treated as empty list!)
+        # BUG41/47-02: GH API returns corrupted/malformed JSON or HTTP 429 Rate Limit -> PREFLIGHT_FAILED
         fake_bin_41_json = tmp_p / "fake_bin_41_json"
         fake_bin_41_json.mkdir()
         (fake_bin_41_json / "gh").write_text(
-            "#!/usr/bin/env python3\nimport sys\nif sys.argv[1:3] == ['auth', 'status']: sys.exit(0)\nprint('{corrupted_json: [1, 2')\nsys.exit(0)\n",
+            f"""#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    sys.exit(0)
+if args[:3] == ['api', '-X', 'GET'] and args[3].endswith('/workflows/{WORKFLOW_FILE}'):
+    print({wf_meta_json_str!r})
+    sys.exit(0)
+print('{{corrupted_json: [1, 2')
+sys.exit(0)
+""",
             encoding="utf-8",
         )
         (fake_bin_41_json / "gh").chmod(0o755)
@@ -1325,18 +1892,54 @@ def run_self_test(repo_root: Path) -> dict:
             env_override={"PATH": f"{fake_bin_41_json}:/usr/bin:/bin"},
             poll_attempts=1, poll_interval_s=0.0,
         )
+
+        fake_bin_47_rl = tmp_p / "fake_bin_47_rl"
+        fake_bin_47_rl.mkdir()
+        (fake_bin_47_rl / "gh").write_text(
+            f"""#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    sys.exit(0)
+if args[:3] == ['api', '-X', 'GET'] and args[3].endswith('/workflows/{WORKFLOW_FILE}'):
+    print({wf_meta_json_str!r})
+    sys.exit(0)
+sys.stderr.write('HTTP 429 Too Many Requests: API rate limit exceeded\\n')
+sys.exit(1)
+""",
+            encoding="utf-8",
+        )
+        (fake_bin_47_rl / "gh").chmod(0o755)
+        res_47_rl = execute_deployment(
+            bundle, str(create_fresh_bare_remote(tmp_p, "origin_47_rl.git")), wf_file,
+            env_override={"PATH": f"{fake_bin_47_rl}:/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+        )
         checks.append((
-            "BUG41_02_GH_RUN_LIST_CORRUPTED_JSON_HALTS_WITH_PREFLIGHT_FAILED",
+            "BUG41_47_02_GH_API_CORRUPTED_JSON_AND_HTTP_429_RATE_LIMIT_HALT_WITH_PREFLIGHT_FAILED",
             res_41_json["status"] == "PREFLIGHT_FAILED"
             and res_41_json["push_executed"] is False
-            and "GH_RUN_LIST_INVALID_JSON" in res_41_json.get("error", "")
+            and "GH_API_INVALID_JSON_ON_PAGE_1" in res_41_json.get("error", "")
+            and res_47_rl["status"] == "PREFLIGHT_FAILED"
+            and res_47_rl["push_executed"] is False
+            and "GH_API_HTTP_429_RATE_LIMIT_ERROR_ON_PAGE_1" in res_47_rl.get("error", "")
         ))
 
-        # BUG41-03: GH CLI returns empty stdout or non-list JSON or incomplete run record -> PREFLIGHT_FAILED
+        # BUG41/48-03: GH API returns empty stdout or record missing workflow_id / workflow identity -> PREFLIGHT_FAILED
         fake_bin_41_empty = tmp_p / "fake_bin_41_empty"
         fake_bin_41_empty.mkdir()
         (fake_bin_41_empty / "gh").write_text(
-            "#!/usr/bin/env python3\nimport sys\nif sys.argv[1:3] == ['auth', 'status']: sys.exit(0)\nprint('')\nsys.exit(0)\n",
+            f"""#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    sys.exit(0)
+if args[:3] == ['api', '-X', 'GET'] and args[3].endswith('/workflows/{WORKFLOW_FILE}'):
+    print({wf_meta_json_str!r})
+    sys.exit(0)
+print('')
+sys.exit(0)
+""",
             encoding="utf-8",
         )
         (fake_bin_41_empty / "gh").chmod(0o755)
@@ -1345,90 +1948,223 @@ def run_self_test(repo_root: Path) -> dict:
             env_override={"PATH": f"{fake_bin_41_empty}:/usr/bin:/bin"},
             poll_attempts=1, poll_interval_s=0.0,
         )
-        fake_bin_41_inc = tmp_p / "fake_bin_41_inc"
-        fake_bin_41_inc.mkdir()
-        (fake_bin_41_inc / "gh").write_text(
-            f"#!/usr/bin/env python3\nimport json, sys\nif sys.argv[1:3] == ['auth', 'status']: sys.exit(0)\nprint(json.dumps([{{'databaseId': 123, 'headSha': '{local_head}'}}]))\nsys.exit(0)\n",
+
+        fake_bin_48_inc = tmp_p / "fake_bin_48_inc"
+        fake_bin_48_inc.mkdir()
+        (fake_bin_48_inc / "gh").write_text(
+            f"""#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    sys.exit(0)
+if args[:3] == ['api', '-X', 'GET'] and args[3].endswith('/workflows/{WORKFLOW_FILE}'):
+    print({wf_meta_json_str!r})
+    sys.exit(0)
+print(json.dumps({{'total_count': 1, 'workflow_runs': [{{'id': 123, 'workflow_id': 99001, 'head_sha': '{local_head}', 'head_branch': '{DEFAULT_TARGET_BRANCH}', 'event': 'push', 'created_at': '2026-11-01T00:00:00Z'}}]}}))
+sys.exit(0)
+""",
             encoding="utf-8",
         )
-        (fake_bin_41_inc / "gh").chmod(0o755)
-        res_41_inc = execute_deployment(
-            bundle, str(create_fresh_bare_remote(tmp_p, "origin_41_inc.git")), wf_file,
-            env_override={"PATH": f"{fake_bin_41_inc}:/usr/bin:/bin"},
+        (fake_bin_48_inc / "gh").chmod(0o755)
+        res_48_inc = execute_deployment(
+            bundle, str(create_fresh_bare_remote(tmp_p, "origin_48_inc.git")), wf_file,
+            env_override={"PATH": f"{fake_bin_48_inc}:/usr/bin:/bin"},
             poll_attempts=1, poll_interval_s=0.0,
         )
         checks.append((
-            "BUG41_03_GH_RUN_LIST_EMPTY_OR_INCOMPLETE_RECORD_HALTS_WITH_PREFLIGHT_FAILED",
+            "BUG41_48_03_GH_API_EMPTY_STDOUT_OR_MISSING_WORKFLOW_IDENTITY_HALTS_WITH_PREFLIGHT_FAILED",
             res_41_empty["status"] == "PREFLIGHT_FAILED"
-            and "GH_RUN_LIST_EMPTY_STDOUT" in res_41_empty.get("error", "")
-            and res_41_inc["status"] == "PREFLIGHT_FAILED"
-            and "GH_RUN_LIST_INCOMPLETE_RECORD" in res_41_inc.get("error", "")
+            and "GH_API_EMPTY_STDOUT_ON_PAGE_1" in res_41_empty.get("error", "")
+            and res_48_inc["status"] == "PREFLIGHT_FAILED"
+            and "GH_API_INCOMPLETE_OR_MISMATCHED_RECORD_PAGE_1_INDEX_0" in res_48_inc.get("error", "")
         ))
 
-        # BUG41-04: Historical run NOT in first 30 results (located on page 2 at index 35) is discovered via pagination and excluded
-        fake_bin_41_page = tmp_p / "fake_bin_41_page"
-        fake_bin_41_page.mkdir()
-        page_script = f"""#!/usr/bin/env python3
-import json, os, sys
+        # BUG47-03: Real 3-page REST API pagination (`?per_page=30&page=1..3`, total_count=65) without MERSAD_GH_PAGE!
+        # Historical run with `local_head` is on Page 3 (index 64) and is properly discovered and excluded.
+        fake_bin_47_3pages = tmp_p / "fake_bin_47_3pages"
+        fake_bin_47_3pages.mkdir()
+        page_3_script = f"""#!/usr/bin/env python3
+import json, sys, urllib.parse
 args = sys.argv[1:]
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    page = int(os.environ.get("MERSAD_GH_PAGE", "1"))
-    if page == 1:
-        runs = [
-            {{"databaseId": 8100 + i, "headSha": "1111111111111111111111111111111111111111", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z", "workflowName": "{WORKFLOW_FILE}"}}
-            for i in range(30)
-        ]
-        print(json.dumps(runs))
-    elif page == 2:
-        runs = [
-            {{"databaseId": 7900 + i, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-10-25T00:00:00Z", "workflowName": "{WORKFLOW_FILE}"}}
-            for i in range(6)
-        ]
-        print(json.dumps(runs))
-    else:
-        print(json.dumps([]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        qs = urllib.parse.parse_qs(ep.split("?", 1)[1])
+        page = int(qs.get("page", ["1"])[0])
+        per_page = int(qs.get("per_page", ["30"])[0])
+        if page == 1:
+            runs = [
+                {{
+                    "id": 8900 - i,
+                    "workflow_id": 99001,
+                    "path": "{WORKFLOW_DEFINITION_PATH}",
+                    "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}",
+                    "head_sha": "1111111111111111111111111111111111111111",
+                    "event": "push",
+                    "head_branch": "{DEFAULT_TARGET_BRANCH}",
+                    "created_at": f"2026-11-05T12:{{59 - i:02d}}:00Z",
+                }}
+                for i in range(per_page)
+            ]
+            print(json.dumps({{"total_count": 65, "workflow_runs": runs}}))
+        elif page == 2:
+            runs = [
+                {{
+                    "id": 8500 - i,
+                    "workflow_id": 99001,
+                    "path": "{WORKFLOW_DEFINITION_PATH}",
+                    "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}",
+                    "head_sha": "2222222222222222222222222222222222222222",
+                    "event": "push",
+                    "head_branch": "{DEFAULT_TARGET_BRANCH}",
+                    "created_at": f"2026-11-04T12:{{59 - i:02d}}:00Z",
+                }}
+                for i in range(per_page)
+            ]
+            print(json.dumps({{"total_count": 65, "workflow_runs": runs}}))
+        elif page == 3:
+            runs = [
+                {{
+                    "id": 7905 - i,
+                    "workflow_id": 99001,
+                    "path": "{WORKFLOW_DEFINITION_PATH}",
+                    "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}",
+                    "head_sha": "{local_head}",
+                    "event": "push",
+                    "head_branch": "{DEFAULT_TARGET_BRANCH}",
+                    "created_at": f"2026-10-25T12:{{59 - i:02d}}:00Z",
+                }}
+                for i in range(5)
+            ]
+            print(json.dumps({{"total_count": 65, "workflow_runs": runs}}))
+        else:
+            print(json.dumps({{"total_count": 65, "workflow_runs": []}}))
+        sys.exit(0)
 sys.exit(1)
 """
-        (fake_bin_41_page / "gh").write_text(page_script, encoding="utf-8")
-        (fake_bin_41_page / "gh").chmod(0o755)
-        res_41_page = execute_deployment(
-            bundle, str(create_fresh_bare_remote(tmp_p, "origin_41_page.git")), wf_file,
-            env_override={"PATH": f"{fake_bin_41_page}:/usr/bin:/bin"},
+        (fake_bin_47_3pages / "gh").write_text(page_3_script, encoding="utf-8")
+        (fake_bin_47_3pages / "gh").chmod(0o755)
+        res_47_3pages = execute_deployment(
+            bundle, str(create_fresh_bare_remote(tmp_p, "origin_47_3pages.git")), wf_file,
+            env_override={"PATH": f"{fake_bin_47_3pages}:/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+            preflight_max_pages=4, preflight_per_page=30,
+        )
+        q_sum_3p = res_47_3pages.get("pre_existing_runs_query_summary") or {}
+        checks.append((
+            "BUG47_03_REAL_REST_API_3_PAGE_PAGINATION_FETCHES_65_RUNS_AND_EXCLUDES_HISTORICAL_SHA_ON_PAGE_3",
+            res_47_3pages["status"] == "RUN_TIMEOUT"
+            and res_47_3pages["run_id"] is None
+            and 7901 in res_47_3pages.get("pre_existing_run_ids", [])
+            and q_sum_3p.get("pages_fetched") == 3
+            and q_sum_3p.get("runs_inspected_count") == 65
+            and len(q_sum_3p.get("endpoints_queried", [])) == 3
+            and q_sum_3p["endpoints_queried"][0].endswith("?per_page=30&page=1")
+            and q_sum_3p["endpoints_queried"][1].endswith("?per_page=30&page=2")
+            and q_sum_3p["endpoints_queried"][2].endswith("?per_page=30&page=3")
+        ))
+
+        # BUG47-04: Broken pagination server returns identical page 1 results on page 2 -> DUPLICATE_PAGE_RESULTS -> PREFLIGHT_FAILED
+        fake_bin_47_duppage = tmp_p / "fake_bin_47_duppage"
+        fake_bin_47_duppage.mkdir()
+        duppage_script = f"""#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        # Broken server ignores page parameter and returns the same 30 runs every time!
+        runs = [
+            {{
+                "id": 8900 - i,
+                "workflow_id": 99001,
+                "path": "{WORKFLOW_DEFINITION_PATH}",
+                "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}",
+                "head_sha": "1111111111111111111111111111111111111111",
+                "event": "push",
+                "head_branch": "{DEFAULT_TARGET_BRANCH}",
+                "created_at": f"2026-11-05T12:{{59 - i:02d}}:00Z",
+            }}
+            for i in range(30)
+        ]
+        print(json.dumps({{"total_count": 60, "workflow_runs": runs}}))
+        sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_47_duppage / "gh").write_text(duppage_script, encoding="utf-8")
+        (fake_bin_47_duppage / "gh").chmod(0o755)
+        res_47_duppage = execute_deployment(
+            bundle, str(create_fresh_bare_remote(tmp_p, "origin_47_duppage.git")), wf_file,
+            env_override={"PATH": f"{fake_bin_47_duppage}:/usr/bin:/bin"},
             poll_attempts=1, poll_interval_s=0.0,
             preflight_max_pages=3, preflight_per_page=30,
         )
         checks.append((
-            "BUG41_04_PAGINATION_RECORDS_HISTORICAL_RUN_BEYOND_FIRST_30_RESULTS_AND_REJECTS_IT",
-            res_41_page["status"] == "RUN_TIMEOUT"
-            and res_41_page["run_id"] is None
-            and 7905 in res_41_page.get("pre_existing_run_ids", [])
-            and res_41_page.get("pre_existing_runs_query_summary", {}).get("pages_fetched") == 2
-            and res_41_page.get("pre_existing_runs_query_summary", {}).get("runs_inspected_count") == 36
+            "BUG47_04_DUPLICATE_PAGE_RESULTS_ON_PAGE_2_DETECTED_AND_HALTS_WITH_PREFLIGHT_FAILED",
+            res_47_duppage["status"] == "PREFLIGHT_FAILED"
+            and res_47_duppage["push_executed"] is False
+            and "GH_API_DUPLICATE_PAGE_RESULTS_ON_PAGE_2" in res_47_duppage.get("error", "")
         ))
 
-        # BUG41-05: Pagination failure / query interruption on page 2 -> PREFLIGHT_FAILED before push
+        # BUG47-05: Reaching max_pages while total_count > fetched runs -> GH_API_MAX_PAGES_LIMIT_REACHED_INCOMPLETE_HISTORY -> PREFLIGHT_FAILED
+        res_47_maxp = execute_deployment(
+            bundle, str(create_fresh_bare_remote(tmp_p, "origin_47_maxp.git")), wf_file,
+            env_override={"PATH": f"{fake_bin_47_3pages}:/usr/bin:/bin"},
+            poll_attempts=1, poll_interval_s=0.0,
+            preflight_max_pages=2, preflight_per_page=30,  # Only 2 pages (60 runs) allowed, but total_count is 65!
+        )
+        checks.append((
+            "BUG47_05_MAX_PAGES_EXHAUSTED_WITH_INCOMPLETE_HISTORY_HALTS_WITH_PREFLIGHT_FAILED",
+            res_47_maxp["status"] == "PREFLIGHT_FAILED"
+            and res_47_maxp["push_executed"] is False
+            and "GH_API_MAX_PAGES_LIMIT_REACHED_INCOMPLETE_HISTORY" in res_47_maxp.get("error", "")
+        ))
+
+        # BUG41/47-06: Pagination interruption on Page 2 AND chronological ordering violation -> PREFLIGHT_FAILED
         fake_bin_41_pfail = tmp_p / "fake_bin_41_pfail"
         fake_bin_41_pfail.mkdir()
         pfail_script = f"""#!/usr/bin/env python3
-import json, os, sys
+import json, sys, urllib.parse
 args = sys.argv[1:]
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    page = int(os.environ.get("MERSAD_GH_PAGE", "1"))
-    if page == 1:
-        runs = [
-            {{"databaseId": 8200 + i, "headSha": "2222222222222222222222222222222222222222", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z", "workflowName": "{WORKFLOW_FILE}"}}
-            for i in range(30)
-        ]
-        print(json.dumps(runs))
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
         sys.exit(0)
-    else:
-        sys.stderr.write("Connection reset during page 2 query\\n")
-        sys.exit(1)
+    if "/workflows/99001/runs?" in ep:
+        qs = urllib.parse.parse_qs(ep.split("?", 1)[1])
+        page = int(qs.get("page", ["1"])[0])
+        if page == 1:
+            runs = [
+                {{
+                    "id": 8299 - i,
+                    "workflow_id": 99001,
+                    "path": "{WORKFLOW_DEFINITION_PATH}",
+                    "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}",
+                    "head_sha": "2222222222222222222222222222222222222222",
+                    "event": "push",
+                    "head_branch": "{DEFAULT_TARGET_BRANCH}",
+                    "created_at": f"2026-11-01T00:{{59 - i:02d}}:00Z",
+                }}
+                for i in range(30)
+            ]
+            print(json.dumps({{"total_count": 45, "workflow_runs": runs}}))
+            sys.exit(0)
+        else:
+            sys.stderr.write("Connection reset during page 2 query\\n")
+            sys.exit(1)
 sys.exit(1)
 """
         (fake_bin_41_pfail / "gh").write_text(pfail_script, encoding="utf-8")
@@ -1440,14 +2176,14 @@ sys.exit(1)
             preflight_max_pages=3, preflight_per_page=30,
         )
         checks.append((
-            "BUG41_05_PAGINATION_INTERRUPTION_ON_PAGE_2_HALTS_WITH_PREFLIGHT_FAILED",
+            "BUG41_47_06_PAGINATION_INTERRUPTION_ON_PAGE_2_HALTS_WITH_PREFLIGHT_FAILED",
             res_41_pfail["status"] == "PREFLIGHT_FAILED"
             and res_41_pfail["push_executed"] is False
-            and "GH_RUN_LIST_EXIT_1_ON_PAGE_2" in res_41_pfail.get("error", "")
+            and "GH_API_RUNS_EXIT_1_ON_PAGE_2" in res_41_pfail.get("error", "")
         ))
 
         # =========================================================================
-        # BUG-42 Regression Tests: Delayed Duplicate-Run Detection via Settling Window
+        # BUG-42 & BUG-47 Regression Tests: Delayed Duplicate-Run Detection via Multi-Page Settling Window
         # =========================================================================
 
         # BUG42-01: Immediate duplicate runs in same poll snapshot -> DUPLICATE_RUN_DETECTED
@@ -1460,17 +2196,24 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_42_imm}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([{{"databaseId": 7000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z"}}]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 7010, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}},
-            {{"databaseId": 7011, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}},
-            {{"databaseId": 7000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 7000, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "2026-11-01T00:00:00Z"}}
+            ]}}))
+        else:
+            print(json.dumps({{"total_count": 3, "workflow_runs": [
+                {{"id": 7011, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_plus1_iso}"}},
+                {{"id": 7010, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}},
+                {{"id": 7000, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "2026-11-01T00:00:00Z"}}
+            ]}}))
+        sys.exit(0)
 sys.exit(1)
 """
         (fake_bin_42_imm / "gh").write_text(imm_dup_script, encoding="utf-8")
@@ -1483,34 +2226,49 @@ sys.exit(1)
         checks.append((
             "BUG42_01_IMMEDIATE_DUPLICATE_RUNS_IN_SAME_SNAPSHOT_DETECTED",
             res_42_imm["status"] == "DUPLICATE_RUN_DETECTED"
-            and res_42_imm.get("duplicate_run_ids") == [7010, 7011]
+            and res_42_imm.get("duplicate_run_ids") == [7011, 7010]
         ))
 
-        # BUG42-02: Second matching run appears on the FIRST settling poll right after initial discovery -> DUPLICATE_RUN_DETECTED
+        # BUG42/47-02: Second matching run appears on Page 2 during the settling window -> DUPLICATE_RUN_DETECTED across pages!
         fake_bin_42_next = tmp_p / "fake_bin_42_next"
         fake_bin_42_next.mkdir()
         state_42_next = tmp_p / "state_42_next.txt"
         next_dup_script = f"""#!/usr/bin/env python3
-import json, pathlib, sys
+import json, pathlib, sys, urllib.parse
 args = sys.argv[1:]
 sf = pathlib.Path("{state_42_next}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    cnt = int(sf.read_text()) if sf.exists() else 0
-    sf.write_text(str(cnt + 1))
-    if cnt == 0:
-        print(json.dumps([]))
-    elif cnt == 1:
-        print(json.dumps([
-            {{"databaseId": 7101, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 7102, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}},
-            {{"databaseId": 7101, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        qs = urllib.parse.parse_qs(ep.split("?", 1)[1])
+        page = int(qs.get("page", ["1"])[0])
+        cnt = int(sf.read_text()) if sf.exists() else 0
+        if page == 1:
+            sf.write_text(str(cnt + 1))
+        if cnt == 0:
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        elif cnt == 1:
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 7101, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+            ]}}))
+        else:
+            # On settling poll, per_page=1: Page 1 has run 7102, Page 2 has run 7101!
+            if page == 1:
+                print(json.dumps({{"total_count": 2, "workflow_runs": [
+                    {{"id": 7102, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_plus1_iso}"}}
+                ]}}))
+            elif page == 2:
+                print(json.dumps({{"total_count": 2, "workflow_runs": [
+                    {{"id": 7101, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+                ]}}))
+            else:
+                print(json.dumps({{"total_count": 2, "workflow_runs": []}}))
+        sys.exit(0)
 sys.exit(1)
 """
         (fake_bin_42_next / "gh").write_text(next_dup_script, encoding="utf-8")
@@ -1519,17 +2277,16 @@ sys.exit(1)
             bundle, str(create_fresh_bare_remote(tmp_p, "origin_42_next.git")), wf_file,
             env_override={"PATH": f"{fake_bin_42_next}:/usr/bin:/bin"},
             poll_attempts=2, poll_interval_s=0.0, settling_polls=3, settling_interval_s=0.0,
+            preflight_max_pages=3, preflight_per_page=1,
         )
         checks.append((
-            "BUG42_02_SECOND_RUN_APPEARING_AFTER_FIRST_POLL_DETECTED_IN_SETTLING_WINDOW",
+            "BUG42_47_02_SECOND_RUN_ON_PAGE_2_DETECTED_IN_MULTI_PAGE_SETTLING_WINDOW",
             res_42_next["status"] == "DUPLICATE_RUN_DETECTED"
             and res_42_next.get("duplicate_run_ids") == [7102, 7101]
             and "RUN_IN_PROGRESS" not in res_42_next.get("state_history", [])
         ))
 
-        # BUG42-03: Delayed second run appears several seconds/polls later (on settling poll #3) ->
-        #           Verify that WITHOUT settling window (settling_polls=0, legacy behavior) it would NOT be caught,
-        #           and WITH settling window (settling_polls=3, remediated behavior) it IS caught as DUPLICATE_RUN_DETECTED!
+        # BUG42-03: Delayed second run appears on settling poll #3 (missed when settling_polls=0, caught when settling_polls=3)
         fake_bin_42_late = tmp_p / "fake_bin_42_late"
         fake_bin_42_late.mkdir()
         state_42_late = tmp_p / "state_42_late.txt"
@@ -1539,21 +2296,26 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_42_late}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    cnt = int(sf.read_text()) if sf.exists() else 0
-    sf.write_text(str(cnt + 1))
-    if cnt == 0:
-        print(json.dumps([]))
-    elif cnt in (1, 2, 3):
-        print(json.dumps([
-            {{"databaseId": 7201, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 7202, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}},
-            {{"databaseId": 7201, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        cnt = int(sf.read_text()) if sf.exists() else 0
+        sf.write_text(str(cnt + 1))
+        if cnt == 0:
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        elif cnt in (1, 2, 3):
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 7201, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+            ]}}))
+        else:
+            print(json.dumps({{"total_count": 2, "workflow_runs": [
+                {{"id": 7202, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_plus1_iso}"}},
+                {{"id": 7201, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+            ]}}))
+        sys.exit(0)
 if args[:2] == ["run", "watch"]:
     sys.exit(0)
 if args[:2] == ["run", "view"]:
@@ -1569,14 +2331,12 @@ sys.exit(1)
         (fake_bin_42_late / "gh").write_text(late_dup_script, encoding="utf-8")
         (fake_bin_42_late / "gh").chmod(0o755)
 
-        # (a) Legacy behavior without settling window (settling_polls=0) misses the late duplicate on poll #4:
         res_42_legacy_missed = execute_deployment(
             bundle, str(create_fresh_bare_remote(tmp_p, "origin_42_legacy.git")), wf_file,
             env_override={"PATH": f"{fake_bin_42_late}:/usr/bin:/bin"},
             poll_attempts=2, poll_interval_s=0.0, settling_polls=0, settling_interval_s=0.0,
             artifacts_base_dir=tmp_p,
         )
-        # Reset counter and run with remediated default settling window (settling_polls=3, settling_interval_s=0.02):
         if state_42_late.exists():
             state_42_late.unlink()
         res_42_remediated = execute_deployment(
@@ -1593,7 +2353,7 @@ sys.exit(1)
             and "RUN_IN_PROGRESS" not in res_42_remediated.get("state_history", [])
         ))
 
-        # BUG42-04: Query failure during settling window aborts with RUN_FAILED (never proceeds to RUN_IN_PROGRESS or PASS)
+        # BUG42-04: Query failure during settling window aborts with RUN_FAILED
         fake_bin_42_sfail = tmp_p / "fake_bin_42_sfail"
         fake_bin_42_sfail.mkdir()
         state_42_sfail = tmp_p / "state_42_sfail.txt"
@@ -1603,20 +2363,25 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_42_sfail}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    cnt = int(sf.read_text()) if sf.exists() else 0
-    sf.write_text(str(cnt + 1))
-    if cnt == 0:
-        print(json.dumps([]))
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
         sys.exit(0)
-    elif cnt == 1:
-        print(json.dumps([
-            {{"databaseId": 7301, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-        sys.exit(0)
-    else:
-        sys.stderr.write("API rate limit or network error during settling window\\n")
-        sys.exit(1)
+    if "/workflows/99001/runs?" in ep:
+        cnt = int(sf.read_text()) if sf.exists() else 0
+        sf.write_text(str(cnt + 1))
+        if cnt == 0:
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+            sys.exit(0)
+        elif cnt == 1:
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 7301, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+            ]}}))
+            sys.exit(0)
+        else:
+            sys.stderr.write("API rate limit or network error during settling window\\n")
+            sys.exit(1)
 sys.exit(1)
 """
         (fake_bin_42_sfail / "gh").write_text(sfail_script, encoding="utf-8")
@@ -1637,9 +2402,8 @@ sys.exit(1)
         # BUG-44 Regression Tests: Remote Already at Local HEAD, Fast-Forward, Diverged, Unreachable
         # =========================================================================
 
-        # BUG44-01: Remote SHA already equals Local HEAD -> REMOTE_ALREADY_AT_LOCAL_HEAD_NO_NEW_PUSH_EVENT (no push, no polling)
+        # BUG44-01: Remote SHA already equals Local HEAD -> REMOTE_ALREADY_AT_LOCAL_HEAD_NO_NEW_PUSH_EVENT
         bare_remote_44_same = create_fresh_bare_remote(tmp_p, "origin_44_same.git")
-        # Pre-populate bare_remote_44_same with the exact target branch at local_head
         with tempfile.TemporaryDirectory() as td_seed:
             subprocess.run(["git", "clone", "-q", str(bundle), td_seed], check=True)
             subprocess.run(["git", "-C", td_seed, "checkout", "-q", "-B", DEFAULT_TARGET_BRANCH, f"origin/{DEFAULT_TARGET_BRANCH}"], check=True)
@@ -1659,11 +2423,11 @@ sys.exit(1)
             and "PUSH_COMPLETED" not in res_44_same.get("state_history", [])
         ))
 
-        # BUG44-02: Remote SHA is an older ancestor (e.g. EXPECTED_AI_PREFLIGHT_PARENT_SHA) -> Fast-forward push succeeds cleanly
+        # BUG44-02: Remote SHA is an older ancestor -> Fast-forward push succeeds cleanly
         bare_remote_44_ff = create_fresh_bare_remote(tmp_p, "origin_44_ff.git")
         with tempfile.TemporaryDirectory() as td_seed_ff:
             subprocess.run(["git", "clone", "-q", str(bundle), td_seed_ff], check=True)
-            subprocess.run(["git", "-C", td_seed_ff, " push" if False else "push", "-q", str(bare_remote_44_ff), f"{EXPECTED_AI_PREFLIGHT_PARENT_SHA}:refs/heads/{DEFAULT_TARGET_BRANCH}"], check=True)
+            subprocess.run(["git", "-C", td_seed_ff, "push", "-q", str(bare_remote_44_ff), f"{EXPECTED_AI_PREFLIGHT_PARENT_SHA}:refs/heads/{DEFAULT_TARGET_BRANCH}"], check=True)
 
         fake_bin_44_ff = tmp_p / "fake_bin_44_ff"
         fake_bin_44_ff.mkdir()
@@ -1674,15 +2438,20 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_44_ff}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 7401, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/7401"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        else:
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 7401, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}", "html_url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/7401"}}
+            ]}}))
+        sys.exit(0)
 if args[:2] == ["run", "watch"]:
     sys.exit(0)
 if args[:2] == ["run", "view"]:
@@ -1711,7 +2480,7 @@ sys.exit(1)
             and res_44_ff["push_executed"] is True
         ))
 
-        # BUG44-03: Remote branch has diverged (contains a commit not in local HEAD) -> REMOTE_DIVERGED_NOT_FAST_FORWARD before push
+        # BUG44-03: Remote branch has diverged -> REMOTE_DIVERGED_NOT_FAST_FORWARD before push
         bare_remote_44_div = create_fresh_bare_remote(tmp_p, "origin_44_div.git")
         with tempfile.TemporaryDirectory() as td_seed_div:
             subprocess.run(["git", "clone", "-q", str(bundle), td_seed_div], check=True)
@@ -1762,15 +2531,20 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_wrong_sha}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 7001, "headSha": "deadbeef00000000000000000000000000000000", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        else:
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 7001, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "deadbeef00000000000000000000000000000000", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+            ]}}))
+        sys.exit(0)
 sys.exit(1)
 """
         (fake_bin_wrong_sha / "gh").write_text(wrong_sha_script, encoding="utf-8")
@@ -1795,16 +2569,21 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_wrong_evt}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 7002, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}},
-            {{"databaseId": 7003, "headSha": "{local_head}", "event": "pull_request", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        else:
+            print(json.dumps({{"total_count": 2, "workflow_runs": [
+                {{"id": 7003, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "pull_request", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_plus1_iso}"}},
+                {{"id": 7002, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "workflow_dispatch", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}"}}
+            ]}}))
+        sys.exit(0)
 sys.exit(1)
 """
         (fake_bin_wrong_evt / "gh").write_text(wrong_evt_script, encoding="utf-8")
@@ -1836,16 +2615,23 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_file_fail}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([{{"databaseId": 5000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z"}}]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 5005, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5005"}},
-            {{"databaseId": 5000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 5000, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "2026-11-01T00:00:00Z"}}
+            ]}}))
+        else:
+            print(json.dumps({{"total_count": 2, "workflow_runs": [
+                {{"id": 5005, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}", "html_url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5005"}},
+                {{"id": 5000, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "2026-11-01T00:00:00Z"}}
+            ]}}))
+        sys.exit(0)
 if args[:2] == ["run", "watch"]:
     sys.exit(0)
 if args[:2] == ["run", "view"]:
@@ -1877,15 +2663,20 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_missing_art}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 5501, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5501"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 0, "workflow_runs": []}}))
+        else:
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 5501, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}", "html_url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5501"}}
+            ]}}))
+        sys.exit(0)
 if args[:2] == ["run", "watch"] and args[2] == "5501":
     sys.exit(0)
 if args[:2] == ["run", "view"] and args[2] == "5501":
@@ -1923,16 +2714,23 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_file_ok}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["run", "list"]:
-    if not sf.exists():
-        sf.write_text("pre")
-        print(json.dumps([{{"databaseId": 6000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z"}}]))
-    else:
-        print(json.dumps([
-            {{"databaseId": 6001, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "{now_utc_iso}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/6001"}},
-            {{"databaseId": 6000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "createdAt": "2026-11-01T00:00:00Z"}}
-        ]))
-    sys.exit(0)
+if args[:3] == ["api", "-X", "GET"]:
+    ep = args[3]
+    if ep.endswith("/workflows/{WORKFLOW_FILE}"):
+        print({wf_meta_json_str!r})
+        sys.exit(0)
+    if "/workflows/99001/runs?" in ep:
+        if not sf.exists():
+            sf.write_text("pre")
+            print(json.dumps({{"total_count": 1, "workflow_runs": [
+                {{"id": 6000, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "2026-11-01T00:00:00Z"}}
+            ]}}))
+        else:
+            print(json.dumps({{"total_count": 2, "workflow_runs": [
+                {{"id": 6001, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "{now_utc_iso}", "html_url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/6001"}},
+                {{"id": 6000, "workflow_id": 99001, "path": "{WORKFLOW_DEFINITION_PATH}", "name": "{EXPECTED_WORKFLOW_DISPLAY_NAME}", "head_sha": "{local_head}", "event": "push", "head_branch": "{DEFAULT_TARGET_BRANCH}", "created_at": "2026-11-01T00:00:00Z"}}
+            ]}}))
+        sys.exit(0)
 if args[:2] == ["run", "watch"] and args[2] == "6001":
     sys.exit(0)
 if args[:2] == ["run", "view"] and args[2] == "6001":
@@ -2074,7 +2872,7 @@ const out7 = fn.renderReadinessScorecardHtml({
 if (!out7.includes("UNVERIFIED_CLASSIFICATION (NOT ESTABLISHED)")) process.exit(17);
 console.log("DASHBOARD_7_CASES_OK");
 """
-    rc_node, out_node, err_node = run_cmd(["node", "-e", node_test_script, str(dash_path)])
+    rc_node, out_node, _ = run_cmd(["node", "-e", node_test_script, str(dash_path)])
     checks.append((
         "BUG43_01_DASHBOARD_NO_100_DEFAULT_AND_RENDERS_ALL_4_API_INDICATORS_ACROSS_7_EDGE_CASES",
         no_100_fallback and has_all_4_fields and rc_node == 0 and "DASHBOARD_7_CASES_OK" in out_node
@@ -2193,9 +2991,11 @@ console.log("DASHBOARD_7_CASES_OK");
         "execution_environment": "LOCAL_SANDBOX_SIMULATED_BARE_REMOTE_AND_NODEJS_VERIFICATION (No live GitHub Actions or Windows native execution)",
         "total_checks": len(checks),
         "passed_checks": sum(1 for _, ok in checks if ok),
+        "allowed_deploy_branches": list(ALLOWED_DEPLOY_BRANCHES),
         "ai_provenance_summary": {
             "branch": ai_prov.get("branch"),
             "head_sha": ai_prov.get("head_sha"),
+            "previous_bug40_45_commit_sha": ai_prov.get("previous_bug40_45_commit_sha"),
             "previous_single_run_ci_commit_sha": ai_prov.get("previous_single_run_ci_commit_sha"),
             "previous_preflight_commit_sha": ai_prov.get("previous_preflight_commit_sha"),
             "reconciled_code_sha": ai_prov.get("reconciled_code_sha"),
@@ -2216,7 +3016,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--live", action="store_true")
-    ap.add_argument("--branch", type=str, default="")
+    ap.add_argument("--branch", type=str, default=None)
     ap.add_argument("--verify-downloaded-artifacts", type=str, default="")
     ap.add_argument("--trusted-digests-json", type=str, default="")
     ap.add_argument("--verify-attestation", action="store_true")
@@ -2229,7 +3029,11 @@ if __name__ == "__main__":
     args = ap.parse_args()
     root = Path(__file__).resolve().parent.parent
     if args.verify_ai_provenance:
-        aprov = verify_ai_zip_vs_git_provenance(root, branch=args.branch or DEFAULT_TARGET_BRANCH)
+        ok_b, target_b, msg_b = validate_target_branch_allowlist(args.branch)
+        if not ok_b:
+            print(json.dumps({"ok": False, "error": msg_b}, indent=2, ensure_ascii=False))
+            sys.exit(1)
+        aprov = verify_ai_zip_vs_git_provenance(root, branch=target_b)
         print(json.dumps(aprov, indent=2, ensure_ascii=False))
         sys.exit(0 if aprov["ok"] else 1)
     if args.verify_downloaded_artifacts:
@@ -2259,7 +3063,7 @@ if __name__ == "__main__":
             settling_polls=args.settling_polls,
             settling_interval_s=args.settling_interval,
             artifacts_base_dir=root,
-            target_branch=args.branch or DEFAULT_TARGET_BRANCH,
+            target_branch=args.branch,
         )
         print(json.dumps(rep, indent=2, ensure_ascii=False))
         sys.exit(0 if rep["status"] == "PASS" else 1)
