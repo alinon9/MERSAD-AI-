@@ -1,10 +1,10 @@
 # 2. تقرير التدقيق الأمني الشامل — `SECURITY_AUDIT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` & `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 ## الملخص التنفيذي للتدقيق الأمني
-أُجري فحص أمني شامل (ساكن عبر تحليل شجرة الصياغة المجردة `AST` لـ **203 استعلامات SQLite**، وديناميكي عبر **10 اختبارات اختراق حية `SEC-AUDIT-01..10`** بالإضافة إلى **12 اختبار أمان في المختبر `LAB-SEC-01..12`** وجميع اختبارات الأمان في `selftest.py` البالغ مجموعها **`232 / 232 PASS`**):
+أُجري فحص أمني شامل (ساكن عبر تحليل شجرة الصياغة المجردة `AST` لـ **203 استعلامات SQLite**، وديناميكي عبر **10 اختبارات اختراق حية `SEC-AUDIT-01..10`** بالإضافة إلى **12 اختبار أمان في المختبر `LAB-SEC-01..12`** وجميع اختبارات الأمان في `selftest.py` البالغ مجموعها **`234 / 234 PASS`**):
 - **عدد الثغرات الحرجة أو العالية المفتوحة (`Open Critical/High Vulnerabilities`)**: **`0`**.
-- **الخصوصية وحوكمة البيانات البيومترية**: صفر بيانات أشخاص حقيقيين، اشتراط موافقة صريحة `consent=1`، طمس `100%` من الوجوه في تنبيهات المركبات وطمس وجوه المارة في تنبيهات الوجوه، واشتراط مراجعة بشرية موثقة (`requires_human_review=True`, `verification_policy="HUMAN_VERIFICATION_REQUIRED"`, `status="pending"`).
+- **الخصوصية وحوكمة البيانات البيومترية**: صفر بيانات أشخاص حقيقيين (`contains_real_human_biometric_pii: false` في `BENCHMARK_MANIFEST.json`)، اشتراط موافقة صريحة `consent=1`، طمس `100%` من الوجوه في تنبيهات المركبات وطمس وجوه المارة في تنبيهات الوجوه، واشتراط مراجعة بشرية موثقة (`requires_human_review=True`, `verification_policy="HUMAN_VERIFICATION_REQUIRED"`, `status="pending"`).
 
 ## 4. التدقيق الأمني الشامل (`Comprehensive Security Audit`) ونتائج الاختبارات الحية (البند الثاني)
 
@@ -66,7 +66,7 @@
 
 ### المحور 6: منع تسريب الأسرار والمفاتيح (`Secrets & Keys Leakage Protection`)
 - **التحليل البرمجي الفعلي**:
-  - **حجب الأسرار من السجلات والواجهات (`notify.py:29-48` — `_redact`)**: تعترض دالة `_redact()` أي نص قبل كتابته في `mersad.log` أو سجل التدقيق أو إرجاعه في `JSON`، وتحذف رموز بوت تيليجرام (`bot<id>:<secret>` -> `bot<REDACTED_TOKEN>`) وكلمات مرور روابط الكاميرات (`rtsp://user:pass@host` -> `rtsp://user:***@host`) ومعلمات `?token=` أو `?password=`.
+  - **حجب الأسرار من السجلات والواجهات (`notify.py:29-48` — `_redact`)**: تعترض دالة `_redact()` أي نص قبل كتابته في `mersad.log` أو سجل التدقيق أو إرجاعه في `JSON`، وتحذف رموز بوت تيليجرام (`bot<id>:<secret>` -> `bot<REDACTED_TOKEN>`) وكلمات مرور روابط الكاميرات (`rtsp://<TEST_USER>:<REDACTED_TEST_PASSWORD>@host` -> `rtsp://user:***@host`) ومعلمات `?token=` أو `?password=`.
   - **فصل الأسرار عن الإعدادات العامة (`mersad_live.py:3605-3725`)**: تُحفظ الأسرار في ملف مستقل `.mersad_secrets.json` وتُمسح تلقائياً من `mersad_config.json`. وإذا وُجد `TELEGRAM_TOKEN` في متغيرات بيئة النظام، لا يُكتب أبداً كنص صريح داخل `mersad_config.json` (`P1-G`, `P3-9`).
   - **صلاحيات الملفات الحساسة (`registry.py:209-354`)**: تُنشأ ملفات `.mersad_secrets.json` و`.mersad_hmac.key` و`models/.trusted_models.json` عبر `atomic_write_secret_bytes()` بصلاحيات `0o600` منذ لحظة فتح الواصف (`os.open(..., 0o600)`) على أنظمة `POSIX`، وعبر `PowerShell` و`icacls /inheritance:r` وقصر الصلاحية على `SID` المستخدم الحالي فقط على نظام `Windows` (`_set_windows_private_acl`).
   - **خلو المستودع من أسرار حقيقية**: تم فحص جميع ملفات المشروع وملفات `.bat` و`.yml` والتأكد من عدم وجود أي رمز `GitHub PAT` أو `Telegram Bot Token` حقيقي مدمج في الكود.
@@ -124,10 +124,10 @@
 
 ---
 
-## 5. ملخص الإجراءات المطلوبة والتوصيات الختامية
+## 5. ملخص التوصيات الختامية وحالة الاعتماد النهائي (`Final Release Recommendations`)
 
 1. **اعتماد الشجرة الموحدة `MERSAD_PREVIEW_0.1_FINAL` كمصدر وحيد (`Single Source of Truth`)**:
-   - يجب اعتماد الملفات الموجودة في `MERSAD_PREVIEW_0.1_FINAL/` (فرع الإصدار النهائي `release/mersad-preview-0.1` عند التزام الكود `25131918a981ac2ac37923d4c738d9f93cdcbc5b` للنظام الرئيسي و`e9284356f4d1a8205946d5893121c6f8a2f22012` للمختبر) وإهمال النسخة غير المدمجة في `stage15_local_repo/` لأن الأخيرة تفتقر إلى تحديثات `PATCHED_V7_1` وإصلاحات `PREVIEW 0.1` الاثني عشر.
+   - المصدر المعتمد الحالي هو الفرع `fix/preview-0.1-postbuild-42273598736` عند الالتزام النهائي `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` لمشروع `MERSAD AI` والالتزام `748ac0158761812a6fff63ff6fe626b9df8c252b` لمشروع `MERSAD LAB` (بينما يُحفظ الوسم `rollback-stable-9491bcd` كأثر رجوع تاريخي فقط ولا يُعتمد كفرع حالي).
 2. **استكمال بوابة البناء والتشغيل على نظام `Windows 10/11 x64` متصل بالإنترنت**:
    - رفع حزمة التاريخ الجنائي `reports_and_logs/mersad_preview_0_1_verifiable_history.bundle` إلى المستودع وتشغيل `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.bat` لتنزيل أوزان النماذج الأربعة (`yolov8n.pt`, `EasyOCR`, `yunet.onnx`, `sface.onnx`) وبناء واختبار `MERSAD_AI.exe` و`MERSAD_LAB.exe` و`MERSAD_LAB_Setup_x64.exe` فعلياً على Windows.
 3. **التحصينات الميدانية الاختيارية قبل الانتقال من `Preview` إلى `Production`**:

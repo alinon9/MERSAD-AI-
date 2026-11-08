@@ -1,52 +1,43 @@
 # 9. تقرير البناء والتغليف والنشر لنظام Windows x64 — `BUILD_AND_DEPLOYMENT_REPORT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` & `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 ## 1. معمارية البناء والتوزيع (`Windows x64 Packaging Architecture`)
 
-تم تجهيز وتحصين منظومة بناء وتوزيع متكاملة وموحدة للمشروعين على نظام **Windows 10/11 (64-bit / x64)**:
+تم تجهيز وتحصين منظومة بناء وتوزيع متكاملة وموحدة للمشروعين على نظام **Windows 10/11 (64-bit / x64)** على فرع الإصلاح الموحد **`fix/preview-0.1-postbuild-42273598736`**:
 
 | المكون / الحزمة | أداة البناء والمواصفات | المسار المصدري / السكربت | المسار الناتج عند البناء على Windows x64 | الحالة في بيئة الفحص الحالية |
 | ----- | ----- | ----- | ----- | ----- |
-| **`MERSAD_AI.exe`** | `PyInstaller 6.11.1` (`--onedir`) عبر `MERSAD_AI_Preview_0.1/mersad_ai.spec` | `MERSAD_AI_Preview_0.1/BUILD_EXE.bat` | `MERSAD_AI_Preview_0.1/dist/MERSAD_AI/MERSAD_AI.exe` | **`NOT TESTED` محلياً** (الحاوية `Linux x86_64` معزولة عن الإنترنت؛ سكربت البناء وسير عمل CI جاهزان ومحصنان) |
-| **`MERSAD_LAB.exe`** | `PyInstaller 6.11.1` (`--onedir`) عبر `MERSAD_LAB_Preview_0.1/mersad_lab.spec` | `MERSAD_LAB_Preview_0.1/BUILD_LAB_EXE.bat` | `MERSAD_LAB_Preview_0.1/dist/MERSAD_LAB/MERSAD_LAB.exe` | **`NOT TESTED` محلياً** (الحاوية `Linux x86_64` معزولة؛ سكربت البناء وسير عمل CI جاهزان ومحصنان) |
+| **`MERSAD_AI.exe`** | `PyInstaller 6.11.1` (`--onedir`) عبر `MERSAD_AI_Preview_0.1/mersad_ai.spec` | `MERSAD_AI_Preview_0.1/BUILD_EXE.bat` | `MERSAD_AI_Preview_0.1/dist/MERSAD_AI/MERSAD_AI.exe` | **`NOT TESTED` محلياً** (الحاوية `Linux x86_64` معزولة عن الإنترنت؛ جاهز للبناء على Windows CI من الفرع `fix/preview-0.1-postbuild-42273598736`) |
+| **`MERSAD_LAB.exe`** | `PyInstaller 6.11.1` (`--onedir`) عبر `MERSAD_LAB_Preview_0.1/mersad_lab.spec` | `MERSAD_LAB_Preview_0.1/BUILD_LAB_EXE.bat` | `MERSAD_LAB_Preview_0.1/dist/MERSAD_LAB/MERSAD_LAB.exe` | **`NOT TESTED` محلياً** (الحاوية `Linux x86_64` معزولة؛ جاهز للبناء على Windows CI) |
 | **`MERSAD_LAB_Setup_x64.exe`** | `Inno Setup 6` (`ISCC.exe`) عبر `MERSAD_LAB_Preview_0.1/installer/mersad_lab_setup.iss` | `MERSAD_LAB_Preview_0.1/installer/build_installer.ps1` | `MERSAD_LAB_Preview_0.1/dist/installer/MERSAD_LAB_Setup_x64.exe` | **`NOT TESTED` محلياً** (تمت إضافة التثبيت التلقائي لـ `Inno Setup` عبر `choco install innosetup` في CI) |
 | **`MERSAD_AI_Portable_x64.zip`** (حزمة `.exe` المحمولة لـ Windows) | `Compress-Archive` لمجلد `dist\MERSAD_AI\*` شامل الأوزان الأربعة | `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` & `release-mersad-preview-0.1-windows.yml` | `MERSAD_AI_Preview_0.1/dist/portable/MERSAD_AI_Portable_x64.zip` | **`NOT TESTED` محلياً** (يُنتج تلقائياً في `Phase 3B` على Windows / GitHub Actions) |
 | **`MERSAD_LAB_Portable_x64.zip`** (حزمة `.exe` المحمولة لـ Windows) | `Compress-Archive` لمجلد `dist\MERSAD_LAB\*` | `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` & `release-mersad-preview-0.1-windows.yml` | `MERSAD_LAB_Preview_0.1/dist/portable/MERSAD_LAB_Portable_x64.zip` | **`NOT TESTED` محلياً** (يُنتج تلقائياً في `Phase 3B` على Windows / GitHub Actions) |
-| **`MERSAD_AI_Preview_0.1_Portable_Source.zip`** | حزمة مصدرية محمولة كاملة للنظام الرئيسي وسكربتات التشغيل | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_AI_Preview_0.1_Portable_Source.zip` | **`PASS` (`GENERATED & VERIFIED`)** |
-| **`MERSAD_LAB_Preview_0.1_Portable_Source.zip`** | حزمة مصدرية محمولة كاملة لمختبر الكاميرات وسكربتات البناء والمثبت | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_LAB_Preview_0.1_Portable_Source.zip` | **`PASS` (`GENERATED & VERIFIED`)** |
-| **`MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip`** | الحزمة الشاملة النهائية للإصدار التجريبي `Preview 0.1` شاملة المشروعين والتقارير العشرة وحزمة Git الجنائية | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip` | **`PASS` (`GENERATED & VERIFIED`)** |
+| **`MERSAD_AI_Preview_0.1_Portable_Source.zip`** | حزمة مصدرية محمولة كاملة للنظام الرئيسي (`58` ملفاً شاملةً `models/eval_benchmarks/*`) | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_AI_Preview_0.1_Portable_Source.zip` | **`PASS` (`58/58 MATCH` — مطابقة `100% Byte-for-Byte` مع الفرع `fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec`)** |
+| **`MERSAD_LAB_Preview_0.1_Portable_Source.zip`** | حزمة مصدرية محمولة كاملة لمختبر الكاميرات (`14` ملفاً) | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_LAB_Preview_0.1_Portable_Source.zip` | **`PASS` (`14/14 MATCH` — مطابقة `100% Byte-for-Byte` مع الفرع `fix/preview-0.1-postbuild-42273598736` @ `748ac0158761`)** |
+| **`MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip`** | الحزمة الشاملة النهائية للإصدار التجريبي `Preview 0.1` شاملة المشروعين والتقارير وحزمتي Git الجنائيتين | مرفقة وجاهزة في `RELEASE_DELIVERABLES/PREVIEW_0.1/` | `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip` | **`PASS` (`GENERATED & VERIFIED`)** |
 
-## 2. الإصلاحات الهندسية المنفذة على منظومة بناء Windows وGitHub Actions (`BUG-03`, `BUG-04`, `BUG-07`, `BUG-09`, `BUG-10`, `BUG-11`)
+## 2. الإصلاحات الهندسية المنفذة على منظومة البناء واستهداف الفرع وتدقيق التزامات Git (`BUG-03..BUG-34`)
 
-1. **إزالة مانع التوقف عند المرحلة الثانية (`WINDOWS BUILD BLOCKER — BUG-07`)**:
-   * استبدال `--require-unblocked` بـ `--require-cleanroom-pass` في `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` و`.github/workflows/release-mersad-preview-0.1-windows.yml` بحيث يسجل غياب التزام المختبر الأصلي `ed7b8f72` بأمانة كـ `BLOCKED` دون إيقاف البناء قبل `Phase 3B` (`Test #231 — PASS`).
-2. **التحقق الصريح وتثبيت `Inno Setup 6` (`ISCC.exe`) تلقائياً في GitHub Actions (`BUG-10`)**:
-   * يفحص كل من `release-mersad-preview-0.1-windows.yml` و`build-mersad-lab-windows.yml` و`BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` وجود `ISCC.exe` في `PATH` وفي `C:\Program Files (x86)\Inno Setup 6\ISCC.exe` و`C:\Program Files\Inno Setup 6\ISCC.exe`، وفي حال عدم وجوده ينفذ تلقائياً `choco install innosetup -y --no-progress` قبل مرحلة التجميع (`Test #232 — PASS`).
-3. **تثبيت عجلات `PyTorch CPU` المتوافقة وتشغيل `check_install.py --verify-pip-deps` (`BUG-11`)**:
-   * تثبيت `pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu` قبل تثبيت `requirements.txt -c constraints-win-x64.txt`، ثم إزالة `opencv-python-headless` وإعادة تثبيت `opencv-python==4.11.0.86`، ثم التحقق عبر `python MERSAD_AI_Preview_0.1/check_install.py --verify-pip-deps`.
-4. **توليد مشغلات التوزيع (`dist\MERSAD_AI\RUN.bat` و`RUN_LAN.bat` و`VERIFY_AUDIT.bat` — `BUG-04`)**:
-   * توليد مشغلات تستدعي `MERSAD_AI.exe %*` مباشرةً داخل `dist\MERSAD_AI\` دون الاعتماد على `setup.bat` أو `venv`.
+1. **توحيد مصدر الحقيقة بين شجرة Git والحزم المصدرية (`BUG-23`)**:
+   * مزامنة جميع الملفات الـ 58 في `MERSAD_AI_Preview_0.1/` (شاملةً `mersad_live.py`, `registry.py`, `selftest.py`, `verify_integrity.py`, و`23` ملفاً في `MERSAD_AI_Preview_0.1/models/eval_benchmarks/`) داخل شجرة Git على الفرع `fix/preview-0.1-postbuild-42273598736` في الالتزام **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (`v0.1.1-postbuild-reconciled-code`) بحيث يبني سير عمل GitHub Actions نفس الكود الموجود في `MERSAD_AI_Preview_0.1_Portable_Source.zip` بايت-ببايت (`0` فروق).
+2. **تحديث استهداف النشر وسير العمل ليبني فرع الإصلاح الموحد (`BUG-24`)**:
+   * تحديث `tools/deploy_and_run_github_actions.py` و`PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` و`PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat` ليستهدفوا الفرع **`fix/preview-0.1-postbuild-42273598736`** افتراضياً (مع إمكانية تخصيص الفرع عبر `--branch <branch>` أو متغير البيئة `MERSAD_DEPLOY_BRANCH` أو المعامل `%1`).
+   * تحديث `EXPECTED_AI_CODE_SHA` إلى **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (مع التحقق من انحداره من `d965d71317e3506e5dce9d316dc81cb8ae45e43b` و`25131918a981ac2ac37923d4c738d9f93cdcbc5b`) وتحديث `EXPECTED_LAB_CODE_SHA` إلى **`748ac0158761812a6fff63ff6fe626b9df8c252b`** (المنحدر من `e9284356f4d1a8205946d5893121c6f8a2f22012`), مع عدم المساس بـ `main` (`25c9e5bba30dc8f921675e12c23a53571be895c1`) وعدم استخدام `--force`.
+   * تمرير `--ref %TARGET_BRANCH%` إلى `gh workflow run release-mersad-preview-0.1-windows.yml` والتحقق في حلقة الاستقصاء (`Polling`) من أن التشغيل الجديد يطابق `headBranch == TARGET_BRANCH` و`headSha == LOCAL_HEAD_SHA`.
+3. **فصل التحقق القرائي غير التدميري (`--verify`) عن التوليد (`--generate`) في `tools/prepare_safe_eval_benchmarks.py` (`BUG-25`)**:
+   * يستدعي `.github/workflows/release-mersad-preview-0.1-windows.yml` الأمر `python tools/prepare_safe_eval_benchmarks.py --verify`، الذي يتحقق في وضع قراءة فقط (`READ_ONLY_NON_DESTRUCTIVE_VERIFY`) من وجود جميع الملفات الـ 23 وبصمات `SHA-256` للصور الـ 18 دون إعادة توليد أو الكتابة فوق أي ملف موجود.
+4. **التحقق الذاتي الكامل (`21 / 21 PASS`) دون تنفيذ رفع أو تشغيل سحابي قبل موافقة المستخدم**:
+   * تم التحقق من جميع المسارات عبر `python3 tools/deploy_and_run_github_actions.py --self-test` على مستودع Git محلي مجرد (`Bare Remote`) واجتاز **`21 / 21 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
+5. **إفصاح النسب الجنائي لسكربتات النشر ومخرجات الإصدار (`BUG-33C`)**:
+   * داخل شجرة الالتزام `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` (وقت إنشائه قبل تولد بصمة الالتزام نفسها)، كان المتغير `EXPECTED_AI_CODE_SHA` في `tools/deploy_and_run_github_actions.py` وملفي `.bat` يشير إلى التزام الكود السابق `7f35cb1007a229a72ac0cd1be61fd5a81eb891bd`؛ وبعد توليد الالتزام `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` حُدّثت قيمة `EXPECTED_AI_CODE_SHA` في طبقة شجرة العمل ومخرجات الإصدار (`Working Tree / Release Artifacts Layer`) لتطابق `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` دون إنشاء التزام Git جديد.
+5. **إفصاح النسب الجنائي لسكربتات النشر ومخرجات الإصدار (`BUG-33C`)**:
+   * داخل شجرة الالتزام `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` (وقت إنشائه قبل تولد بصمة الالتزام نفسها)، كان المتغير `EXPECTED_AI_CODE_SHA` في `tools/deploy_and_run_github_actions.py` وملفي `.bat` يشير إلى التزام الكود السابق `7f35cb1007a229a72ac0cd1be61fd5a81eb891bd`؛ وبعد توليد الالتزام `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` حُدّثت قيمة `EXPECTED_AI_CODE_SHA` في طبقة شجرة العمل ومخرجات الإصدار (`Working Tree / Release Artifacts Layer`) لتطابق `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` دون إنشاء التزام Git جديد.
 
-5. **تصحيح وتحصين سكربت النشر والتشغيل السحابي (`PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat` & `PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat` & `tools/deploy_and_run_github_actions.py` — `BUG-12`)**:
-   * استبدال الفرع التاريخي `preview/mersad-ai-lab-0.1-20261105` والالتزام القديم `9491bcd0` بفرع الإصدار النهائي المعتمد **`release/mersad-preview-0.1`** المتضمن التزام الكود **`25131918a981ac2ac37923d4c738d9f93cdcbc5b`** (`MERSAD AI`) و**`e9284356f4d1a8205946d5893121c6f8a2f22012`** (`MERSAD LAB`).
-   * التحقق الآلي المسبق من عدم المساس بالفرع الرئيسي `main` (`25c9e5bba30dc8f921675e12c23a53571be895c1`)، ورفع الفرع بدون `--force` (`git push -u origin refs/heads/release/mersad-preview-0.1:refs/heads/release/mersad-preview-0.1`).
-   * التحقق الفعلي من تطابق بصمة الالتزام المنشور على GitHub (`REMOTE_SHA`) مع `LOCAL_HEAD_SHA` عبر `git ls-remote origin refs/heads/release/mersad-preview-0.1` والتوقف فوراً عند أي اختلاف.
-   * التحقق المسبق الصارم من تثبيت أداة `GitHub CLI (gh)` ومصادقتها (`gh auth status`) قبل البدء؛ وفي حال عدم تثبيتها أو عدم مصادقتها يتوقف السكربت فوراً برمز خطأ غير صفري (`exit /b 1`) ورسالة خطأ واضحة دون الادعاء بنجاح تشغيل البناء.
-   * تشغيل `gh workflow run release-mersad-preview-0.1-windows.yml --ref release/mersad-preview-0.1` يدوياً، واستخراج `Run ID`، وانتظار اكتمال البناء عبر `gh run watch <RUN_ID> --exit-status`، وتنزيل المخرجات الخمسة عبر `gh run download <RUN_ID>`.
-   * تم التحقق الفعلي من منطق السكربت عبر حزمة الاختبار الذاتي `python3 tools/deploy_and_run_github_actions.py --self-test` على مستودع Git محلي مجرد (`Bare Remote`) واجتاز **`8 / 8 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
+## 3. تدقيق محفزات سير العمل (`push` مقابل `workflow_dispatch`) وعلاقته بالفرع `main` (`BUG-34 Preflight Analysis`)
 
-## 3. نتيجة محاولة الرفع وتشغيل `release-mersad-preview-0.1-windows.yml` من داخل بيئة الفحص الحالية وكيفية تشغيله على جهاز متصل
-
-- **القيود التقنية الصارمة لبيئة الفحص الحالية:**
-  1. بيئة التنفيذ الحالية هي حاوية `Linux x86_64` معزولة شبكياً بالكامل (`No Outbound Internet Access` في الطرفية).
-  2. المستودع السحابي `https://github.com/alinon9/MERSAD-AI-` خاص (`Private Repository`) ويتطلب مصادقة حساب GitHub من جهاز متصل بالإنترنت لرفع الفرع `release/mersad-preview-0.1` وتشغيل `GitHub Actions`.
-- **خطوات تشغيل البناء الفعلي على Windows 10/11 x64 أو عبر GitHub Actions:**
-  1. **عبر GitHub Actions (سحابياً):** فك ضغط `MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip` على جهاز متصل بالإنترنت وشغّل:
-     ```
-     PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat
-     ```
-     (أو ارفع الفرع `release/mersad-preview-0.1` من الحزمة الجنائية `reports_and_logs/mersad_preview_0_1_verifiable_history.bundle` إلى GitHub)، وسيعمل Workflow `release-mersad-preview-0.1-windows.yml` تلقائياً لإنتاج واختبار الملفات الخمسة (`MERSAD_AI.exe`, `MERSAD_LAB.exe`, `MERSAD_LAB_Setup_x64.exe`, `MERSAD_AI_Portable_x64.zip`, `MERSAD_LAB_Portable_x64.zip`) في مسار عربي يحتوي على مسافات.
-  2. **محلياً على جهاز Windows 10/11 x64:** شغّل:
-     ```
-     BUILD_ALL_WINDOWS_PREVIEW_0_1.bat
-     ```
+1. **هل ملف `.github/workflows/release-mersad-preview-0.1-windows.yml` موجود في الفرع الافتراضي `main`؟**
+   * **لا**: الفرع `main` (`25c9e5bba30dc8f921675e12c23a53571be895c1`) محفوظ دون أي تعديل ويحتوي فقط على `.github/workflows/build-mersad-windows.yml` الأصلي، بينما أُضيف `.github/workflows/release-mersad-preview-0.1-windows.yml` على فروع المعاينة والإصلاح (`release/mersad-preview-0.1` و`fix/preview-0.1-postbuild-42273598736`).
+2. **هل سبق تشغيل هذا الـ Workflow على GitHub؟ وهل يشغّله حدث `push` تلقائياً؟**
+   * **نعم**: سبق لـ GitHub Actions تشغيل `release-mersad-preview-0.1-windows.yml` فعلياً في التشغيل المرجعي `Run ID: 42273598736`. وبما أن الملف يعرّف المحفز `on: push: branches: ["fix/preview-0.1-*", "release/mersad-preview-0.1*"]`، فإن تنفيذ `git push` للفرع `fix/preview-0.1-postbuild-42273598736` **يُطلق تلقائياً وفوراً تشغيلاً جديداً بنوع `event = push`** على GitHub Actions حتى دون وجود الملف في الفرع `main`.
+3. **هل يؤدي الجمع بين `git push` و`gh workflow run` (`workflow_dispatch`) إلى تشغيل نسختين من البناء؟**
+   * إذا كان ملف الـ Workflow مسجلاً لدى GitHub لنقطة `workflow_dispatch`، فإن تنفيذ `git push` متبوعاً بـ `gh workflow run` سيُطلق تشغيلين مستقلين: الأول بمحفز `push` (ينطلق تلقائياً فور الرفع) والثاني بمحفز `workflow_dispatch` (ينطلق عند استدعاء `gh workflow run`)، بينما إذا اشترطت واجهة `workflow_dispatch` وجود الملف على الفرع الافتراضي فإن محفز `push` وحده كافٍ لتشغيل الـ Workflow تلقائياً فور دفع الفرع `fix/preview-0.1-postbuild-42273598736`.

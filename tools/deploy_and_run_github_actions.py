@@ -7,7 +7,7 @@ and Forensic ZIP-vs-Git Provenance Verifier for MERSAD Preview 0.1
 Key guarantees:
   1. Targets `fix/preview-0.1-postbuild-42273598736` by default (configurable via `--branch` or `MERSAD_DEPLOY_BRANCH`),
      verifying lineage from:
-       - Reconciled AI code commit: `7f35cb1007a229a72ac0cd1be61fd5a81eb891bd` (`v0.1.1-postbuild-reconciled-code`)
+       - Reconciled AI code commit: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` (`v0.1.1-postbuild-reconciled-code`)
        - Post-build 42273598736 code commit: `d965d71317e3506e5dce9d316dc81cb8ae45e43b` (`audit-checkpoint-d965d713`)
        - Release baseline code commit: `25131918a981ac2ac37923d4c738d9f93cdcbc5b` (`v0.1.0-preview-code`)
        - Untouched `main` branch: `25c9e5bba30dc8f921675e12c23a53571be895c1`
@@ -41,7 +41,7 @@ from pathlib import Path
 
 DEFAULT_TARGET_BRANCH = "fix/preview-0.1-postbuild-42273598736"
 TARGET_BRANCH = os.environ.get("MERSAD_DEPLOY_BRANCH", DEFAULT_TARGET_BRANCH)
-EXPECTED_AI_CODE_SHA = "7f35cb1007a229a72ac0cd1be61fd5a81eb891bd"
+EXPECTED_AI_CODE_SHA = "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5"
 EXPECTED_AI_PREV_FIX_SHA = "d965d71317e3506e5dce9d316dc81cb8ae45e43b"
 EXPECTED_AI_RELEASE_BASE_SHA = "25131918a981ac2ac37923d4c738d9f93cdcbc5b"
 EXPECTED_LAB_CODE_SHA = "748ac0158761812a6fff63ff6fe626b9df8c252b"
@@ -259,10 +259,24 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
                 "git_subdir_matches_root": g_sha == r_sha,
             })
 
+        anc_rc = subprocess.run(
+            ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_CODE_SHA, "HEAD"],
+            capture_output=True,
+        ).returncode
+        lifecycle_in_commit = (clone_dir / "integration" / "test_main_entrypoint_dynamic_camera_lifecycle.py").is_file()
+        sim_engine_in_commit = (clone_dir / "MERSAD_LAB_Preview_0.1" / "sim_engine.py")
+        sim_engine_sha_ok = (
+            sim_engine_in_commit.is_file()
+            and hashlib.sha256(sim_engine_in_commit.read_bytes()).hexdigest() == "4a07315323fb303783f0243c5eec68b840885abe871e1212b3dfac82d4b23e33"
+        )
+
     ok = (
         len(mismatches) == 0
         and len(all_keys) == 58
         and code_tag_sha == EXPECTED_AI_CODE_SHA
+        and anc_rc == 0
+        and lifecycle_in_commit
+        and sim_engine_sha_ok
         and main_sha == EXPECTED_MAIN_SHA
     )
     return {
@@ -270,6 +284,9 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         "branch": branch,
         "head_sha": head_sha,
         "reconciled_code_sha": code_tag_sha,
+        "descends_from_edaf651321ec": (anc_rc == 0),
+        "lifecycle_test_in_commit": lifecycle_in_commit,
+        "sim_engine_synced_in_commit": sim_engine_sha_ok,
         "main_sha": main_sha,
         "total_files": len(all_keys),
         "matched_files": len(all_keys) - len(mismatches),
@@ -876,6 +893,13 @@ sys.exit(1)
         and vc_info.get("valid_for_integration_and_smoke_tests") is True
         and vc_info.get("valid_for_photorealistic_dl_accuracy_benchmark") is False
     ))
+
+    ep_json_path = repo_root / "reports_and_logs" / "logs" / "20_main_entrypoint_dynamic_camera_lifecycle.json"
+    ep_ok = False
+    if ep_json_path.is_file():
+        ep_data = json.loads(ep_json_path.read_text(encoding="utf-8"))
+        ep_ok = bool(ep_data.get("all_passed") is True and len(ep_data.get("steps", [])) == 10 and all(v.get("passed") is True for v in ep_data.get("steps", [])))
+    checks.append(("MAIN_ENTRYPOINT_10_STEP_DYNAMIC_CAMERA_LIFECYCLE_PASS", ep_ok))
 
     all_ok = all(ok for _, ok in checks)
     return {

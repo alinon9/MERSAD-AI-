@@ -1,5 +1,5 @@
 # 8. دليل التثبيت والتشغيل الشامل باللغة العربية — `INSTALLATION_GUIDE_AR.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`)
 
 # منظومة مرصاد الذكي ومختبر الكاميرات — `MERSAD AI — PREVIEW 0.1`
 ## الإصدار التجريبي الموحد لنظام Windows 10/11 x64
@@ -71,7 +71,7 @@ MERSAD_PREVIEW_0.1/
 ```bat
 BUILD_ALL_WINDOWS_PREVIEW_0_1.bat
 ```
-يقوم هذا السكربت تلقائياً بإنشاء بيئة افتراضية معزولة، وتثبيت الاعتماديات المثبتة في `constraints-win-x64.txt`، وتنزيل النماذج والتحقق من بصماتها `SHA-256` عبر `prefetch.py`، وتشغيل حزم الاختبارات الآلية المفصلة دون خلط بين عدد الحالات وعدد مرات التشغيل (`AI Standard: 232/232 PASS`، و`AI No-skLearn: 232/232 PASS`، و`verify_integrity: 18/18 PASS`، و`MERSAD LAB: 20/20 PASS`، و`Integration: 12 PASS + 2 NOT_TESTED`)، ثم إنتاج:
+يقوم هذا السكربت تلقائياً بإنشاء بيئة افتراضية معزولة، وتثبيت الاعتماديات المثبتة في `constraints-win-x64.txt`، وتنزيل النماذج والتحقق من بصماتها `SHA-256` عبر `prefetch.py`، وتشغيل حزم الاختبارات الآلية المفصلة دون خلط بين عدد الحالات وعدد مرات التشغيل (`AI Standard: 234/234 PASS`، و`AI No-skLearn: 234/234 PASS`، و`verify_integrity: 19/19 PASS`، و`MERSAD LAB: 20/20 PASS`، و`Integration: 12 PASS + 2 NOT_TESTED`)، ثم إنتاج:
 - `MERSAD_AI_Preview_0.1\dist\MERSAD_AI\MERSAD_AI.exe`
 - `MERSAD_LAB_Preview_0.1\dist\MERSAD_LAB\MERSAD_LAB.exe`
 - `MERSAD_LAB_Preview_0.1\dist\portable\MERSAD_LAB_Portable_x64.zip`

@@ -1,28 +1,25 @@
 # 4. تقرير التحقق من قدرات الذكاء الاصطناعي وبوابات القبول المرجعية — `AI_MODEL_VALIDATION.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` & `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
-## 1. التفريق الهيكلي رباعي المراحل وبوابات القبول المرجعية للنماذج الأربعة (`4-Stage Model Validation & Ground-Truth Gates — BUG-09 & BUG-18`)
+## 1. الفصل المنهجي الصارم بين الفئات الثلاث لاختبارات الذكاء الاصطناعي وOCR (`Strict Three-Way Test Separation`)
 
-يفرّق `integration/evaluate_ai_models.py` (في المخرجات النصية وفي حقل `four_stage_breakdown` داخل `reports_and_logs/model_inference_results.json`) بصرامة بين المراحل الأربع المستقلة لكل نموذج، مع **حظر تحويل `NOT_TESTED` إلى `PASS` تحت أي ظرف** (بما في ذلك عند تمرير `--require-real-models`):
-
-| النموذج | المرحلة 1: التنزيل والتحقق من `SHA-256` (`S1_SHA256`) | المرحلة 2: التحميل وتشغيل الاستدلال (`S2_Infer`) | المرحلة 3: توفر عينات `Ground Truth` المرجعية (`S3_GTSamples`) | المرحلة 4: اجتياز عتبات الدقة المرجعية (`S4_GTPass`) | الحالة النهائية (`FinalStatus`) في الحاوية الحالية |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **`YuNet`** (`models/yunet.onnx`) | `False` (عزل الشبكة) | `False` | `False` (تتطلب عينات وجوه إيجابية مصرح بها `faces_positive/*.jpg`) | `False` (`Recall >= 0.75` + `Neg FP == 0`) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى لو نجحت المرحلتان 1 و2 ما لم تتوفر عينات الوجوه المصرح بها) |
-| **`SFace`** (`models/sface.onnx`) | `False` (عزل الشبكة) | `False` | `False` (تتطلب `>= 4` صور لشخصين مصرح بهما على الأقل) | `False` (`Same >= 0.363`, `Diff < 0.363`, `FAR == 0`) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى لو نجحت المرحلتان 1 و2 ما لم تتوفر عينات الهويات المتعددة المصرح بها) |
-| **`YOLOv8n`** (`models/yolov8n.pt`) | `False` (عزل الشبكة) | `False` | `False` (تتطلب صور مركبات طبيعية مرجعية `vehicles/*.jpg`) | `False` (`Recall >= 0.75`, `Precision >= 0.75`, `IoU >= 0.50`, `Neg FP == 0`) | **`NOT_TESTED`** |
-| **`EasyOCR`** (`models/easyocr/*.pth`) | `False` (عزل الشبكة) | `False` | `True` (`4` لوحات يمنية مرجعية موسومة في `MERSAD LAB`) | `False` (`ExactMatch >= 0.75`, `Mean CER <= 0.25`) | **`NOT_TESTED`** (`tesseract_substituted: false`) |
-| **`Tesseract 5 LSTM`** (تقييم مساعد مستقل) | `True` (`/usr/bin/tesseract`) | `True` (`411.08 ms`) | `True` (`4` اصطناعية + `4` بث `MJPEG` حي) | `True` (`ExactMatch = 100.0%`, `Mean CER = 0.0%`) | **`PASS`** (`8/8` — لم يُحتسب بديلاً عن `EasyOCR`) |
-
-التزاماً بقاعدة **عدم منح أي نموذج حالة `PASS` لمجرد نجاح تحميله أو تنفيذ استدلال على 4 إطارات دون مقارنة بالبيانات المرجعية (`Ground Truth`)**، تم تحصين `integration/evaluate_ai_models.py` بالبوابات الأربع التالية:
-
-| النموذج | شرط القبول المرجعي الإلزامي في `integration/evaluate_ai_models.py` | السلوك عند غياب الأوزان أو غياب مجموعة بيانات مرجعية طبيعية | الحالة الفعلية في بيئة الفحص الحالية |
+| المستوى / الفئة الاختبارية | ما الذي يختبره فعلياً في الحاوية الحالية؟ | الحالة الفعلية في الحاوية الحالية (`Offline Sandbox`) | هل يُحتسب كبديل عن تشغيل أو قبول النماذج الأربعة الثقيلة؟ |
 | :--- | :--- | :--- | :--- |
-| **`YOLOv8n`** (`models/yolov8n.pt`) | التحقق من بصمة `SHA-256` الثابتة قبل التحميل + اكتشاف المركبات الصحيحة وفئاتها (`car, motorcycle, bus, truck`) ومقارنة الصناديق بالبيانات المرجعية (`Recall >= 0.75`, `Precision >= 0.75`, `Mean IoU >= 0.50`) + `0` إيجابيات كاذبة في المشاهد السلبية الخالية من المركبات. | إذا لم تتوفر صور مركبات طبيعية مرجعية (أو في حال غياب الأوزان في البيئة المعزولة)، يُسجَّل **`NOT_TESTED`** ولا يُمنح `PASS` أبداً لمجرد العمل على 4 إطارات. | **`NOT_TESTED`** (`URLError [Errno -3]` في الحاوية المعزولة شبكياً) |
-| **`EasyOCR`** (`models/easyocr/*.pth`) | التحقق من بصمات `SHA-256` لملفات `.pth` الأربعة قبل التحميل + قياس **`Exact Match Rate`** و**`Digits Match Rate`** و**`Mean Character Error Rate (CER)`** مقارنةً بالنصوص المرجعية الصحيحة (`عدن-12345`, `صنعاء-48210`, `تعز-73901`, `حضرموت-55120`) مع اشتراط `Exact Match Rate >= 0.75` و`Mean CER <= 0.25`. | يرفض منح `PASS` لقراءات غير مطابقة للنص المرجعي (مُثبت باختبار الانحدار `#232` في `selftest.py`). وفي غياب الأوزان يُسجَّل **`NOT_TESTED`** دون استبداله بـ `Tesseract`. | **`NOT_TESTED`** (`tesseract_substituted: false`) |
-| **`YuNet`** (`models/yunet.onnx`) | التحقق من بصمة `SHA-256` قبل التحميل + إثبات اكتشاف الوجوه في عينات إيجابية مصرح بها (`models/eval_benchmarks/faces_positive/*.jpg` بـ `Recall >= 0.75`) **و**رفض العينات السلبية الخالية من الوجوه (`Negative FP == 0` عبر 4 مشاهد سلبية). | إذا لم تتوفر عينات وجوه إيجابية مصرح بها على القرص، يحتفظ بحالة **`NOT_TESTED`** (`MISSING_AUTHORIZED_POSITIVE_FACE_SAMPLES`) حتى لو حقق `0` إيجابيات كاذبة على المشاهد السلبية. | **`NOT_TESTED`** |
-| **`SFace`** (`models/sface.onnx`) | التحقق من بصمة `SHA-256` قبل التحميل + استقبال قصاصات وجوه محاذاة من `YuNet` (`det.detect -> rec.alignCrop`) لعينات مصرح بها لشخصين أو أكثر، وإثبات تشابه بصمات الشخص نفسه (`same_person_cosine_sim_mean >= 0.363`) **و**اختلاف بصمات الأشخاص المختلفين (`different_person_cosine_sim_max < 0.363`, `FAR == 0.0`). | إذا لم تتوفر عينات مصرح بها متعددة الهويات على القرص، يحتفظ بحالة **`NOT_TESTED`** (`MISSING_AUTHORIZED_MULTI_IDENTITY_FACE_SAMPLES`). | **`NOT_TESTED`** |
+| **أولاً: اختبارات تطبيع نصوص OCR الاصطناعية (`Synthetic OCR Normalization Unit Tests`)** | يختبر دالة `registry.norm_plate()` و`compute_ocr_ground_truth_metrics()` على سلاسل نصية لاتينية وعربية (`"ADEN 12345" -> "عدن-12345"`, `"SANA 48210" -> "صنعاء-48210"`, إلخ) للتحقق من معالجة `BUG-20`. | **`PASS` (`6 / 6` سلاسل نصية)** | **لا أبداً** — هذا اختبار وحدة منطقي لدالة التطبيع (`norm_plate`) وليس استدلالاً لشبكة `EasyOCR` العصبية (التي تظل **`NOT_TESTED`** محلياً لغياب أوزان `.pth`). |
+| **ثانياً: التقييم البصري المساعد لمحرك `Tesseract 5 LSTM` (`Auxiliary Real Pixel OCR Benchmark`)** | يشغّل الثنائي الحقيقي `/usr/bin/tesseract` (`--psm 7 tsv` عبر `_run_tesseract_tsv_cli`) على وحدات البكسل الفعلية لـ `14` صورة لوحة (`6` من `models/eval_benchmarks/plates/` + `4` مشاهد `VirtualCamera` + `4` تيارات `MJPEG` حية). | **`PASS` (`14 / 14` لوحة، `ExactMatch=100.0%`, `MeanCER=0.0%`)** | **لا أبداً (`tesseract_substituted: false`)** — يُسجَّل كمحرك احتياطي مساعد مستقل، بينما تظل نتيجة قبول النماذج الأربعة الأساسية **`0 / 8 PASS, 8 / 8 NOT_TESTED`** محلياً. |
+| **ثالثاً: اختبارات `Smoke/Inference` مقابل اختبارات الدقة المرجعية `Ground-Truth Accuracy` للنماذج الأربعة (`YuNet`, `SFace`, `YOLOv8n`, `EasyOCR`)** | يفصل `four_stage_breakdown` بين: **(أ) `smoke_inference_status`** (تنزيل الأوزان ومطابقة `SHA-256` وتحميلها وتشغيل استدلال أمامي مع `0` إيجابيات كاذبة)، و**(ب) `ground_truth_acceptance_status` / `final_status`** (توفر عينات `Ground Truth` فوتوغرافية/بشرية مصرح بها واجتياز عتبات الدقة القياسية). | **`NOT_TESTED` محلياً (`0 / 8`)** بسبب عزل الشبكة؛ وعند تشغيل Windows CI يتحقق `Smoke = PASS` للأوزان الأربعة بينما يظل `Ground Truth = NOT_TESTED` لـ `YuNet/SFace/YOLOv8n` حتى استيراد عينات بشرية مصرح بها وصور مركبات فوتوغرافية طبيعية. | **لا يُحوَّل `NOT_TESTED` إلى `PASS` أبداً** تحت أي ظرف. |
 
-### سجل التنفيذ الفعلي (`reports_and_logs/model_inference_log.txt`):
+## 2. التفريق الهيكلي رباعي المراحل وبوابات القبول المرجعية للنماذج الأربعة (`4-Stage Model Validation & Ground-Truth Gates — BUG-09, BUG-18, BUG-21, BUG-22`)
+
+| النموذج | المرحلة 1: التنزيل والتحقق من `SHA-256` (`S1_SHA256`) | المرحلة 2: التحميل وتشغيل الاستدلال (`S2_Infer`) | المرحلة 3: توفر عينات `Ground Truth` المرجعية (`S3_GTSamples`) | المرحلة 4: اجتياز عتبات الدقة المرجعية (`S4_GTPass`) | حالة `Smoke` (`smoke_inference_status`) | الحالة النهائية (`final_status` / `ground_truth_acceptance_status`) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`YuNet`** (`models/yunet.onnx`) | `False` محلياً (`True` في Windows CI) | `False` محلياً (`True` في Windows CI) | `False` (`authorized_real_human_consent: false` في المستودع العام) | `False` (`Recall >= 0.75` + `Neg FP == 0`) | `NOT_TESTED` محلياً (`PASS` في CI) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى استيراد وجوه بشرية مصرح بها عبر `--import-authorized-faces`) |
+| **`SFace`** (`models/sface.onnx`) | `False` محلياً (`True` في Windows CI) | `False` محلياً (`True` في Windows CI) | `False` (`authorized_real_human_consent: false` في المستودع العام) | `False` (`Same >= 0.363`, `Diff < 0.363`, `FAR == 0`) | `NOT_TESTED` محلياً (`PASS` في CI) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى استيراد هويات بشرية مصرح بها عبر `--import-authorized-faces`) |
+| **`YOLOv8n`** (`models/yolov8n.pt`) | `False` محلياً (`True` في Windows CI) | `False` محلياً (`True` في Windows CI) | `False` (`is_photorealistic_natural_dataset: false` للرسوم الهندسية) | `False` (`Recall >= 0.75`, `Precision >= 0.75`, `IoU >= 0.50`, `Neg FP == 0`) | `NOT_TESTED` محلياً (`PASS` في CI) | **`NOT_TESTED`** (يبقى `NOT_TESTED` حتى استيراد صور مركبات فوتوغرافية طبيعية عبر `--import-photorealistic-vehicles`) |
+| **`EasyOCR`** (`models/easyocr/*.pth`) | `False` محلياً (`True` في Windows CI) | `False` محلياً (`True` في Windows CI) | `True` (`6` لوحات مرجعية في `eval_benchmarks/plates/` + `4` في `MERSAD LAB`) | `False` محلياً (يتطلب تحميل أوزان `.pth` في Windows CI لتحقيق `ExactMatch >= 0.75`, `Mean CER <= 0.25`) | `NOT_TESTED` محلياً (`PASS` في CI) | **`NOT_TESTED` محلياً** (`tesseract_substituted: false`؛ مهيأ لاجتياز `Ground Truth` في Windows CI بعد إصلاح `BUG-20`) |
+| **`Tesseract 5 LSTM`** (تقييم مساعد مستقل) | `True` (`/usr/bin/tesseract`) | `True` (`357.99 ms`) | `True` (`6` مرجعية + `4` اصطناعية + `4` بث `MJPEG` حي = `14` لوحة) | `True` (`ExactMatch = 100.0%`, `Mean CER = 0.0%`) | **`PASS`** | **`PASS` (`14/14` — تقييم مساعد مستقل، لا يُحتسب بديلاً عن `EasyOCR`)** |
+
+### سجل التنفيذ الفعلي (`reports_and_logs/model_inference_log.txt` / `logs/12_preview01_ai_model_benchmark.log`):
 ```text
 ========================================================================================
   MERSAD PREVIEW 0.1 — Phase 1: Real AI Models Ground-Truth Acceptance Suite
@@ -43,7 +40,7 @@
   --- [C] INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK ---
   [AUX TEST] Benchmark Plates Dataset (6)  : 6/6 matched (ExactMatch=100.0%, MeanCER=0.0%)
   [AUX TEST] Synthetic VirtualCamera Scenes: 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%)
-  [AUX TEST] Live LAB HTTP MJPEG Streams   : 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%, mean_latency=363.01ms)
+  [AUX TEST] Live LAB HTTP MJPEG Streams   : 4/4 matched (ExactMatch=100.0%, MeanCER=0.0%, mean_latency=357.99ms)
 ```
 
 # تقرير الفحص الهندسي والاختبار الفعلي لقدرات الذكاء الاصطناعي والرؤية الحاسوبية والأداء
@@ -58,8 +55,8 @@
 
 | محور الفحص والاختبار | الحالة الفعلية | الخلاصة الهندسية والأرقام المقاسة |
 | :--- | :--- | :--- |
-| **سلامة الحزمة البرمجية (`SHA256SUMS.txt`)** | **ناجح (`PASS`)** | تطابق البصمة الجنائية `SHA-256` لجميع ملفات المستودع البالغ عددها `92/92` ملفاً (`18/18` ملفاً أساسياً في `verify_integrity.py`). |
-| **اختبارات الوحدة والأنظمة الفرعية (`MERSAD AI`)** | **ناجح (`232/232 PASS`)** | اجتياز `232` اختباراً آلياً (`0 SKIP, 0 FAIL`) سواء بوجود `scikit-learn` أو بدونه (مع التبديل التلقائي إلى `_StatForest`). |
+| **سلامة الحزمة البرمجية (`SHA256SUMS.txt`)** | **ناجح (`PASS`)** | تطابق البصمة الجنائية `SHA-256` لجميع ملفات المستودع البالغ عددها `92/92` ملفاً (`19/19` ملفاً أساسياً في `verify_integrity.py`). |
+| **اختبارات الوحدة والأنظمة الفرعية (`MERSAD AI`)** | **ناجح (`234/234 PASS`)** | اجتياز `234` اختباراً آلياً (`0 SKIP, 0 FAIL`) سواء بوجود `scikit-learn` أو بدونه (مع التبديل التلقائي إلى `_StatForest`). |
 | **اختبارات مختبر المحاكاة والجودة (`MERSAD LAB`)** | **ناجح (`20/20 PASS`)** | اجتياز `8` اختبارات وظيفية أساسية + `12` اختباراً أمنياً واختبار ضغط ومهلة زمنية (`0 FAIL`). |
 | **تحميل النماذج الثقيلة (`YuNet, SFace, YOLOv8n, EasyOCR`)** | **غير متاح محلياً (`NOT_TESTED` / `FAIL-CLOSED`)** | الأوزان الثنائية غير مرفقة في المستودع (`DEV_WITHOUT_HEAVY_WEIGHTS`) وحزم `torch` و`ultralytics` و`easyocr` غير مثبتة في الحاوية المعزولة؛ يرفض النظام التشغيل الصامت المزيف ويخرج برمز خطأ `1` عند `--verify-models`، أو ينتقل بأمان لوضع المعاينة المخفض (`--allow-degraded-preview`). |
 | **أمن وسلامة ملفات الأوزان (`SHA-256 & Pickle Guard`)** | **ناجح (`6/6 PASS`)** | التحقق الصارم من البصمات الثابتة قبل التحميل، ورفض صفحات HTML التنكرية، ورفض ملفات `.sha256` المصنعة ذاتياً لـ `yolov8n.pt`، وحظر بايت كود `pickle` الخبيث (`posix.system`، `xmlrpc.client`، `builtins.getattr`). |

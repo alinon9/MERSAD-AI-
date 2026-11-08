@@ -1,64 +1,107 @@
 # 3. تقرير اختبارات التكامل الشامل بين المشروعين — `INTEGRATION_TEST_REPORT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` & `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
 
-## مطابقة وتوحيد أرقام الاختبارات وسجلات التنفيذ (`Test Report Reconciliation — Final Code Commit 25131918a981`)
+## مطابقة وتوحيد مصدر الحقيقة وأرقام الاختبارات وسلسلة الالتزامات (`Forensic Source-of-Truth & Test Report Reconciliation`)
 
-تم توحيد جميع التقارير والملفات والسجلات على أرقام التنفيذ الفعلية للالتزام النهائي **`25131918a981ac2ac37923d4c738d9f93cdcbc5b`** (`v0.1.0-preview-code`)، مع توثيق الأرقام السابقة (`136`، `201`، `225`، `230`، `231`، و`7+1`) باعتبارها **مراحل تاريخية سابقة فقط (`Historical Progression`)** وليست النتائج الحالية:
+تم توحيد جميع الحزم المصدرية (`MERSAD_AI_Preview_0.1_Portable_Source.zip` و`MERSAD_LAB_Preview_0.1_Portable_Source.zip`) وحزمتي Git الجنائيتين (`mersad_preview_0_1_verifiable_history.bundle` و`mersad_lab_preview_0_1_verifiable_history.bundle`) والتقارير وسكربتات النشر على فرع الإصلاح المعتمد **`fix/preview-0.1-postbuild-42273598736`**، مع الفصل الصارم والدقيق بين الالتزامات والمراحل التاريخية:
 
-### 1. التسلسل التاريخي لتطور اختبارات `MERSAD AI` (`selftest.py`) حتى النتيجة الحالية المعتمدة (**`232 / 232 PASS`**)
+### 1. سلسلة الالتزامات الجنائية الموثقة ونسب الإصلاحات (`Exact Commit Lineage & Attribution — BUG-01..BUG-34`)
+
+> **قاعدة الفصل الجنائي الصارم بين التزامات Git (`Committed Git Tree`) وطبقة مخرجات الإصدار التوليدية (`Post-Commit Release Artifacts Layer — BUG-33 & BUG-34`)**:
+> تلتزم جميع تقارير وقوائم هذا الإصدار بعدم نسب أي تعديل إلى رقم التزام (`Commit SHA`) إلا إذا كان موجوداً فعلياً داخل شجرة ذلك الالتزام (`git show <SHA>`). وعليه، فإن التزام الكود والاختبارات والوثائق الموحد على رأس الفرع **`fix/preview-0.1-postbuild-42273598736`** (`HEAD` — `fix(preview): include lifecycle test and sync lab engine for Windows CI` المبني مباشرةً فوق `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`) يضم فعلياً في شجرة Git: (1) ملف اختبار دورة الحياة المستقل `integration/test_main_entrypoint_dynamic_camera_lifecycle.py` المستدعى في السطر 207 من الـ Workflow، (2) النسخة المزامنة بايت-ببايت من `MERSAD_LAB_Preview_0.1/sim_engine.py` المطابقة لالتزام المختبر `748ac0158761812a6fff63ff6fe626b9df8c252b`، (3) سكربتات النشر المعتمدة على التحقق من السلالة (`ancestry verification`)، و(4) الوثائق الموحدة (`BUG-01..BUG-34`). أما القوائم التوليدية وحزمة Git المحدثة والأرشيف النهائي (`MANIFEST.json`, `SOURCE_TREE_MANIFEST.json`, `BUNDLE_MANIFEST.json`, `SHA256SUMS.txt`, `mersad_preview_0_1_verifiable_history.bundle`, `MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip`) فتُنتج بعد إنشاء الالتزام وتُصنف صراحةً كـ **طبقة مخرجات الإصدار التوليدية (`Post-Commit Generated Release Artifacts Layer`)** لمنع أي تحقق دائري للبصمات.
+
+| المستودع / الطبقة | الفرع / الوسم (`Branch / Tag / Layer`) | المرجع / رقم الالتزام (`Commit SHA`) | الإصلاحات المنفذة فعلياً في هذا الالتزام / الطبقة | حالة المطابقة والتحقق |
+| :--- | :--- | :--- | :--- | :--- |
+| **طبقة مخرجات الإصدار التوليدية (`Post-Commit Generated Release Artifacts Layer`)** | فوق `HEAD` للفرع `fix/preview-0.1-postbuild-42273598736` (تُولَّد بعد إنشاء الالتزام لمنع التضمين الدائري للبصمة) | `MANIFEST.json`, `SOURCE_TREE_MANIFEST.json`, `BUNDLE_MANIFEST.json`, `SHA256SUMS.txt`, `mersad_preview_0_1_verifiable_history.bundle`, `MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip` | توليد حزمة تاريخ Git المحدثة وقوائم البصمات الأربع والأرشيف النهائي ومزامنة النسخ المنفصلة بايت-ببايت بعد إتمام التزام `HEAD` مباشرةً. | **`171 / 171 MATCH`** (`0 missing`, `0 hash mismatches`) |
+| **`MERSAD AI` (`Git HEAD — Windows CI Preflight Ready`)** | **`fix/preview-0.1-postbuild-42273598736`** (`HEAD` & `v0.1.2-windows-ci-preflight-ready`) | **التزام `HEAD` المباشر فوق `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (`fix(preview): include lifecycle test and sync lab engine for Windows CI`) | **`BUG-34` + توحيد وثائق `BUG-28..33` داخل Git**: إضافة `integration/test_main_entrypoint_dynamic_camera_lifecycle.py` (`baba0f01...`) إلى شجرة Git، ومزامنة `MERSAD_LAB_Preview_0.1/sim_engine.py` (`4a073153...`) بايت-ببايت مع التزام المختبر `748ac0158761`، وتحديث سكربتات النشر للتحقق من السلالة (`git merge-base --is-ancestor edaf651321ec HEAD`)، وتضمين الوثائق الموحدة (`BUG-01..BUG-34`). | **`16 / 16 Workflow Files Present in Git Commit`** + **`58 / 58 AI Source Match`** |
+| **`MERSAD AI` (`Runtime Code Commit`)** | `fix/preview-0.1-postbuild-42273598736` (`v0.1.1-postbuild-reconciled-code` & `audit-checkpoint-edaf6513`) | **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** | **`BUG-27`** (فوق `BUG-01..26`): إصلاح دورة حياة الكاميرا الديناميكية عند تشغيل `MERSAD AI` عبر نقطة الدخول الحقيقية `main()` (`_MainLoopRuntimeController`، وتسجيل `_ACTIVE_ENGINE_CONTROLLER` قبل `start_server()`، وعزل `cam_stop_ev` لكل كاميرا — **`10/10 PASS`**)، وإضافة الاختبار `#234` (`PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE` — **`234 / 234 PASS`**) والسيناريو `INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` (**`13 PASS, 0 FAIL, 2 NOT_TESTED`**). | **`58 / 58 MATCH` (`100% Byte-for-Byte`)** مع `MERSAD_AI_Preview_0.1_Portable_Source.zip` |
+| **`MERSAD AI`** | `fix/preview-0.1-postbuild-42273598736` (`audit-checkpoint-7f35cb10`) | `7f35cb1007a229a72ac0cd1be61fd5a81eb891bd` | **`BUG-23`..`BUG-26`** (فوق `BUG-19..22`): مزامنة جميع ملفات `MERSAD_AI_Preview_0.1/` الـ 58 مع شجرة Git، وفصل `--verify` القرائي غير التدميري عن `--generate` في `prepare_safe_eval_benchmarks.py` (`BUG-25`)، وتحديث استهداف النشر (`BUG-24`)، وإضافة الاختبار `#233` (`PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY` — **`233 / 233 PASS` تاريخي**). | نقطة الرجوع الموحدة ما قبل `BUG-27` (`audit-checkpoint-7f35cb10`) |
+| **`MERSAD AI`** | `fix/preview-0.1-postbuild-42273598736` (`audit-checkpoint-421ec318` / `audit-checkpoint-d965d713`) | `421ec3189fb6f569023c2a86e3f818bbf9ad1860` (كود: `d965d71317e3506e5dce9d316dc81cb8ae45e43b`) | **`BUG-19`..`BUG-22`**: إصلاحات ما بعد التشغيل السحابي `Run 42273598736` (`Tesseract` CLI TSV fallback، وتطبيع رموز المحافظات اللاتينية `_LATIN_GOV_TO_AR` في `registry.py`، وإنشاء `models/eval_benchmarks/`، وفصل `smoke_inference_status` عن `ground_truth_acceptance_status`). | سلف مباشر للالتزام `7f35cb1007a2` |
+| **`MERSAD AI`** | `release/mersad-preview-0.1` (`v0.1.0-preview-code`) | `2c22280d84a5fcb7b709075f73b3073bcef0aff2` (كود: `25131918a981ac2ac37923d4c738d9f93cdcbc5b`) | **`BUG-01`..`BUG-11`** (في التزام الكود `25131918a981` — **`232 / 232 PASS` تاريخي**) + **`BUG-12`..`BUG-18`** (في التزام `2c22280d84a5`). | نقطة الأساس لفرع الإصدار قبل `Run 42273598736` |
+| **`MERSAD AI`** | `main` (محفوظ دون أي تعديل) | `25c9e5bba30dc8f921675e12c23a53571be895c1` | الأرشيف المصدري الأصلي غير الممسوس (`Untouched Baseline`). | محفوظ `100%` |
+| **`MERSAD LAB` (`Git HEAD`)** | **`fix/preview-0.1-postbuild-42273598736`** (`HEAD`) | **`748ac0158761812a6fff63ff6fe626b9df8c252b`** | **`BUG-22`**: تحديث `VirtualCamera.info()` في `sim_engine.py` بوسم `SYNTHETIC_2D_GEOMETRIC_INTEGRATION_STREAM` و`valid_for_photorealistic_dl_accuracy_benchmark=False` (**`20 / 20 PASS`**). | **`14 / 14 MATCH` (`100% Byte-for-Byte`)** مع `MERSAD_LAB_Preview_0.1_Portable_Source.zip` ومُثبت بـ `git cat-file -e` و`git bundle list-heads` |
+| **`MERSAD LAB`** | `release/mersad-preview-0.1` | `e9284356f4d1a8205946d5893121c6f8a2f22012` | التزام الأساس لفرع الإصدار (`Clean-Room LAB 1.0`). | سلف مباشر لـ `748ac0158761` |
+| **`MERSAD LAB`** | `main` & `rollback-stable-lab` | `1c56dcbf77d62b8d89863e04f215e12f162e9555` | نقطة الرجوع المستقرة للمختبر (`Untouched Baseline`). | محفوظ `100%` |
+
+### 2. التسلسل التاريخي لتطور اختبارات `MERSAD AI` (`selftest.py`) حتى النتيجة الحالية المعتمدة (**`234 / 234 PASS`**)
 
 | التصنيف الزمني | المرحلة / الالتزام (`Commit SHA`) | عدد الاختبارات في `selftest.py` | الاختبارات المضافة في تلك المرحلة | ملف السجل المرجعي الموثق |
 | :--- | :--- | :--- | :--- | :--- |
 | **تاريخي (Historical)** | `PATCHED_SOURCE` (`3bf86f1eee49b351ac1dcf4e630c149e7d38b777`) | `136 PASS` (`0 FAIL`) | اختبارات الجولات `Rounds 1–5` + `12` اختباراً (`V7-*`) لبناء Windows | `reports_and_logs/logs/01_patched_source_selftest_std_136_pass.log` |
 | **تاريخي (Historical)** | `Stage 15 Baseline` (`64b0dde9013c973261da37e21861c642679cf5eb`) | `201 PASS` (`0 FAIL`) | اختبارات المراحل `Stage 1` إلى `Stage 15` (`AUDIT-001..012`, `GAP-01..18`) | `reports_and_logs/logs/03_stage15_selftest_std_201_pass.log` |
-| **تاريخي (Historical)** | `Preview 0.1 Initial Merge` (`9491bcd0` / `49e400c0`) | `225 PASS` (`0 FAIL`) | دمج السلالتين + `12` اختباراً جديداً (`PREVIEW01-*` رقم 13 إلى 24) | مرحلة الدمج الأولي قبل إغلاق عيوب الإصدار |
+| **تاريخي (Historical)** | `Preview 0.1 Initial Merge` (`9491bcd0` / `49e400c0`) | `225 PASS` (`0 FAIL`) | دمج السلالتين + `12` اختباراً جديداً (`PREVIEW01-*` رقم 13 إلى 24) | مرحلة الدمج الأولي (`rollback-stable-9491bcd`) |
 | **تاريخي (Historical)** | `Preview 0.1 Remediation Round 1` (`4ffc147`) | `230 PASS` (`0 FAIL`) | إضافة `5` اختبارات انحدار (`#226..#230`) لإغلاق `BUG-01` إلى `BUG-06` | مرحلة الإصلاح الأولى |
 | **تاريخي (Historical)** | `Preview 0.1 Remediation Round 2` (`f66ecea30069`) | `231 PASS` (`0 FAIL`) | إضافة الاختبار `#231` (`PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE`) لإغلاق `BUG-07` | نقطة الرجوع `rollback-preview01-f66ecea` |
-| **النتيجة الحالية المعتمدة (Current Final)** | **`Final Release Commit` (`25131918a981ac2ac37923d4c738d9f93cdcbc5b`)** | **`232 PASS`** (`0 SKIP, 0 FAIL`) | إضافة الاختبار `#232` (`PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP`) لإغلاق `BUG-09..11` (بوابات الدقة المرجعية للنماذج الأربعة + تثبيت `Inno Setup` و`CPU PyTorch` في CI) | `reports_and_logs/mersad_ai_selftest_log.txt` & `reports_and_logs/logs/05_preview01_ai_selftest_std_232_pass.log` |
+| **تاريخي (Historical)** | `Release Branch Code Commit` (`25131918a981`) | `232 PASS` (`0 FAIL`) | إضافة الاختبار `#232` (`PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP`) لإغلاق `BUG-09..11` على الفرع `release/mersad-preview-0.1` | نقطة الرجوع `v0.1.0-preview-code` |
+| **تاريخي (Historical)** | `Post-Build Reconciled Commit` (`7f35cb1007a229a72ac0cd1be61fd5a81eb891bd`) | `233 PASS` (`0 FAIL`) | توسيع `#232` وإضافة الاختبار `#233` (`PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY`) لإغلاق `BUG-19..26` | نقطة الرجوع `audit-checkpoint-7f35cb10` |
+| **النتيجة الحالية المعتمدة (Current Final)** | **`Final Runtime Audit Commit` (`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` على `fix/preview-0.1-postbuild-42273598736`)** | **`234 PASS`** (`0 SKIP, 0 FAIL`) | إضافة الاختبار **`#234`** (`PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE`) لإغلاق **`BUG-27`** والتحقق من دورة حياة الكاميرا الديناميكية عبر نقطة الدخول الحقيقية `main()` (10 خطوات كاملة) | `reports_and_logs/mersad_ai_selftest_log.txt`, `reports_and_logs/logs/05_preview01_ai_selftest_std_234_pass.log` & `logs/05_preview01_ai_selftest_std_234_pass.log` |
 
-### 2. التسلسل التاريخي لتوحيد اختبارات التكامل (`integration/test_ai_lab_integration.py`) حتى النتيجة الحالية المعتمدة (**`12 PASS + 2 NOT_TESTED = 14 فحصاً`**)
+### 3. التسلسل التاريخي لتوحيد اختبارات التكامل (`integration/test_ai_lab_integration.py`) حتى النتيجة الحالية المعتمدة (**`13 PASS + 2 NOT_TESTED = 15 فحصاً`**)
 
 | التصنيف الزمني | النسخة / السكربت | الحصيلة المسجلة | التفسير الهندسي الدقيق | ملف السجل المرجعي الموثق |
 | :--- | :--- | :--- | :--- | :--- |
-| **تاريخي (Historical)** | النسخة المختصرة السابقة | `7 PASS + 1 NOT_TESTED` (`8 فحوصات`) | كانت تختزل خطوات التكامل في `7` فحوصات مجمعة (`INT-E2E-01..07`) + بوابة النماذج الأربعة (`PHASE4-GATE-01`)، بينما كانت السيناريوهات الـ 12 (`INT-SCEN-01..12`) في جدول منفصل (`12/12 PASS`). | أُلغي الاختزال ووُحّد في السكربت القياسي أدناه |
-| **النتيجة الحالية المعتمدة (Current Final)** | **`integration/test_ai_lab_integration.py` (`25131918a981`)** | **`12 PASS, 0 FAIL, 2 NOT_TESTED` (`14 فحصاً`)** | ينفذ ويخرج في تشغيل واحد جميع السيناريوهات الـ 12 (`INT-SCEN-01` إلى `INT-SCEN-12` شاملةً `INT-E2E-01..07` = **`12/12 PASS`**) + بوابتي البيئة والعتاد (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة = **`NOT_TESTED`**، و`INT-HW-RTSP-USB` للكاميرات الفيزيائية = **`NOT_TESTED`**). | `reports_and_logs/ai_lab_integration_log.txt` & `reports_and_logs/ai_lab_integration_results.json` |
+| **تاريخي (Historical)** | النسخة المختصرة السابقة | `7 PASS + 1 NOT_TESTED` (`8 فحوصات`) | كانت تختزل خطوات التكامل في `7` فحوصات مجمعة (`INT-E2E-01..07`) + بوابة النماذج الأربعة (`PHASE4-GATE-01`). | أُلغي الاختزال ووُحّد في السكربت القياسي أدناه |
+| **تاريخي (Historical)** | نسخة السيناريوهات الـ 12 (`7f35cb1007a2`) | `12 PASS + 2 NOT_TESTED` (`14 فحصاً`) | شملت السيناريوهات `INT-SCEN-01..12` عبر `MersadEngineController` + بوابتي `PHASE4-GATE-01` و`INT-HW-RTSP-USB`. | نقطة الرجوع `audit-checkpoint-7f35cb10` |
+| **النتيجة الحالية المعتمدة (Current Final)** | **`integration/test_ai_lab_integration.py` (`edaf651321ec` & `748ac0158761`)** | **`13 PASS, 0 FAIL, 2 NOT_TESTED` (`15 فحصاً`)** | ينفذ ويخرج في تشغيل واحد جميع السيناريوهات الـ 13 (`INT-SCEN-01` إلى `INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` شاملةً نقطة الدخول الحقيقية `main()` = **`13/13 PASS`**) + بوابتي البيئة والعتاد (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة = **`NOT_TESTED`**، و`INT-HW-RTSP-USB` للكاميرات الفيزيائية = **`NOT_TESTED`**). | `reports_and_logs/ai_lab_integration_log.txt` & `reports_and_logs/ai_lab_integration_results.json` |
 
-
-## سجل التنفيذ الفعلي الموحد من الالتزام النهائي (`reports_and_logs/ai_lab_integration_log.txt`)
+## سجل التنفيذ الفعلي الموحد من الالتزام النهائي (`reports_and_logs/ai_lab_integration_log.txt` / `logs/10_preview01_ai_lab_integration_real_engine.log`)
 ```text
 ========================================================================================
-  MERSAD PREVIEW 0.1 — Phase 4: Unified 12-Scenario & 2-Gate End-to-End Integration
+  MERSAD PREVIEW 0.1 — Phase 4: Unified 13-Scenario & 2-Gate End-to-End Integration
 ========================================================================================
-2026-11-06 11:27:41,852 [INFO] mersad: AUDIT [registry vehicle added] عدن-12345 status=wanted by 127.0.0.1
+2026-11-07 16:33:04,127 [INFO] mersad: AUDIT [registry vehicle added] عدن-12345 status=wanted by 127.0.0.1
   [NOT_TESTED] [PRIMARY_REAL_MODELS_E2E     ] PHASE4-GATE-01: Primary pipeline `LAB -> MJPEG -> OpenCV -> YOLOv8n -> Plate -> EasyOCR -> Registry -> Alert -> SQLite -> Audit` -- Blocked in offline Linux sandbox (Tesseract NOT substituted for EasyOCR acceptance): YOLOv8n load failed: ModuleNotFoundError: No module named 'ultralytics'; EasyOCR load failed: ModuleNotFoundError: No module named 'easyocr'
-[ WARN:0@1.073] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
-[ERROR:0@1.074] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
+[ WARN:0@1.469] global cap_v4l.cpp:913 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+[ERROR:0@1.469] global obsensor_uvc_stream_channel.cpp:158 getStreamChannelGroup Camera index out of range
   [NOT_TESTED] [PHYSICAL_CAMERA_HARDWARE    ] INT-HW-RTSP-USB: Physical RTSP IP camera & USB webcam hardware capture -- No physical USB/RTSP camera attached in sandbox (usb_0_status=FAIL, released=True); software RTSP redaction verified ('rtsp://admin:***@192.168.1.50:554/h264')
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-01: Start MERSAD AI server, SQLite database & token auth guard -- unauth_status=403, auth_status=200, journal_mode=wal
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-02: Start MERSAD LAB server & initialize 4 virtual cameras -- health=healthy, virtual_cameras=4
-2026-11-06 11:27:41,928 [INFO] mersad: AUDIT [camera added] LAB_CAM1 src=http://127.0.0.1:54372/stream/cam1.mjpg by 127.0.0.1
-2026-11-06 11:27:41,942 [INFO] mersad: AUDIT [session start] LAB_CAM1
-2026-11-06 11:27:41,961 [INFO] mersad: AUDIT [camera added] LAB_CAM2 src=http://127.0.0.1:54372/stream/cam2.mjpg by 127.0.0.1
-2026-11-06 11:27:41,984 [INFO] mersad: AUDIT [session start] LAB_CAM2
+2026-11-07 16:33:05,099 [INFO] mersad: AUDIT [camera added] LAB_CAM1 src=http://127.0.0.1:52548/stream/cam1.mjpg by 127.0.0.1
+2026-11-07 16:33:05,116 [INFO] mersad: AUDIT [session start] LAB_CAM1
+2026-11-07 16:33:05,135 [INFO] mersad: AUDIT [camera added] LAB_CAM2 src=http://127.0.0.1:52548/stream/cam2.mjpg by 127.0.0.1
+2026-11-07 16:33:05,159 [INFO] mersad: AUDIT [session start] LAB_CAM2
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-03: Add virtual cameras LAB_CAM1 & LAB_CAM2 via m.wire() -> spawn real AI reader & inference threads (INT-E2E-01) -- LAB_CAM1 worker_spawned=True, LAB_CAM2 worker_spawned=True
-  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-04: Stream live MJPEG test video from MERSAD LAB -- status=200, frames_delivered=4, bytes=99426
-2026-11-06 11:27:47,792 [INFO] mersad: AUDIT [sighting] id=1 عدن-12345 LAB_CAM1 unknown dir=ثابت/عبور نسبي في الإطار conf=0.95
-2026-11-06 11:27:48,415 [INFO] mersad: AUDIT [sighting] id=2 صنعاء-48210 LAB_CAM2 unknown dir=ثابت/عبور نسبي في الإطار conf=0.96
-  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-05: Feed video stream into CV engine & compute real-time frame quality metrics -- LAB_CAM1 frames=76, detections=4, brightness=75.72, res=640x480
-  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-06: Autonomous vehicle/plate detection, pixel OCR & mandatory human-review alert governance (INT-E2E-02) -- Sightings=[('LAB_CAM1', 'عدن-12345', 0.95), ('LAB_CAM2', 'صنعاء-48210', 0.96)], alerts=2, requires_human_review=True, ocr_engine=Tesseract-5-LSTM-Real-Pixel-OCR
-  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-07: Multi-frame trajectory tracking & alert deduplication across continuous frames (INT-E2E-03) -- LAB_CAM1 frames 77->91, alerts for عدن-12345: 1 (expected 1)
+  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-04: Stream live MJPEG test video from MERSAD LAB -- status=200, frames_delivered=4, bytes=99106
+2026-11-07 16:33:09,175 [INFO] mersad: AUDIT [sighting] id=1 عدن-12345 LAB_CAM1 unknown dir=ثابت/عبور نسبي في الإطار conf=0.95
+2026-11-07 16:33:09,683 [INFO] mersad: AUDIT [sighting] id=2 صنعاء-48210 LAB_CAM2 unknown dir=ثابت/عبور نسبي في الإطار conf=0.96
+  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-05: Feed video stream into CV engine & compute real-time frame quality metrics -- LAB_CAM1 frames=53, detections=4, brightness=75.73, res=640x480
+  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-06: Autonomous vehicle/plate detection, pixel OCR & mandatory human-review alert governance (INT-E2E-02) -- Sightings=[('LAB_CAM1', 'عدن-12345', 0.95), ('LAB_CAM2', 'صنعاء-48210', 0.96)], alerts=1, requires_human_review=True, ocr_engine=Tesseract-5-LSTM-Real-Pixel-OCR
+  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-07: Multi-frame trajectory tracking & alert deduplication across continuous frames (INT-E2E-03) -- LAB_CAM1 frames 54->67, alerts for عدن-12345: 1 (expected 1)
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-08: Deliver live detection, camera health, analytics & blurred evidence to Dashboard API -- stats=200, cameras=200, analytics=200, last_plate=عدن-12345, evidence_jpeg=True
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-09: Persist sightings, alerts, camera status history & audit records in SQLite -- sightings=2, alerts=2, camera_status_history=4, audit=11
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-10: Save logs, analytics CSV export & verify HMAC-SHA256 audit chain and secret redaction -- csv_bytes=1080, log_bytes=755, token_leaked=False, verify='Audit chain OK (11 records)'
-[http @ 0x7eab4c0055c0] Stream ends prematurely at 2353148, should be 18446744073709551615
-2026-11-06 11:27:50,323 [INFO] mersad: AUDIT [camera reconnected] LAB_CAM1
+[http @ 0x7ece800055c0] Stream ends prematurely at 1780860, should be 18446744073709551615
+[ WARN:5@8.301] global cap.cpp:215 open VIDEOIO(FFMPEG): backend is generally available but can't be used to capture by name
+2026-11-07 16:33:12,460 [INFO] mersad: AUDIT [camera reconnected] LAB_CAM1
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-12: Camera disconnect isolation (LAB_CAM2 online) & automatic reconnection recovery (INT-E2E-04 & INT-E2E-05) -- disconnect_state=reconnecting, LAB_CAM2_continuity=online, reconnected_state=online, reconnect_count=1
-2026-11-06 11:27:51,768 [INFO] mersad: AUDIT [camera removed] LAB_CAM2 by 127.0.0.1
-2026-11-06 11:27:52,278 [INFO] mersad: AUDIT [session start] LAB_CAM1
+2026-11-07 16:33:14,423 [INFO] mersad: AUDIT [camera removed] LAB_CAM2 by 127.0.0.1
+2026-11-07 16:33:14,892 [INFO] mersad: AUDIT [session start] LAB_CAM1
   [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-11: Stream health (FROZEN/OCCLUDED), safe active camera removal, engine stop/restart & audit persistence (INT-E2E-06 & INT-E2E-07) -- frozen=FROZEN_STREAM, cam2_removed=True, audit_rows=13->14, verify='Audit chain OK (14 records)'
+2026-11-07 16:33:15,908 [WARNING] mersad: Running in degraded preview mode without face ONNX weights: Model directory 'models' is not writable
+2026-11-07 16:33:15,914 [WARNING] mersad: Running in degraded preview mode with Tesseract 5 LSTM fallback OCR: No module named 'easyocr'
+2026-11-07 16:33:15,916 [WARNING] mersad: Vehicle/truck detection off: No module named 'ultralytics'
+Vehicle/truck detection off: No module named 'ultralytics'
+2026-11-07 16:33:16,034 [WARNING] mersad: Face models unavailable in degraded preview mode: YuNet model failed pre-load SHA-256 verification: file_missing_or_symlink
+Telegram alerts off (set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID to enable).
+2026-11-07 16:33:16,054 [INFO] mersad: AUDIT [session start] BOOT_CAM1
+
+Dashboard URL (Local only — 127.0.0.1):
+  http://127.0.0.1:17473/?k=main_ep_int_token_2026
+  (لتفعيل الوصول من الجوالات على نفس الشبكة استخدم RUN_LAN.bat أو --host 0.0.0.0)
+
+Faces are matched ONLY against volunteers who gave consent. Bystander faces in evidence photos are blurred.
+2026-11-07 16:33:16,133 [INFO] mersad: AUDIT [camera added] LAB_DYN_CAM2 src=http://127.0.0.1:52548/stream/cam2.mjpg by 127.0.0.1
+2026-11-07 16:33:16,153 [INFO] mersad: AUDIT [session start] LAB_DYN_CAM2
+2026-11-07 16:33:17,644 [INFO] mersad: AUDIT [camera removed] LAB_DYN_CAM2 by 127.0.0.1
+2026-11-07 16:33:17,690 [INFO] mersad: AUDIT [camera added] LAB_DYN_CAM3 src=http://127.0.0.1:52548/stream/cam3.mjpg by 127.0.0.1
+2026-11-07 16:33:17,722 [INFO] mersad: AUDIT [session start] LAB_DYN_CAM3
+  [PASS      ] [INDEPENDENT_TESSERACT_E2E   ] INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE: Natural main() entry point dynamic camera lifecycle (connect_ai -> worker_spawned=true -> MJPEG & inference -> remove without SIGSEGV -> add 2nd camera) -- add1_spawned=True, seq2=8, det2=1, stopped=True, cap_closed=True, add2_spawned=True, seq3=8, det3=1
+2026-11-07 16:33:18,787 [INFO] mersad: AUDIT [sighting] id=3 عدن-12345 BOOT_CAM1 unknown dir=LAB_CAM1 ➔ BOOT_CAM1 (ثابت/عبور نسبي في الإطار) conf=0.95
+2026-11-07 16:33:18,915 [INFO] mersad: AUDIT [session end] BOOT_CAM1
+2026-11-07 16:33:18,920 [INFO] mersad: AUDIT [session end] LAB_DYN_CAM3
 ========================================================================================
-  SUMMARY: 12 PASS, 0 FAIL, 2 NOT_TESTED (Total: 14)
+  SUMMARY: 13 PASS, 0 FAIL, 2 NOT_TESTED (Total: 15)
 ========================================================================================
 ```
 
@@ -76,8 +119,8 @@
 
 تم تنفيذ مقارنة ثنائية شاملة (`diff -rq --exclude='.git'`) وفحص البصمات الرقمية `sha256sum -c SHA256SUMS.txt`:
 - **تطابق المسارين:** المساران `MERSAD_PREVIEW_0.1_FINAL` و `MERSAD_PREVIEW_0.1_FINAL` متطابقان بنسبة **100%** في جميع الملفات البرمجية والتقارير وسكربتات البناء (`0 اختلافات` خارج مجلد `.git`).
-- **فحص `SHA256SUMS.txt`:** جميع الملفات المدرجة (**88/88 ملفاً**) اجتازت فحص `sha256sum -c SHA256SUMS.txt` بحالة `OK`.
-- **فحص `verify_integrity.py`:** اجتاز فحص سلامة حزمة `MERSAD_AI_Preview_0.1` (**18/18 ملفاً أساسياً** حاضراً ومطابقاً للبصمة).
+- **فحص `SHA256SUMS.txt`:** جميع الملفات المدرجة (**جميع الملفات المدرجة في SHA256SUMS.txt**) اجتازت فحص `sha256sum -c SHA256SUMS.txt` بحالة `OK`.
+- **فحص `verify_integrity.py`:** اجتاز فحص سلامة حزمة `MERSAD_AI_Preview_0.1` (**19/19 ملفاً أساسياً** حاضراً ومطابقاً للبصمة).
 
 ---
 
@@ -87,12 +130,12 @@
 
 | حزمة الاختبار | الأمر المنفَّذ | النتيجة | التفاصيل والمخرجات الفعلية |
 |---|---|---|---|
-| **اختبارات الوحدة والأمان والتكامل لـ MERSAD AI (الوضع القياسي)** | `python3 -u MERSAD_AI_Preview_0.1/selftest.py` | **`232 PASS / 0 FAIL / 0 SKIP`** | اجتازت جميع الـ 232 فحصاً (تطبيع اللوحات، مطابقة السجل، التتبع، الخصوصية وتعمية الوجوه، قاعدة البيانات، سلسلة التدقيق HMAC، التزامن بين العمليات، التشفير، ومقاييس التقييم). |
-| **اختبارات MERSAD AI (مع حظر `scikit-learn` لاختبار `StatForest`)** | `MERSAD_BLOCK_SKLEARN=1 python3 -u MERSAD_AI_Preview_0.1/selftest.py` | **`232 PASS / 0 FAIL / 0 SKIP`** | تم التحقق من عمل محرك كشف الشذوذ الإحصائي البديل `StatForest` بكفاءة تامة دون الاعتماد على `scikit-learn`. |
+| **اختبارات الوحدة والأمان والتكامل لـ MERSAD AI (الوضع القياسي)** | `python3 -u MERSAD_AI_Preview_0.1/selftest.py` | **`234 PASS / 0 FAIL / 0 SKIP`** | اجتازت جميع الـ 234 فحصاً (تطبيع اللوحات، مطابقة السجل، التتبع، الخصوصية وتعمية الوجوه، قاعدة البيانات، سلسلة التدقيق HMAC، التزامن بين العمليات، التشفير، ومقاييس التقييم). |
+| **اختبارات MERSAD AI (مع حظر `scikit-learn` لاختبار `StatForest`)** | `MERSAD_BLOCK_SKLEARN=1 python3 -u MERSAD_AI_Preview_0.1/selftest.py` | **`234 PASS / 0 FAIL / 0 SKIP`** | تم التحقق من عمل محرك كشف الشذوذ الإحصائي البديل `StatForest` بكفاءة تامة دون الاعتماد على `scikit-learn`. |
 | **اختبارات الوظائف والأمان لـ MERSAD LAB** | `python3 -u MERSAD_LAB_Preview_0.1/test_lab.py` | **`20 PASS / 0 FAIL`** | اجتازت الفحوصات الوظيفية الـ 8 (`LAB-01`..`LAB-08`) والفحوصات الأمنية واختبارات التحمل الـ 12 (`LAB-SEC-01`..`LAB-SEC-12`). |
-| **اختبار التكامل الشامل بين AI و LAB (`test_ai_lab_integration.py`)** | `python3 -u integration/test_ai_lab_integration.py` | **`12 PASS / 0 FAIL / 2 NOT_TESTED (Total: 14)`** | البوابة `PHASE4-GATE-01` مصنفة `NOT_TESTED` في بيئة Linux المعزولة لعدم توفر `ultralytics`/`torch`/`easyocr` وأوزان النماذج، بينما اجتازت السيناريوهات الـ 12 الموحدة (`INT-SCEN-01`..`INT-SCEN-12` شاملةً `INT-E2E-01`..`INT-E2E-07`) بنسبة 100% باستخدام المحرك الفعلي `MersadEngineController` وقارئ البكسلات الحقيقي `Tesseract 5 LSTM`. |
-| **اختبار السيناريوهات الـ 12 ومصادر البث (`run_full_12_scenarios_and_sources.py`)** | `python3 -u run_full_12_scenarios_and_sources.py` | **`12/12 PASS` + `3/3 PASS (RTSP/USB/Video)`** | اختبار تكامل شامل نفّذ السيناريوهات الـ 12 بالكامل واختبر ملفات الفيديو وRTSP وUSB وكشف عن خللين برمجيين في `mersad_live.py` (مفصلين في القسم 5). |
-| **فحص وتقييم نماذج الذكاء الاصطناعي (`evaluate_ai_models.py`)** | `python3 -u integration/evaluate_ai_models.py` | **`NOT_TESTED` (النماذج الـ 4) / `4/4 PASS` (Tesseract)** | النماذج الأربعة (`YuNet`, `SFace`, `YOLOv8n`, `EasyOCR`) غير محملة على القرص في البيئة المعزولة (`MODEL_MISSING`)؛ بينما حقق المسار المستقل `Tesseract 5 LSTM` مطابقة **4/4** على المشاهد الافتراضية و**4/4** على بث MJPEG الحي بمتوسط زمن استجابة `1005.78 ms`. |
+| **اختبار التكامل الشامل بين AI و LAB (`test_ai_lab_integration.py`)** | `python3 -u integration/test_ai_lab_integration.py` | **`13 PASS / 0 FAIL / 2 NOT_TESTED (Total: 15)`** | البوابة `PHASE4-GATE-01` مصنفة `NOT_TESTED` في بيئة Linux المعزولة لعدم توفر `ultralytics`/`torch`/`easyocr` وأوزان النماذج، بينما اجتازت السيناريوهات الـ 13 الموحدة (`INT-SCEN-01`..`INT-SCEN-13` شاملةً `INT-E2E-01`..`INT-E2E-07`) بنسبة 100% باستخدام المحرك الفعلي `MersadEngineController` وقارئ البكسلات الحقيقي `Tesseract 5 LSTM`. |
+| **اختبار السيناريوهات الـ 12 ومصادر البث (`run_full_12_scenarios_and_sources.py`)** | `python3 -u run_full_12_scenarios_and_sources.py` | **`12/12 PASS` + `1/1 PASS (ملفات فيديو محلية)` + `2/2 PASS (تحقق برمجي فقط لـ RTSP/USB)` + `0/2 NOT_TESTED (كاميرات RTSP/USB فيزيائية — INT-HW-RTSP-USB)`** | اختبار تكامل شامل نفّذ السيناريوهات الـ 12 بالكامل واختبر ملفات الفيديو المحلية وتدفقات `HTTP MJPEG` الافتراضية والتحقق البرمجي من مسارات `RTSP` و`USB` (دون توصيل كاميرات `RTSP` أو `USB` فيزيائية حقيقية: `INT-HW-RTSP-USB = NOT_TESTED`). |
+| **فحص وتقييم نماذج الذكاء الاصطناعي (`evaluate_ai_models.py`)** | `python3 -u integration/evaluate_ai_models.py` | **`NOT_TESTED` (النماذج الـ 4) / `14/14 PASS` (Tesseract: `6` مرجعية + `4` اصطناعية + `4` بث حي)** | النماذج الأربعة (`YuNet`, `SFace`, `YOLOv8n`, `EasyOCR`) غير محملة على القرص في البيئة المعزولة (`MODEL_MISSING`)؛ بينما حقق المسار المستقل `Tesseract 5 LSTM` مطابقة **6/6** على لوحات `eval_benchmarks/plates` و**4/4** على المشاهد الافتراضية و**4/4** على بث MJPEG الحي (`14/14` إجمالاً) بمتوسط زمن استجابة `357.99 ms`. |
 | **مقارنة المختبر الأصلي مع Clean-Room LAB (`compare_original_vs_cleanroom_lab.py`)** | `python3 -u tools/compare_original_vs_cleanroom_lab.py` | **`BLOCKED` (الأصلي) / `20/20 PASS` (Clean-Room)** | الالتزام المرجعي للمختبر الأصلي `ed7b8f727243da4878e547f08489af581c83291c` غير متوفر محلياً (يتطلب `git fetch` من GitHub)، بينما اجتاز `Clean-Room LAB` جميع الفحوصات **20/20 PASS** (مع اكتشاف خلل المسار النسبي عند تمرير `--cleanroom-dir` نسبياً، موضح في القسم 5). |
 
 ---
@@ -249,21 +292,38 @@
   - بعد إعادة `cam1` إلى `normal`: استعادت `LAB_CAM1` الاتصال تلقائياً خلال أقل من ثانية واحدة، وعادت حالتها إلى `"online"` (`fps: 11.9`, `reconnect_count: 1`)، وسُجّل الحدث الجنائي **`AUDIT [camera reconnected] LAB_CAM1`** (السجل `#17`) في جدول `audit` وجدول `camera_status_history`.
 - **النتيجة:** **`PASS`**.
 
+### السيناريو 13: دورة حياة الكاميرات الديناميكية عبر نقطة الدخول الطبيعية `main()` (`INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` — إغلاق `BUG-27`)
+- **الإجراء المنفذ (الخطوات العشر كاملة عبر نقطة الدخول الحقيقية `main()` المستخدمة في `MERSAD_AI.exe`):**
+  1. تشغيل `MERSAD AI` عبر استدعاء الدالة الحقيقية `mersad_live.main()` (وليس إنشاء `MersadEngineController` يدوياً) على منفذ محلي مع كاميرا إقلاع أولية `BOOT_CAM1`.
+  2. تشغيل خادم `MERSAD LAB` (`LabServerController`) وتجهيز الكاميرات الافتراضية الأربع.
+  3. إضافة كاميرا ديناميكية جديدة `LAB_DYN_CAM2` من المختبر عبر `POST /api/integration/connect_ai`.
+  4. التحقق من أن استجابة `MERSAD AI` تتضمن صراحةً `worker_spawned=true` (`ai_response.worker_spawned == True`).
+  5. التحقق من أن خيط قراءة الكاميرا (`cam_reader_LAB_DYN_CAM2`) وخيط الاستدلال (`cam_infer_LAB_DYN_CAM2`) قد بدءا فعلياً في الخلفية (`is_alive() == True`).
+  6. التحقق من تصاعد عداد الإطارات `latest_frame_seq` ووصول إطارات `MJPEG` الصالحة (`FFD8...FFD9`) من المسار `/stream.mjpg?cam=LAB_DYN_CAM2`.
+  7. التحقق من تنفيذ دورة الاستدلال وتحديث قياسات حالة الكاميرا في `STATUS["cameras"]["LAB_DYN_CAM2"]` كما هو موثق حرفياً في `reports_and_logs/logs/20_main_entrypoint_dynamic_camera_lifecycle.json`: (`status = "online"`, `frames = 7`, `detections = 1`, `brightness = 75.7`, `contrast = 40.51`, `sharpness = 1210.71`, `resolution = "640x480"`, `fps = 0.0`, `last_plate = null` — حيث تم إثبات تشغيل الاستدلال وتحديث القياسات الحية، بينما لم يُثبت تمييز لوحة `OCR` في اختبار دورة الحياة السريع هذا).
+  8. حذف الكاميرا `LAB_DYN_CAM2` أثناء التشغيل عبر `POST /api/cameras/remove`.
+  9. التحقق من توقف خيطي القراءة والاستدلال (`not is_alive()`) وإغلاق `VideoCapture` (`cap is None`) بأمان تام دون أي انهيار `SIGSEGV`.
+  10. إضافة كاميرا ثانية `LAB_DYN_CAM3` بعد الحذف عبر `POST /api/integration/connect_ai` والتحقق من `worker_spawned=true` وتدفق `MJPEG` (`latest_frame_seq = 8`, `mjpeg_ok = true`) وتنفيذ دورة الاستدلال وتحديث قياسات الكاميرا (`status = "online"`, `frames = 7`, `detections = 1`, `brightness = 75.88`, `contrast = 40.8`, `sharpness = 1178.67`, `resolution = "640x480"`, `fps = 0.0`, `last_plate = null` — دون ادعاء قراءة لوحة `OCR` في اختبار دورة الحياة هذا).
+- **ملاحظة الفصل المنهجي الصارم (`BUG-31`)**: يحتفظ هذا الاختبار بنتيجة **`10 / 10 PASS` لدورة حياة الكاميرا الديناميكية (`Dynamic Camera Lifecycle`)** مع فصلها التام عن اختبارات تمييز اللوحات (`OCR Plate Recognition`)؛ كما يظل التقييم المستقل لمحرك `Tesseract 5 LSTM` مفصولاً تماماً عن بوابة قبول النموذج الأساسي `EasyOCR` التي تبقى بحالة **`NOT_TESTED`** حتى يُنفّذ اختبار `Ground-Truth` الفعلي للنموذج.
+- **النتيجة:** **`PASS` (`10 / 10 Lifecycle Steps`)** (مُثبت في `reports_and_logs/logs/20_main_entrypoint_dynamic_camera_lifecycle.json` و`INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` وفي الاختبار `#234` `PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE` داخل `selftest.py`).
+
 ---
 
-## 4. فحص دعم RTSP و USB وملفات الفيديو (Media Sources Verification)
+## 4. فحص دعم RTSP و USB وملفات الفيديو (Media Sources Verification — `BUG-32 Reconciled`)
 
-تم اختبار دعم مصادر الفيديو الثلاثة برمجياً وعملياً عبر `execute_bash`:
+> **فصل منهجي صارم بين التحقق البرمجي (`Software Verification`) واختبار العتاد الفيزيائي (`Physical Hardware Testing — BUG-32`)**:
+> يفصل الجدول أدناه بدقة تامة بين ما جرى التحقق منه برمجياً عبر الاختبارات الآلية والمحاكاة (`PASS — تحقق برمجي فقط`) وبين ما لم يُختبر بعد على كاميرات `RTSP` أو `USB` فيزيائية حقيقية في بيئة الاختبار المعزولة (`NOT_TESTED — بوابة INT-HW-RTSP-USB = NOT_TESTED`). كما تُستخدم صيغ نائبة آمنة (`<REDACTED_TEST_PASSWORD>`) في جميع الأمثلة التوثيقية دون أي كلمات مرور نصية قابلة للاستخدام التشغيلي.
 
-| نوع المصدر | حالة الدعم والاختبار | المخرجات والتفاصيل الهندسية |
-|---|---|---|
-| **1. ملفات الفيديو (`Video Files` — `.avi`, `.mp4`)** | **`PASS` (مدعوم ومختبر فعلياً)** | تم توليد ملف فيديو حقيقي `synthetic_taiz_test.avi` (`546,960 بايت`، `25 إطاراً`، أبعاد `640x480`، `15 FPS`):<br>1) **في MERSAD LAB (`POST /api/analyze/video`):** قرأ الخادم الـ 25 إطاراً خلال `0.453s` وأعاد `status_code: 200`, `brightness: 75.9`, `contrast: 40.75`, `sharpness: 1063.22`, `quality_grade: "ممتازة (Excellent)"`.<br>2) **في MERSAD AI (`add_camera("VIDEO_FILE_CAM", vid_path)`):** فتح `_open_camera_capture` ملف الفيديو بنجاح وقرأ الإطارات وحلل جودتها (`brightness: 75.89`, `sharpness: 1064.27`) ونفذ الاستدلال عليها مع التعامل الآمن مع نهاية الملف (`eof`). |
-| **2. تدفقات الشبكة (`RTSP / RTSPS / HTTP / HTTPS`)** | **`PASS` (مدعوم ومختبر فعلياً)** | 1) **مهل الاتصال والقراءة المحدودة:** يضبط `_open_camera_capture()` متغير البيئة `OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp\|stimeout;5000000\|rw_timeout;5000000"` ويمرر `cv2.CAP_FFMPEG` مع `CAP_PROP_OPEN_TIMEOUT_MSEC = 5000` و `CAP_PROP_READ_TIMEOUT_MSEC = 5000` لمنع تجمد الخيوط عند انقطاع الشبكة.<br>2) **حماية بيانات الاعتماد:** عند حفظ الرابط `rtsp://admin:MySecretPass2026@192.168.10.55:554/h264Preview_01_main` عبر `save_cfg()`، تم إخفاء كلمة المرور في `mersad_config.json` (`rtsp://admin:***@192.168.10.55:554/h264Preview_01_main`) وفي جميع السجلات، بينما حُفظ الرابط الكامل في `.mersad_secrets.json` بصلاحيات `0600` (و`icacls` على Windows). |
-| **3. كاميرات الويب المحلية (`USB Webcams` — `"0"`, `"1"`)** | **`PASS` (مدعوم ومختبر فعلياً)** | يحول `_open_camera_capture()` المعرفات الرقمية النصية (`"0"`, `"1"`) تلقائياً إلى أعداد صحيحة (`int(source) if str(source).isdigit() else source`) ويستدعي `cv2.VideoCapture(0)`. كما تفحص أداة `check_install.py --camera --json` (`check_camera_source(source_override="0")`) منفذ الكاميرا المحلي وتضمن استدعاء `cap.release()` (`released: True`)، وفي حال عدم وجود كاميرا USB متصلة يدخل النظام في وضع مراقبة إعادة الاتصال (`reconnecting`) دون إسقاط الخدمة. |
+| نوع المصدر | التحقق البرمجي (`Software Verification`) | اختبار العتاد الفيزيائي (`Physical Device Testing — INT-HW-RTSP-USB`) | المخرجات والتفاصيل الهندسية الموثقة |
+|---|---|---|---|
+| **1. ملفات الفيديو المحلية (`Video Files` — `.avi`, `.mp4`)** | **`PASS` (مختبر فعلياً على ملف فيديو محلي مولد اصطناعياً)** | **غير منطبق (ملف برمجي محلي)** | تم توليد ملف فيديو حقيقي `synthetic_taiz_test.avi` (`546,960 بايت`، `25 إطاراً`، أبعاد `640x480`، `15 FPS`):<br>1) **في MERSAD LAB (`POST /api/analyze/video`):** قرأ الخادم الـ 25 إطاراً خلال `0.453s` وأعاد `status_code: 200`, `brightness: 75.9`, `contrast: 40.75`, `sharpness: 1063.22`, `quality_grade: "ممتازة (Excellent)"`.<br>2) **في MERSAD AI (`add_camera("VIDEO_FILE_CAM", vid_path)`):** فتح `_open_camera_capture` ملف الفيديو بنجاح وقرأ الإطارات وحلل جودتها (`brightness: 75.89`, `sharpness: 1064.27`) ونفذ الاستدلال عليها مع التعامل الآمن مع نهاية الملف (`eof`). |
+| **2. تدفقات الكاميرات الافتراضية (`HTTP MJPEG Virtual Streams` — `MERSAD LAB`)** | **`PASS` (مختبر فعلياً عبر الشبكة المحلية `127.0.0.1`)** | **بث افتراضي محلي (`VirtualCamera` ثنائي الأبعاد)** | تم التحقق الفعلي من استقبال إطارات `HTTP MJPEG` الحية عبر `OpenCV VideoCapture` من `MERSAD LAB` (`LAB_CAM1..4` و`LAB_DYN_CAM2..3`)، واكتشاف انقطاع البث (`HTTP 503` -> `reconnecting`)، وإعادة الاتصال التلقائي التدريجي (`_compute_reconnect_backoff` -> `reconnect_count=1` في `INT-SCEN-12`). |
+| **3. تدفقات كاميرات الشبكة (`RTSP / RTSPS`)** | **`PASS` (تحقق برمجي فقط — `Software-Only Verification`)** | **`NOT_TESTED` (لم يُختبر على كاميرا `RTSP` فيزيائية حقيقية؛ `INT-HW-RTSP-USB = NOT_TESTED`)** | **أ) ما تم التحقق منه برمجياً (`PASS`):**<br>1) **مهل الاتصال والقراءة المحدودة:** يضبط `_open_capture_with_timeouts()` متغير البيئة `OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp\|stimeout;5000000\|rw_timeout;5000000"` ويمرر `cv2.CAP_FFMPEG` مع `CAP_PROP_OPEN_TIMEOUT_MSEC = 5000` و `CAP_PROP_READ_TIMEOUT_MSEC = 5000` (مُثبت عبر `Mock VideoCapture` في الاختبار `V7-RTSP-TIMEOUTS`).<br>2) **حجب وعزل بيانات الاعتماد:** عند تمرير صيغة رابط اختبارية غير صالحة للاستخدام التشغيلي `rtsp://<TEST_USER>:<REDACTED_TEST_PASSWORD>@<CAMERA_IP>:554/<STREAM_PATH>` عبر `save_cfg()` و`_redact_cam_source()`، يتم إخفاء كلمة المرور في `mersad_config.json` والسجلات وواجهات API لتصبح `rtsp://<TEST_USER>:***@<CAMERA_IP>:554/<STREAM_PATH>` بينما يُعزل الرابط في `.mersad_secrets.json` بصلاحيات `0600` (و`icacls` على Windows)؛ علماً بأن جميع اختبارات الحجب تستخدم سلاسل نصية وهمية اصطناعية (`Synthetic Dummy Strings`) ولا تستخدم أي بيانات اعتماد حقيقية (`P1-D`, `STAGE2-GAP07`, `STAGE9-OBS01`, `SEC-AUDIT-06`).<br>**ب) ما لم يُختبر فيزيائياً (`NOT_TESTED`):** لم يتم الاتصال بكاميرا `RTSP` فيزيائية حقيقية أو استقبال إطارات `RTSP` حقيقية منها أو اختبار انقطاع الشبكة الفيزيائي واستعادته (`INT-HW-RTSP-USB = NOT_TESTED`). |
+| **4. كاميرات الويب المحلية (`USB Webcams` — `"0"`, `"1"`)** | **`PASS` (تحقق برمجي فقط — `Software-Only Verification`)** | **`NOT_TESTED` (لم يُختبر على كاميرا `USB` فيزيائية حقيقية؛ `INT-HW-RTSP-USB = NOT_TESTED`)** | **أ) ما تم التحقق منه برمجياً (`PASS`):** يحول `_open_camera_capture()` المعرفات الرقمية النصية (`"0"`, `"1"`) تلقائياً إلى أعداد صحيحة (`int(source) if str(source).isdigit() else source`) ويستدعي `cv2.VideoCapture(0)`؛ كما تفحص أداة `check_install.py --camera --json` (`check_camera_source(source_override="0")`) المنفذ المحلي وتتعامل بأمان مع عدم وجود كاميرا متصلة (`usb_0_status=FAIL`، `can't open camera by index`) مع ضمان استدعاء `cap.release()` (`released=True`) في كتلة `finally` والدخول في وضع `reconnecting` دون إسقاط الخدمة (`STAGE2-GAP07` و`INT-HW-RTSP-USB`).<br>**ب) ما لم يُختبر فيزيائياً (`NOT_TESTED`):** لم يتم توصيل كاميرا `USB` فيزيائية حقيقية أو فتحها بنجاح أو استقبال إطارات منها أو اختبار استقرارها وإغلاقها وإعادة توصيلها (`INT-HW-RTSP-USB = NOT_TESTED`). |
 
 ---
 
-## 5. فحص جاهزية حزم Windows x64 والعيوب البرمجية المكتشفة (Packaging Audit & Discovered Bugs)
+## 5. فحص جاهزية حزم Windows x64 وسجل النتائج التاريخية المغلقة (Packaging Audit & Historical Findings — Closed in Preview 0.1)
 
 ### أولاً: تقييم ملفات البناء والحزم لنظام Windows x64
 
@@ -280,77 +340,23 @@
 
 ---
 
-### ثانياً: العيوب البرمجية المكتشفة التي تحتاج إلى إصلاح (Discovered Software Bugs)
+### ثانياً: سجل نتائج التدقيق التاريخية وإغلاقها الهندسي النهائي (`Historical Audit Findings — Closed in Preview 0.1`)
 
-كشف الفحص العميق والتشغيل الفعلي للاختبارات عن **4 عيوب برمجية وهندسية حقيقية** لم تكشفها الاختبارات السابقة:
+> **تنبيه توثيقي (`Documentation Reconciliation — BUG-28`)**: يوثق هذا القسم كمرجع تاريخي العيوب البرمجية التي اكتُشفت خلال جولات التدقيق وتجارب التكامل، وكيف تم **إغلاقها جميعاً بالكامل (`CLOSED / PASS`)** مع تحديد رقم الالتزام (`Commit SHA`) الذي أغلق كل عيب واختبار الانحدار الذي يثبت إغلاقه. **لا يوجد أي عيب من هذه العيوب مفتوحاً في الالتزام النهائي `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`.**
 
-#### 1. `[CRITICAL / HIGH]` خلل الكتابة فوق `bus.post` في الدالة `wire()` يعطل إضافة وحذف الكاميرات عبر HTTP (`MERSAD_AI_Preview_0.1/mersad_live.py` — الأسطر `3516–3527`)
-- **الوصف التفصيلي:**
-  في الدالة `wire()` داخل `mersad_live.py`، تمت إضافة مساري `/api/cameras/add` و `/api/cameras/remove` في السطرين `3516–3517`:
-  ```python
-  bus.post["/api/cameras/add"] = lambda d, ip: add_camera_runtime(d, who=ip)
-  bus.post["/api/cameras/remove"] = lambda d, ip: remove_camera_runtime(d, who=ip)
-  ```
-  ولكن بعد 10 أسطر فقط (في السطر `3527`)، يقوم الكود بإعادة تعيين القاموس `bus.post = { "/api/decision": ..., ... }` بالكامل دون تضمين `/api/cameras/add` و `/api/cameras/remove`!
-- **الأثر الفعلي:**
-  عند تشغيل `MERSAD AI` الفعلي عبر `main()` (الذي يستدعي `wire()`)، يؤدي إرسال طلب من `MERSAD LAB` عبر زر/واجهة `POST /api/integration/connect_ai` إلى إرجاع `HTTP 404 (المسار غير موجود)` من خادم `MERSAD AI` وفشل الربط بـ `HTTP 502`! (نجح الاختبار `integration/test_ai_lab_integration.py` سابقاً فقط لأنه قام بتعيين `ai_srv.bus.post["/api/cameras/add"]` يدوياً في السطر 176 دون استدعاء `m.wire()`).
-  كما أن `main()` في `mersad_live.py` لا يقوم بتعيين `_ACTIVE_ENGINE_CONTROLLER`، مما يجعل `add_camera_runtime` عند استدعائها في وضع التشغيل العادي تضيف الكاميرا إلى `STATUS["cameras"]` فقط (`worker_spawned: False`) دون إطلاق خيط قراءة أو استدلال.
-- **الإصلاح المطلوب:**
-  نقل تعريف `/api/cameras/add` و `/api/cameras/remove` ليكونا داخل قاموس `bus.post = { ... }` في السطر `3527`، وربط حلقة الكاميرات في `main()` بـ `_ACTIVE_ENGINE_CONTROLLER` (أو دالة مساعدة لتوليد خيوط القراءة والاستدلال في `_ACTIVE_CAM_STATES`).
-
-#### 2. `[HIGH]` انهيار `Segmentation Fault (SIGSEGV)` بسبب حالة سباق (Use-After-Free) في `remove_camera_runtime()` (`MERSAD_AI_Preview_0.1/mersad_live.py` — الأسطر `3432–3455`)
-- **الوصف التفصيلي:**
-  عند استدعاء `remove_camera_runtime()` (عبر `POST /api/cameras/remove`) لإزالة كاميرا نشطة يعمل لها خيط `_camera_reader_worker`:
-  ```python
-  st = _ACTIVE_CAM_STATES.pop(cam_name, None)
-  if st:
-      ev = st.get("stop_ev")
-      if ev:
-          ev.set()
-      cap = st.get("cap")
-      if cap:
-          cap.release()
-  ```
-  تقوم الدالة بضبط `ev.set()` ثم تستدعي **فوراً** `cap.release()` على كائن C++ `cv2.VideoCapture` دون انتظار انتهاء خيط القراءة (`rt.join()`) ودون حيازة القفل `with st["lock"]:`، ودون إزالة الكاميرا من `_ACTIVE_ENGINE_CONTROLLER.cam_states`!
-- **الأثر الفعلي:**
-  إذا كان خيط القراءة `_camera_reader_worker` ينفذ في نفس اللحظة `cap_obj.read()` على دفق FFmpeg/MJPEG، فإن استدعاء `cap.release()` من خيط HTTP يحرر بنية `AVFormatContext` في لغة C أثناء قراءتها، مما يؤدي إلى انهيار العملية بالكامل بـ **`Segmentation fault (exit code 139)`** (كما ثبت عملياً أثناء تنفيذ السيناريو 11).
-- **الإصلاح المطلوب:**
-  في `remove_camera_runtime()`، يجب إزالة `cam_name` من `_ACTIVE_ENGINE_CONTROLLER.cam_states` أولاً، وضبط `stop_ev.set()`، والانتظار حتى يتوقف خيط القراءة (`reader_thread.join(timeout=2.0)`)، ثم حيازة `with st["lock"]:` لتصفير `st["cap"] = None` واستدعاء `cap.release()` بأمان (تماماً كما تفعل `MersadEngineController.stop()` في الأسطر `3409–3426`).
-
-#### 3. `[MEDIUM / HIGH]` خلل المسار النسبي في `tools/compare_original_vs_cleanroom_lab.py` يؤدي إلى فشل كاذب (`0/0 PASS`) عند استدعائه من سكربتات البناء (`الأسطر 159–171 و 279–281`)
-- **الوصف التفصيلي:**
-  في `tools/compare_original_vs_cleanroom_lab.py`، لا يتم تحويل المسارات المدخلة (`--original-source` و `--cleanroom-dir`) إلى مسارات مطلقة عبر `.resolve()`. وعندما تُستدعى الدالة `run_independent_lab_functional_and_security_suite(lab_dir, ...)` مع مسار نسبي (مثل `--cleanroom-dir "MERSAD_LAB_Preview_0.1"` المستخدم في `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` السطر 79 وفي `.github/workflows/release-mersad-preview-0.1-windows.yml` السطر 63):
-  ```python
-  test_script = lab_dir / "test_lab.py"  # -> "MERSAD_LAB_Preview_0.1/test_lab.py"
-  proc = subprocess.run([sys.executable, str(test_script)], cwd=str(lab_dir), ...)
-  ```
-  بسبب تغيير مجلد العمل إلى `cwd="MERSAD_LAB_Preview_0.1"` مع بقاء مسار السكربت نسبياً، يبحث Python عن `MERSAD_LAB_Preview_0.1/MERSAD_LAB_Preview_0.1/test_lab.py` فيفشل بـ `Errno 2` ويعيد `Clean-Room LAB Suite: FAIL (0/0 PASS)` بدلاً من `PASS (20/20 PASS)`!
-- **الإصلاح المطلوب:**
-  تحويل المسارات في `main()` إلى مسارات مطلقة فوراً:
-  ```python
-  orig_in = Path(args.original_source).resolve()
-  pres_dir = Path(args.preserve_original_dir).resolve()
-  clean_dir = Path(args.cleanroom_dir).resolve()
-  ```
-
-#### 4. `[MEDIUM]` تعارضات في سكربتات بناء الحزمة الموحدة لـ Windows (`BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` و `release-mersad-preview-0.1-windows.yml`)
-- **الوصف التفصيلي:**
-  1. **نسخ `RUN.bat` و `RUN_LAN.bat` المصدريين إلى مجلد التوزيع `dist\MERSAD_AI\`:**
-     في السطر 103 من `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` والسطر 95 من `release-mersad-preview-0.1-windows.yml`، يتم نسخ `RUN.bat` و `RUN_LAN.bat` المصدريين مباشرةً إلى `dist\MERSAD_AI\`. وبما أن `RUN.bat` المصدري يستدعي `call setup.bat` و `venv\Scripts\python.exe mersad_live.py` بدلاً من `MERSAD_AI.exe`، فإنه سيفشل على أجهزة المستخدمين النهائيين التي لا تحتوي على `setup.bat` أو `venv` داخل الحزمة المحمولة! (بينما يقوم `MERSAD_AI_Preview_0.1/BUILD_EXE.bat` و `windows-build.yml` بتوليد ملفات `RUN.bat` و `RUN_LAN.bat` مخصصة للتوزيع تستدعي `MERSAD_AI.exe %*` مباشرةً).
-  2. **عدم إزالة `opencv-python-headless` بعد تثبيت `requirements.txt` في السكربت الموحد:**
-     يقوم `easyocr==1.7.2` بسحب `opencv-python-headless` تلقائياً. في `MERSAD_AI_Preview_0.1/setup.bat` و `windows-build.yml`، يتم تنفيذ `pip uninstall -y opencv-python-headless` ثم `pip install --force-reinstall --no-deps opencv-python==4.11.0.86`، لكن هذه الخطوة سقطت سهواً من `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` (السطر 64) ومن `release-mersad-preview-0.1-windows.yml` (السطر 34).
-  3. **اختلاف إصدار `pyinstaller` المثبت بين المشروعين:**
-     يستخدم `MERSAD_AI` الإصدار `pyinstaller==6.11.1` بينما يحدد `MERSAD_LAB/constraints-win-x64.txt` الإصدار `pyinstaller==6.10.0`.
+| المعرّف | الوصف التاريخي للملاحظة المكتشفة أثناء التدقيق | الحالة الحالية | التزام الإغلاق الفعلي (`Closing Commit SHA`) | الإصلاح الهندسي المنفذ واختبار الانحدار المثبت |
+| :--- | :--- | :---: | :--- | :--- |
+| **`BUG-01`** (تاريخي — أُغلق) | إعادة تعيين القاموس `bus.post = { ... }` في السطر `3527` من `wire()` كانت تمسح مساري `/api/cameras/add` و`/api/cameras/remove` المضافين قبلها بـ 10 أسطر (`HTTP 404`). | **`CLOSED` (`PASS`)** | `25131918a981ac2ac37923d4c738d9f93cdcbc5b` (`release/mersad-preview-0.1`) | دُمج مسارا `/api/cameras/add` و`/api/cameras/remove` مباشرة داخل تعريف `bus.post` في `wire()`؛ مُثبت باختبار `PREVIEW01-WIRE-CAMERAS-POST` و`INT-SCEN-03`. |
+| **`BUG-27`** (تاريخي — أُغلق) | في نقطة الدخول الطبيعية `main()` (`mersad_live.py`)، كانت الكاميرات تُدار في قاموس محلي `cam_states` دون تعيين `_ACTIVE_ENGINE_CONTROLLER`، وكان الخادم `start_server()` يبدأ قبل تهيئة المتحكم، مما كان يجعل `add_camera_runtime()` تعيد `worker_spawned=False` عند التشغيل عبر `main()`. كما كان استدعاء `import pytesseract` داخل الخيوط الخلفية يؤخر إنهاء الخيط أثناء `remove_camera_runtime()`. | **`CLOSED` (`PASS`)** | **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (`fix/preview-0.1-postbuild-42273598736`) | تم بناء الصنف `_MainLoopRuntimeController` داخل `main()` وربطه بـ `_ACTIVE_ENGINE_CONTROLLER` قبل تشغيل `start_server()`، وتخصيص `cam_stop_ev` مستقل لكل كاميرا، واستخدام لقطة محمية بـ `_RUNTIME_STATE_LOCK` في حلقة `main()` مع إبقاء الخدمة حية عند بقاء `0` كاميرات، وإلغاء حجب `import pytesseract`؛ مُثبت باختبار `#234` (`PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE`) و`INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE`. |
+| **`BUG-02`** (تاريخي — أُغلق) | حالة سباق (`Use-After-Free` / `SIGSEGV`) في `remove_camera_runtime()` عند استدعاء `cap.release()` قبل انتهاء خيط القراءة `_camera_reader_worker`. | **`CLOSED` (`PASS`)** | `25131918a981ac2ac37923d4c738d9f93cdcbc5b` & `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` | ضبط `stop_ev.set()` وتفريغ `infer_queue` وانتظار `reader_thread.join()` و`infer_thread.join()` قبل حيازة `with st["lock"]:` واستدعاء `cap.release()`؛ مُثبت باختبار `PREVIEW01-SAFE-CAMERA-REMOVE-NO-SEGFAULT` و`INT-SCEN-11` و`INT-SCEN-13`. |
+| **`BUG-03`** (تاريخي — أُغلق) | عدم تحويل المسار النسبي `--cleanroom-dir` إلى مسار مطلق عبر `.resolve()` في `tools/compare_original_vs_cleanroom_lab.py`، وفصل المرحلة 2 غير المانعة للبناء (`BUG-07`). | **`CLOSED` (`PASS`)** | `25131918a981ac2ac37923d4c738d9f93cdcbc5b` (`release/mersad-preview-0.1`) | تحويل جميع المسارات إلى مطلقة عبر `.resolve()` وجعل غياب الأرشيف الأصلي `ed7b8f72` يسجل `BLOCKED` دون إيقاف بناء `Preview 0.1`؛ مُثبت باختبار `PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE`. |
+| **`BUG-04`** (تاريخي — أُغلق) | توليد مشغلات `RUN.bat` و`RUN_LAN.bat` الخاصة بـ `MERSAD_AI.exe` وإزالة `opencv-python-headless` وتوحيد `pyinstaller==6.11.1` وتثبيت `Inno Setup` تلقائياً في CI (`BUG-11`). | **`CLOSED` (`PASS`)** | `25131918a981ac2ac37923d4c738d9f93cdcbc5b` (`release/mersad-preview-0.1`) | توليد مشغلات التوزيع المخصصة لـ `MERSAD_AI.exe` وإزالة `opencv-python-headless` وتوحيد `pyinstaller==6.11.1`؛ مُثبت باختبار `PREVIEW01-UNIFIED-WIN-BUILD-LAUNCHERS` و`PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP`. |
 
 ---
 
-## 6. الخلاصة النهائية والتوصيات
+## 6. الخلاصة النهائية وحالة الإغلاق الهندسي
 
-1. **جاهزية التكامل الوظيفي والأمني:** اجتازت جميع اختبارات الوحدة والأمان (`232/232 PASS` في `MERSAD AI`، و`20/20 PASS` في `MERSAD LAB`) وجميع السيناريوهات الـ 12 لاختبار التكامل الشامل (`12/12 PASS`) بالإضافة إلى دعم ملفات الفيديو وRTSP وUSB.
-2. **الأوزان الثقيلة والتجميع النهائي لـ Windows:** نظراً لأن بيئة الاختبار الحالية هي حاوية Linux معزولة عن الإنترنت، فإن تحميل وتشغيل النماذج الأربعة الثقيلة (`YOLOv8n`, `EasyOCR`, `YuNet`, `SFace`) وبناء ملفات `.exe` عبر PyInstaller و Inno Setup يتطلبان التنفيذ على بيئة Windows x64 متصلة بالإنترنت أو عبر GitHub Actions (`windows-latest`).
-3. **أولويات الإصلاح قبل إصدار الحزمة النهائية:**
-   - إصلاح إعادة تعيين `bus.post` في `mersad_live.py` (`wire()`) لضمان عمل `/api/cameras/add` و `/api/cameras/remove` عند التشغيل الفعلي.
-   - إصلاح حالة السباق في `remove_camera_runtime()` بانتظار توقف خيط القراءة قبل استدعاء `cap.release()`.
-   - إضافة `.resolve()` للمسارات في `tools/compare_original_vs_cleanroom_lab.py`.
-   - توليد `RUN.bat` و `RUN_LAN.bat` الخاصين بـ `MERSAD_AI.exe` وإزالة `opencv-python-headless` في `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.ps1` و `release-mersad-preview-0.1-windows.yml`.
+1. **جاهزية التكامل الوظيفي والأمني ودورة الحياة الديناميكية عبر `main()`:** اجتازت جميع اختبارات الوحدة والأمان (**`234 / 234 PASS`** في `MERSAD AI` بالوضعين القياسي وبدون `sklearn`، و**`20 / 20 PASS`** في `MERSAD LAB`) وجميع السيناريوهات الوظيفية الـ 13 لاختبار التكامل الشامل (**`13 / 13 PASS`** شاملةً `INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` عبر نقطة الدخول الطبيعية `main()`) بالإضافة إلى الاختبار الفعلي لملفات الفيديو المحلية وتدفقات `HTTP MJPEG` الافتراضية، والتحقق البرمجي من مسارات `RTSP` و`USB` (مع بقاء اختبار كاميرات `RTSP` و`USB` الفيزيائية الحقيقية في البوابة `INT-HW-RTSP-USB` بحالة `NOT_TESTED` محلياً).
+2. **الأوزان الثقيلة والتجميع النهائي لـ Windows:** نظراً لأن بيئة الاختبار الحالية هي حاوية Linux معزولة عن الإنترنت، فإن تحميل وتشغيل النماذج الأربعة الثقيلة (`YOLOv8n`, `EasyOCR`, `YuNet`, `SFace`) وبناء ملفات `.exe` الخمسة عبر PyInstaller و Inno Setup مسجلة بأمانة كـ **`NOT_TESTED` محلياً** ومهيأة للتنفيذ على GitHub Actions (`windows-latest`) من الفرع المعتمد `fix/preview-0.1-postbuild-42273598736` عند الالتزام `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`.
+3. **تأكيد إغلاق كافة ملاحظات التدقيق والمطابقة (`Audit & Documentation Closure Summary — BUG-01..BUG-33`):** جميع العيوب البرمجية المكتشفة في جولات التدقيق والتكامل وما بعد البناء (`BUG-01` إلى `BUG-27`) مغلقة برمجياً ومثبتة باختبارات انحدار آلية داخل التزام الكود النهائي `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` (و`748ac0158761812a6fff63ff6fe626b9df8c252b` للمختبر)، وجميع ملاحظات مطابقة التوثيق والقوائم التوصيفية والأرشيف (`BUG-28` إلى `BUG-33`) مغلقة ومتحقق منها آلياً في طبقة مخرجات الإصدار (`Release Artifacts Layer`).
 

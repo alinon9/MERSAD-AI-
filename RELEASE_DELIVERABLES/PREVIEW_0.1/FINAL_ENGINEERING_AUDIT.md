@@ -1,50 +1,79 @@
 # 1. التقرير الهندسي النهائي الشامل — `FINAL_ENGINEERING_AUDIT.md`
-## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`release/mersad-preview-0.1` @ `25131918a981ac2ac37923d4c738d9f93cdcbc5b`)
+## الإصدار: `MERSAD AI & MERSAD LAB — Preview 0.1` (`fix/preview-0.1-postbuild-42273598736` @ `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` & `748ac0158761812a6fff63ff6fe626b9df8c252b`)
 
-## الملخص التنفيذي لحالة المستودعين والفروع ونقاط الرجوع (إغلاق الإصدار النهائي)
+## الملخص التنفيذي لحالة المستودعين والفروع ونقاط الرجوع (إغلاق وتوحيد مصدر الحقيقة النهائي)
 - **مستودع النظام الرئيسي (`MERSAD AI`)**: `MERSAD_PREVIEW_0.1_FINAL/MERSAD_AI_Preview_0.1`
-  - **الفرع الحالي**: `release/mersad-preview-0.1`
-  - **التزام الكود النهائي المعتمد (`v0.1.0-preview-code`)**: `25131918a981ac2ac37923d4c738d9f93cdcbc5b`
+  - **الفرع المعتمد (`git bundle list-heads`)**: `fix/preview-0.1-postbuild-42273598736` @ **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (`HEAD` & `v0.1.1-postbuild-reconciled-code`)
+  - **إثبات وجود الالتزام (`git cat-file -e edaf651321ec9ea6ba613e3ab1630bc16b11b9d5^{commit}`)**: **`OK (exit code 0)`**
+  - **مطابقة الحزمة المصدرية (`MERSAD_AI_Preview_0.1_Portable_Source.zip`)**: **`58 / 58 MATCH` (`100% Byte-for-Byte`)**
   - **نقاط الرجوع المستقرة الموثقة (`Rollback Tags`)**:
+    - `v0.1.1-postbuild-reconciled-code` -> `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`
+    - `audit-checkpoint-421ec318` -> `421ec3189fb6f569023c2a86e3f818bbf9ad1860`
+    - `audit-checkpoint-d965d713` -> `d965d71317e3506e5dce9d316dc81cb8ae45e43b`
+    - `v0.1.0-preview-code` (`release/mersad-preview-0.1`) -> `25131918a981ac2ac37923d4c738d9f93cdcbc5b`
     - `rollback-preview01-f66ecea` -> `f66ecea30069b6e8fd5b5783db94ca75d4a1db32`
     - `rollback-stable-49e400c` -> `49e400c0ec45dd3933227f1e988244e5ba50ec05`
     - `rollback-stable-9491bcd` -> `9491bcd0d610c51ce76b599591db5c9f0b84cd44`
     - `rollback-stage15-64b0dde` (`v7.1.0`) -> `64b0dde9013c973261da37e21861c642679cf5eb`
     - `main` (الأرشيف الأصلي غير الممسوس) -> `25c9e5bba30dc8f921675e12c23a53571be895c1`
 - **مستودع مختبر المحاكاة والفحص (`MERSAD LAB`)**: `MERSAD_PREVIEW_0.1_FINAL/MERSAD_LAB_Preview_0.1`
-  - **الفرع الحالي**: `release/mersad-preview-0.1`
-  - **التزام الكود النهائي المعتمد**: `e9284356f4d1a8205946d5893121c6f8a2f22012`
-  - **نقطة الرجوع المستقرة (`Rollback Tag`)**: `rollback-stable-lab` -> `1c56dcbf77d62b8d89863e04f215e12f162e9555`
-- **الحصيلة النهائية الموحدة للاختبارات المنفذة على الالتزام `25131918a981`**:
-  - `MERSAD AI selftest.py` (الوضع القياسي): **`232 / 232 PASS`** (`0 SKIP, 0 FAIL` — السجل: `reports_and_logs/logs/05_preview01_ai_selftest_std_232_pass.log`).
-  - `MERSAD AI selftest.py` (`MERSAD_BLOCK_SKLEARN=1`): **`232 / 232 PASS`** (`0 SKIP, 0 FAIL` — السجل: `reports_and_logs/logs/06_preview01_ai_selftest_nosklearn_232_pass.log`).
-  - `MERSAD AI verify_integrity.py`: **`18 / 18 PASS`** (`0 FAIL`).
-  - `MERSAD LAB test_lab.py`: **`20 / 20 PASS`** (`0 FAIL`).
-  - `Integration Suite (integration/test_ai_lab_integration.py)`: **`12 PASS, 0 FAIL, 2 NOT_TESTED` (الإجمالي: `14` فحصاً)**.
+  - **الفرع المعتمد (`git bundle list-heads`)**: `fix/preview-0.1-postbuild-42273598736` @ **`748ac0158761812a6fff63ff6fe626b9df8c252b`** (`HEAD`)
+  - **إثبات وجود الالتزام (`git cat-file -e 748ac0158761812a6fff63ff6fe626b9df8c252b^{commit}`)**: **`OK (exit code 0)`**
+  - **مطابقة الحزمة المصدرية (`MERSAD_LAB_Preview_0.1_Portable_Source.zip`)**: **`14 / 14 MATCH` (`100% Byte-for-Byte`)**
+  - **التزام أساس فرع الإصدار (`release/mersad-preview-0.1`)**: `e9284356f4d1a8205946d5893121c6f8a2f22012`
+  - **نقطة الرجوع المستقرة (`Rollback Tag` & `main`)**: `rollback-stable-lab` -> `1c56dcbf77d62b8d89863e04f215e12f162e9555`
+- **الحصيلة النهائية الموحدة للاختبارات المنفذة فعلياً على الالتزام `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` و`748ac0158761812a6fff63ff6fe626b9df8c252b`**:
+  - `MERSAD AI selftest.py` (الوضع القياسي): **`234 / 234 PASS`** (`0 SKIP, 0 FAIL` — السجل: `reports_and_logs/logs/05_preview01_ai_selftest_std_234_pass.log`).
+  - `MERSAD AI selftest.py` (`MERSAD_BLOCK_SKLEARN=1`): **`234 / 234 PASS`** (`0 SKIP, 0 FAIL` — السجل: `reports_and_logs/logs/06_preview01_ai_selftest_nosklearn_234_pass.log`).
+  - `MERSAD AI verify_integrity.py`: **`19 / 19 PASS`** (`0 FAIL` — السجل: `reports_and_logs/logs/08_preview01_ai_verify_integrity.log`).
+  - `MERSAD LAB test_lab.py`: **`20 / 20 PASS`** (`0 FAIL` — السجل: `reports_and_logs/logs/09_preview01_lab_20_checks_pass.log`).
+  - `Integration Suite (integration/test_ai_lab_integration.py)`: **`13 PASS, 0 FAIL, 2 NOT_TESTED` (الإجمالي: `15` فحصاً — السجل: `reports_and_logs/logs/10_preview01_ai_lab_integration_real_engine.log`)**.
+  - `Safe Benchmark Non-Destructive Verifier (tools/prepare_safe_eval_benchmarks.py --verify)`: **`23 / 23 PASS`** (`18` صورة + `5` ملفات JSON مرجعية، وضع قراءة فقط غير تدميري — السجل: `reports_and_logs/logs/19_safe_eval_benchmarks_verify.json`).
+  - `Deployment & Provenance Self-Test (tools/deploy_and_run_github_actions.py --self-test)`: **`21 / 21 PASS`** (السجل: `reports_and_logs/logs/15_github_actions_deployment_attempt.log`).
 
 
-## مطابقة وتوحيد أرقام الاختبارات وسجلات التنفيذ (`Test Report Reconciliation — Final Code Commit 25131918a981`)
+## مطابقة وتوحيد مصدر الحقيقة وأرقام الاختبارات وسلسلة الالتزامات (`Forensic Source-of-Truth & Test Report Reconciliation`)
 
-تم توحيد جميع التقارير والملفات والسجلات على أرقام التنفيذ الفعلية للالتزام النهائي **`25131918a981ac2ac37923d4c738d9f93cdcbc5b`** (`v0.1.0-preview-code`)، مع توثيق الأرقام السابقة (`136`، `201`، `225`، `230`، `231`، و`7+1`) باعتبارها **مراحل تاريخية سابقة فقط (`Historical Progression`)** وليست النتائج الحالية:
+تم توحيد جميع الحزم المصدرية (`MERSAD_AI_Preview_0.1_Portable_Source.zip` و`MERSAD_LAB_Preview_0.1_Portable_Source.zip`) وحزمتي Git الجنائيتين (`mersad_preview_0_1_verifiable_history.bundle` و`mersad_lab_preview_0_1_verifiable_history.bundle`) والتقارير وسكربتات النشر على فرع الإصلاح المعتمد **`fix/preview-0.1-postbuild-42273598736`**، مع الفصل الصارم والدقيق بين الالتزامات والمراحل التاريخية:
 
-### 1. التسلسل التاريخي لتطور اختبارات `MERSAD AI` (`selftest.py`) حتى النتيجة الحالية المعتمدة (**`232 / 232 PASS`**)
+### 1. سلسلة الالتزامات الجنائية الموثقة ونسب الإصلاحات (`Exact Commit Lineage & Attribution — BUG-01..BUG-34`)
+
+> **قاعدة الفصل الجنائي الصارم بين التزامات Git (`Committed Git Tree`) وطبقة مخرجات الإصدار التوليدية (`Post-Commit Release Artifacts Layer — BUG-33 & BUG-34`)**:
+> تلتزم جميع تقارير وقوائم هذا الإصدار بعدم نسب أي تعديل إلى رقم التزام (`Commit SHA`) إلا إذا كان موجوداً فعلياً داخل شجرة ذلك الالتزام (`git show <SHA>`). وعليه، فإن التزام الكود والاختبارات والوثائق الموحد على رأس الفرع **`fix/preview-0.1-postbuild-42273598736`** (`HEAD` — `fix(preview): include lifecycle test and sync lab engine for Windows CI` المبني مباشرةً فوق `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`) يضم فعلياً في شجرة Git: (1) ملف اختبار دورة الحياة المستقل `integration/test_main_entrypoint_dynamic_camera_lifecycle.py` المستدعى في السطر 207 من الـ Workflow، (2) النسخة المزامنة بايت-ببايت من `MERSAD_LAB_Preview_0.1/sim_engine.py` المطابقة لالتزام المختبر `748ac0158761812a6fff63ff6fe626b9df8c252b`، (3) سكربتات النشر المعتمدة على التحقق من السلالة (`ancestry verification`)، و(4) الوثائق الموحدة (`BUG-01..BUG-34`). أما القوائم التوليدية وحزمة Git المحدثة والأرشيف النهائي (`MANIFEST.json`, `SOURCE_TREE_MANIFEST.json`, `BUNDLE_MANIFEST.json`, `SHA256SUMS.txt`, `mersad_preview_0_1_verifiable_history.bundle`, `MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip`) فتُنتج بعد إنشاء الالتزام وتُصنف صراحةً كـ **طبقة مخرجات الإصدار التوليدية (`Post-Commit Generated Release Artifacts Layer`)** لمنع أي تحقق دائري للبصمات.
+
+| المستودع / الطبقة | الفرع / الوسم (`Branch / Tag / Layer`) | المرجع / رقم الالتزام (`Commit SHA`) | الإصلاحات المنفذة فعلياً في هذا الالتزام / الطبقة | حالة المطابقة والتحقق |
+| :--- | :--- | :--- | :--- | :--- |
+| **طبقة مخرجات الإصدار التوليدية (`Post-Commit Generated Release Artifacts Layer`)** | فوق `HEAD` للفرع `fix/preview-0.1-postbuild-42273598736` (تُولَّد بعد إنشاء الالتزام لمنع التضمين الدائري للبصمة) | `MANIFEST.json`, `SOURCE_TREE_MANIFEST.json`, `BUNDLE_MANIFEST.json`, `SHA256SUMS.txt`, `mersad_preview_0_1_verifiable_history.bundle`, `MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip` | توليد حزمة تاريخ Git المحدثة وقوائم البصمات الأربع والأرشيف النهائي ومزامنة النسخ المنفصلة بايت-ببايت بعد إتمام التزام `HEAD` مباشرةً. | **`171 / 171 MATCH`** (`0 missing`, `0 hash mismatches`) |
+| **`MERSAD AI` (`Git HEAD — Windows CI Preflight Ready`)** | **`fix/preview-0.1-postbuild-42273598736`** (`HEAD` & `v0.1.2-windows-ci-preflight-ready`) | **التزام `HEAD` المباشر فوق `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** (`fix(preview): include lifecycle test and sync lab engine for Windows CI`) | **`BUG-34` + توحيد وثائق `BUG-28..33` داخل Git**: إضافة `integration/test_main_entrypoint_dynamic_camera_lifecycle.py` (`baba0f01...`) إلى شجرة Git، ومزامنة `MERSAD_LAB_Preview_0.1/sim_engine.py` (`4a073153...`) بايت-ببايت مع التزام المختبر `748ac0158761`، وتحديث سكربتات النشر للتحقق من السلالة (`git merge-base --is-ancestor edaf651321ec HEAD`)، وتضمين الوثائق الموحدة (`BUG-01..BUG-34`). | **`16 / 16 Workflow Files Present in Git Commit`** + **`58 / 58 AI Source Match`** |
+| **`MERSAD AI` (`Runtime Code Commit`)** | `fix/preview-0.1-postbuild-42273598736` (`v0.1.1-postbuild-reconciled-code` & `audit-checkpoint-edaf6513`) | **`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5`** | **`BUG-27`** (فوق `BUG-01..26`): إصلاح دورة حياة الكاميرا الديناميكية عند تشغيل `MERSAD AI` عبر نقطة الدخول الحقيقية `main()` (`_MainLoopRuntimeController`، وتسجيل `_ACTIVE_ENGINE_CONTROLLER` قبل `start_server()`، وعزل `cam_stop_ev` لكل كاميرا — **`10/10 PASS`**)، وإضافة الاختبار `#234` (`PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE` — **`234 / 234 PASS`**) والسيناريو `INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` (**`13 PASS, 0 FAIL, 2 NOT_TESTED`**). | **`58 / 58 MATCH` (`100% Byte-for-Byte`)** مع `MERSAD_AI_Preview_0.1_Portable_Source.zip` |
+| **`MERSAD AI`** | `fix/preview-0.1-postbuild-42273598736` (`audit-checkpoint-7f35cb10`) | `7f35cb1007a229a72ac0cd1be61fd5a81eb891bd` | **`BUG-23`..`BUG-26`** (فوق `BUG-19..22`): مزامنة جميع ملفات `MERSAD_AI_Preview_0.1/` الـ 58 مع شجرة Git، وفصل `--verify` القرائي غير التدميري عن `--generate` في `prepare_safe_eval_benchmarks.py` (`BUG-25`)، وتحديث استهداف النشر (`BUG-24`)، وإضافة الاختبار `#233` (`PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY` — **`233 / 233 PASS` تاريخي**). | نقطة الرجوع الموحدة ما قبل `BUG-27` (`audit-checkpoint-7f35cb10`) |
+| **`MERSAD AI`** | `fix/preview-0.1-postbuild-42273598736` (`audit-checkpoint-421ec318` / `audit-checkpoint-d965d713`) | `421ec3189fb6f569023c2a86e3f818bbf9ad1860` (كود: `d965d71317e3506e5dce9d316dc81cb8ae45e43b`) | **`BUG-19`..`BUG-22`**: إصلاحات ما بعد التشغيل السحابي `Run 42273598736` (`Tesseract` CLI TSV fallback، وتطبيع رموز المحافظات اللاتينية `_LATIN_GOV_TO_AR` في `registry.py`، وإنشاء `models/eval_benchmarks/`، وفصل `smoke_inference_status` عن `ground_truth_acceptance_status`). | سلف مباشر للالتزام `7f35cb1007a2` |
+| **`MERSAD AI`** | `release/mersad-preview-0.1` (`v0.1.0-preview-code`) | `2c22280d84a5fcb7b709075f73b3073bcef0aff2` (كود: `25131918a981ac2ac37923d4c738d9f93cdcbc5b`) | **`BUG-01`..`BUG-11`** (في التزام الكود `25131918a981` — **`232 / 232 PASS` تاريخي**) + **`BUG-12`..`BUG-18`** (في التزام `2c22280d84a5`). | نقطة الأساس لفرع الإصدار قبل `Run 42273598736` |
+| **`MERSAD AI`** | `main` (محفوظ دون أي تعديل) | `25c9e5bba30dc8f921675e12c23a53571be895c1` | الأرشيف المصدري الأصلي غير الممسوس (`Untouched Baseline`). | محفوظ `100%` |
+| **`MERSAD LAB` (`Git HEAD`)** | **`fix/preview-0.1-postbuild-42273598736`** (`HEAD`) | **`748ac0158761812a6fff63ff6fe626b9df8c252b`** | **`BUG-22`**: تحديث `VirtualCamera.info()` في `sim_engine.py` بوسم `SYNTHETIC_2D_GEOMETRIC_INTEGRATION_STREAM` و`valid_for_photorealistic_dl_accuracy_benchmark=False` (**`20 / 20 PASS`**). | **`14 / 14 MATCH` (`100% Byte-for-Byte`)** مع `MERSAD_LAB_Preview_0.1_Portable_Source.zip` ومُثبت بـ `git cat-file -e` و`git bundle list-heads` |
+| **`MERSAD LAB`** | `release/mersad-preview-0.1` | `e9284356f4d1a8205946d5893121c6f8a2f22012` | التزام الأساس لفرع الإصدار (`Clean-Room LAB 1.0`). | سلف مباشر لـ `748ac0158761` |
+| **`MERSAD LAB`** | `main` & `rollback-stable-lab` | `1c56dcbf77d62b8d89863e04f215e12f162e9555` | نقطة الرجوع المستقرة للمختبر (`Untouched Baseline`). | محفوظ `100%` |
+
+### 2. التسلسل التاريخي لتطور اختبارات `MERSAD AI` (`selftest.py`) حتى النتيجة الحالية المعتمدة (**`234 / 234 PASS`**)
 
 | التصنيف الزمني | المرحلة / الالتزام (`Commit SHA`) | عدد الاختبارات في `selftest.py` | الاختبارات المضافة في تلك المرحلة | ملف السجل المرجعي الموثق |
 | :--- | :--- | :--- | :--- | :--- |
 | **تاريخي (Historical)** | `PATCHED_SOURCE` (`3bf86f1eee49b351ac1dcf4e630c149e7d38b777`) | `136 PASS` (`0 FAIL`) | اختبارات الجولات `Rounds 1–5` + `12` اختباراً (`V7-*`) لبناء Windows | `reports_and_logs/logs/01_patched_source_selftest_std_136_pass.log` |
 | **تاريخي (Historical)** | `Stage 15 Baseline` (`64b0dde9013c973261da37e21861c642679cf5eb`) | `201 PASS` (`0 FAIL`) | اختبارات المراحل `Stage 1` إلى `Stage 15` (`AUDIT-001..012`, `GAP-01..18`) | `reports_and_logs/logs/03_stage15_selftest_std_201_pass.log` |
-| **تاريخي (Historical)** | `Preview 0.1 Initial Merge` (`9491bcd0` / `49e400c0`) | `225 PASS` (`0 FAIL`) | دمج السلالتين + `12` اختباراً جديداً (`PREVIEW01-*` رقم 13 إلى 24) | مرحلة الدمج الأولي قبل إغلاق عيوب الإصدار |
+| **تاريخي (Historical)** | `Preview 0.1 Initial Merge` (`9491bcd0` / `49e400c0`) | `225 PASS` (`0 FAIL`) | دمج السلالتين + `12` اختباراً جديداً (`PREVIEW01-*` رقم 13 إلى 24) | مرحلة الدمج الأولي (`rollback-stable-9491bcd`) |
 | **تاريخي (Historical)** | `Preview 0.1 Remediation Round 1` (`4ffc147`) | `230 PASS` (`0 FAIL`) | إضافة `5` اختبارات انحدار (`#226..#230`) لإغلاق `BUG-01` إلى `BUG-06` | مرحلة الإصلاح الأولى |
 | **تاريخي (Historical)** | `Preview 0.1 Remediation Round 2` (`f66ecea30069`) | `231 PASS` (`0 FAIL`) | إضافة الاختبار `#231` (`PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE`) لإغلاق `BUG-07` | نقطة الرجوع `rollback-preview01-f66ecea` |
-| **النتيجة الحالية المعتمدة (Current Final)** | **`Final Release Commit` (`25131918a981ac2ac37923d4c738d9f93cdcbc5b`)** | **`232 PASS`** (`0 SKIP, 0 FAIL`) | إضافة الاختبار `#232` (`PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP`) لإغلاق `BUG-09..11` (بوابات الدقة المرجعية للنماذج الأربعة + تثبيت `Inno Setup` و`CPU PyTorch` في CI) | `reports_and_logs/mersad_ai_selftest_log.txt` & `reports_and_logs/logs/05_preview01_ai_selftest_std_232_pass.log` |
+| **تاريخي (Historical)** | `Release Branch Code Commit` (`25131918a981`) | `232 PASS` (`0 FAIL`) | إضافة الاختبار `#232` (`PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP`) لإغلاق `BUG-09..11` على الفرع `release/mersad-preview-0.1` | نقطة الرجوع `v0.1.0-preview-code` |
+| **تاريخي (Historical)** | `Post-Build Reconciled Commit` (`7f35cb1007a229a72ac0cd1be61fd5a81eb891bd`) | `233 PASS` (`0 FAIL`) | توسيع `#232` وإضافة الاختبار `#233` (`PREVIEW01-SAFE-EVAL-BENCHMARKS-AND-NON-DESTRUCTIVE-VERIFY`) لإغلاق `BUG-19..26` | نقطة الرجوع `audit-checkpoint-7f35cb10` |
+| **النتيجة الحالية المعتمدة (Current Final)** | **`Final Runtime Audit Commit` (`edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` على `fix/preview-0.1-postbuild-42273598736`)** | **`234 PASS`** (`0 SKIP, 0 FAIL`) | إضافة الاختبار **`#234`** (`PREVIEW01-MAIN-ENTRYPOINT-DYNAMIC-CAMERA-LIFECYCLE`) لإغلاق **`BUG-27`** والتحقق من دورة حياة الكاميرا الديناميكية عبر نقطة الدخول الحقيقية `main()` (10 خطوات كاملة) | `reports_and_logs/mersad_ai_selftest_log.txt`, `reports_and_logs/logs/05_preview01_ai_selftest_std_234_pass.log` & `logs/05_preview01_ai_selftest_std_234_pass.log` |
 
-### 2. التسلسل التاريخي لتوحيد اختبارات التكامل (`integration/test_ai_lab_integration.py`) حتى النتيجة الحالية المعتمدة (**`12 PASS + 2 NOT_TESTED = 14 فحصاً`**)
+### 3. التسلسل التاريخي لتوحيد اختبارات التكامل (`integration/test_ai_lab_integration.py`) حتى النتيجة الحالية المعتمدة (**`13 PASS + 2 NOT_TESTED = 15 فحصاً`**)
 
 | التصنيف الزمني | النسخة / السكربت | الحصيلة المسجلة | التفسير الهندسي الدقيق | ملف السجل المرجعي الموثق |
 | :--- | :--- | :--- | :--- | :--- |
-| **تاريخي (Historical)** | النسخة المختصرة السابقة | `7 PASS + 1 NOT_TESTED` (`8 فحوصات`) | كانت تختزل خطوات التكامل في `7` فحوصات مجمعة (`INT-E2E-01..07`) + بوابة النماذج الأربعة (`PHASE4-GATE-01`)، بينما كانت السيناريوهات الـ 12 (`INT-SCEN-01..12`) في جدول منفصل (`12/12 PASS`). | أُلغي الاختزال ووُحّد في السكربت القياسي أدناه |
-| **النتيجة الحالية المعتمدة (Current Final)** | **`integration/test_ai_lab_integration.py` (`25131918a981`)** | **`12 PASS, 0 FAIL, 2 NOT_TESTED` (`14 فحصاً`)** | ينفذ ويخرج في تشغيل واحد جميع السيناريوهات الـ 12 (`INT-SCEN-01` إلى `INT-SCEN-12` شاملةً `INT-E2E-01..07` = **`12/12 PASS`**) + بوابتي البيئة والعتاد (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة = **`NOT_TESTED`**، و`INT-HW-RTSP-USB` للكاميرات الفيزيائية = **`NOT_TESTED`**). | `reports_and_logs/ai_lab_integration_log.txt` & `reports_and_logs/ai_lab_integration_results.json` |
-
+| **تاريخي (Historical)** | النسخة المختصرة السابقة | `7 PASS + 1 NOT_TESTED` (`8 فحوصات`) | كانت تختزل خطوات التكامل في `7` فحوصات مجمعة (`INT-E2E-01..07`) + بوابة النماذج الأربعة (`PHASE4-GATE-01`). | أُلغي الاختزال ووُحّد في السكربت القياسي أدناه |
+| **تاريخي (Historical)** | نسخة السيناريوهات الـ 12 (`7f35cb1007a2`) | `12 PASS + 2 NOT_TESTED` (`14 فحصاً`) | شملت السيناريوهات `INT-SCEN-01..12` عبر `MersadEngineController` + بوابتي `PHASE4-GATE-01` و`INT-HW-RTSP-USB`. | نقطة الرجوع `audit-checkpoint-7f35cb10` |
+| **النتيجة الحالية المعتمدة (Current Final)** | **`integration/test_ai_lab_integration.py` (`edaf651321ec` & `748ac0158761`)** | **`13 PASS, 0 FAIL, 2 NOT_TESTED` (`15 فحصاً`)** | ينفذ ويخرج في تشغيل واحد جميع السيناريوهات الـ 13 (`INT-SCEN-01` إلى `INT-SCEN-13-MAIN-ENTRYPOINT-LIFECYCLE` شاملةً نقطة الدخول الحقيقية `main()` = **`13/13 PASS`**) + بوابتي البيئة والعتاد (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة = **`NOT_TESTED`**، و`INT-HW-RTSP-USB` للكاميرات الفيزيائية = **`NOT_TESTED`**). | `reports_and_logs/ai_lab_integration_log.txt` & `reports_and_logs/ai_lab_integration_results.json` |
 
 # التقرير الجنائي والأمني الشامل لمشروعي MERSAD AI و MERSAD LAB (`subagent1_audit_and_security.md`)
 
@@ -58,9 +87,9 @@
 5. `stage15_local_repo/` (شجرة التطوير المحلية للمرحلة الخامسة عشرة `Stage 15`)
 
 ### الحصيلة الرقمية للتحقق والتنفيذ الحي في هذه الجولة:
-- **اختبارات الوحدة والأنظمة الفرعية لـ `MERSAD AI` (`selftest.py`)**: تم التشغيل الحي واجتياز **`232 / 232 PASS`** (`0 SKIP, 0 FAIL`) في الوضع القياسي ووضع تعطيل `scikit-learn` (`MERSAD_BLOCK_SKLEARN=1`).
+- **اختبارات الوحدة والأنظمة الفرعية لـ `MERSAD AI` (`selftest.py`)**: تم التشغيل الحي واجتياز **`234 / 234 PASS`** (`0 SKIP, 0 FAIL`) في الوضع القياسي ووضع تعطيل `scikit-learn` (`MERSAD_BLOCK_SKLEARN=1`).
 - **اختبارات الوظائف والأمان والضغط لـ `MERSAD LAB 1.0` (`test_lab.py`)**: تم التشغيل الحي واجتياز **`20 / 20 PASS`** (`8` اختبارات وظيفية `LAB-01..08` + `12` اختباراً أمنياً وتشغيلياً `LAB-SEC-01..12`).
-- **اختبارات التكامل الفعلي غير المحاكى (`integration/test_ai_lab_integration.py`)**: تم التشغيل الحي واجتياز **`12 / 12 PASS`** لسيناريوهات التكامل الوظيفية (`INT-SCEN-01..12` شاملةً `INT-E2E-01..07` على المحرك الحي `MersadEngineController` + `Tesseract 5 LSTM` + `SQLite` + `HMAC-SHA256`) مع تسجيل **`2 NOT_TESTED`** (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة و`INT-HW-RTSP-USB` للكاميرات الفيزيائية) في الالتزام النهائي.
+- **اختبارات التكامل الفعلي غير المحاكى (`integration/test_ai_lab_integration.py`)**: تم التشغيل الحي واجتياز **`12 / 12 PASS`** لسيناريوهات التكامل الوظيفية (`INT-SCEN-01..12` شاملةً `INT-E2E-01..07` على المحرك الحي `MersadEngineController` + `Tesseract 5 LSTM` + `SQLite` + `HMAC-SHA256 Audit Chain`) مع تسجيل **`2 NOT_TESTED`** (`PHASE4-GATE-01` للنماذج الأربعة الثقيلة و`INT-HW-RTSP-USB` للكاميرات الفيزيائية) في الالتزام النهائي (`15` فحصاً إجمالاً).
 - **الاختبارات الأمنية الاختراقية الحية المستقلة (`SEC-AUDIT-01..10`)**: تم بناء وتشغيل `10` اختبارات أمنية حية تغطي كافة المحاور العشرة المطلوبة، واجتازت جميعها بنسبة **`10 / 10 PASS`**، مع فحص ساكن (`AST Static Analysis`) لـ **`203` استعلامات `SQLite`** عبر جميع وحدات الإنتاج وإثبات خلوها التام من ثغرات `SQL Injection`.
 
 ---
@@ -71,22 +100,22 @@
 
 | الملف الأساسي | `FINAL_PREVIEW_0.1` (`MERSAD_AI_Preview_0.1`) | `STAGE15_BACKUP` (`audit_work/stage15_zip`) | `CB99_REPO` (`stage15_local_repo`) | `PATCHED_V7_1` (`audit_work/patched_inner`) | النتيجة الجنائية وحالة الانحدار بين المسارات |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `mersad_live.py` | `b20f20f073` (`305,839 B`) | `0c96de2b3d` (`269,647 B`) | `0c96de2b3d` (`269,647 B`) | `2cef6a21ca` (`136,997 B`) | تطابق `CB99_REPO` مع `STAGE15_BACKUP`؛ كلاهما افتقر إلى تحديثات `PATCHED_V7_1` (`YOLO_AUTOINSTALL=false` وبصمات HuggingFace لـ `yunet/sface`)، وتم دمج السلالتين بالكامل في `FINAL_PREVIEW_0.1`. |
+| `mersad_live.py` | `139bec755f` (`319,443 B`) | `0c96de2b3d` (`269,647 B`) | `0c96de2b3d` (`269,647 B`) | `2cef6a21ca` (`136,997 B`) | تطابق `CB99_REPO` مع `STAGE15_BACKUP`؛ كلاهما افتقر إلى تحديثات `PATCHED_V7_1` (`YOLO_AUTOINSTALL=false` وبصمات HuggingFace لـ `yunet/sface`)، وتم دمج السلالتين بالكامل في `FINAL_PREVIEW_0.1`. |
 | `server.py` | `49e7eac524` (`24,863 B`) | `0e28ed49ec` (`23,025 B`) | `0e28ed49ec` (`23,025 B`) | `18b8141dbc` (`12,063 B`) | أضافت `FINAL_PREVIEW_0.1` حظر `Origin: null` وطلبات `text/plain` على `/api/import*` وسقف `max_mjpeg_clients=16` ومسارات `/api/cameras*`. |
-| `registry.py` | `64f155dbea` (`73,959 B`) | `827c093510` (`64,533 B`) | `827c093510` (`64,533 B`) | `1419c9864c` (`61,739 B`) | كان `CB99_REPO` يفتقر لدوال `_set_windows_private_acl` و`_windows_acl_is_private` الموجودة في `PATCHED_V7_1`؛ أُعيد دمجها في `FINAL_PREVIEW_0.1` مع إصلاح `lookup_vehicle` (`ocr_fixed`) وسقف `10,000` صف لـ `.xlsx`. |
+| `registry.py` | `2ae76ba014` (`74,508 B`) | `827c093510` (`64,533 B`) | `827c093510` (`64,533 B`) | `1419c9864c` (`61,739 B`) | كان `CB99_REPO` يفتقر لدوال `_set_windows_private_acl` و`_windows_acl_is_private` الموجودة في `PATCHED_V7_1`؛ أُعيد دمجها في `FINAL_PREVIEW_0.1` مع إصلاح `lookup_vehicle` (`ocr_fixed`) وسقف `10,000` صف لـ `.xlsx`. |
 | `notify.py` | `c7f2645e29` (`15,114 B`) | `c1fbfc031a` (`12,674 B`) | `c1fbfc031a` (`12,674 B`) | `c7f2645e29` (`15,114 B`) | كان `CB99_REPO` يفتقر لقفل `CreateSemaphoreW` على Windows ودالة `wait_listener_stopped()`؛ استُعيدت النسخة الكاملة `c7f2645e29` في `FINAL_PREVIEW_0.1`. |
 | `prefetch.py` | `13bfd3de08` (`4,904 B`) | `1adff5b830` (`4,988 B`) | `1adff5b830` (`4,988 B`) | `8c0d9f4193` (`4,509 B`) | في `CB99_REPO` لم يكن `prefetch.py` يتحقق من `EASYOCR_SHA256` أو البصمة المثبتة `MODEL_SHA256["yolov8n.pt"]`؛ تم تصحيحه في `FINAL_PREVIEW_0.1`. |
 | `insights.py` | `5b030c839f` (`100,249 B`) | `acca77a362` (`99,971 B`) | `acca77a362` (`99,971 B`) | `553938a07b` (`36,786 B`) | أُصلح تحيز الترتيب الرقمي للكاميرات داخل `feat()` (السطر `709`) في `FINAL_PREVIEW_0.1`. |
 | `camera_history.py` | `89a03408ed` (`11,699 B`) | `26036b72a4` (`11,618 B`) | `26036b72a4` (`11,618 B`) | `c0f9f22540` (`10,329 B`) | أُضيف قفل `with _LOCK:` حول نسخ `_CURRENT` في `build_report()` داخل `FINAL_PREVIEW_0.1`. |
-| `selftest.py` | `1cb93c1c08` (`309,906 B`) | `64651a2b6b` (`286,317 B`) | `3764727dc5` (`285,427 B`) | `d221d568e3` (`125,848 B`) | يجمع `FINAL_PREVIEW_0.1` كافة الاختبارات (`232 PASS` في الالتزام النهائي بعد أن كانت `225` في الدمج الأولي و`201` في `Stage 15` و`136` في `PATCHED_V7_1`. |
+| `selftest.py` | `d8278be4f8` (`328,813 B`) | `64651a2b6b` (`286,317 B`) | `3764727dc5` (`285,427 B`) | `d221d568e3` (`125,848 B`) | يجمع `FINAL_PREVIEW_0.1` كافة الاختبارات (`234 PASS` في الالتزام النهائي `edaf651321ec`). |
 
 ---
 
-## 3. المراجعة التفصيلية لجميع تقارير التدقيق والإصلاحات السابقة (البند الأول)
+## 3. Historical Findings (Closed in Preview 0.1) — المراجعة التفصيلية لنتائج التدقيق التاريخية والعيوب التي أُغلقت فعلياً
 
 ### أولاً: التحقق من مراحل التطوير والتدقيق (`Stage 1` إلى `Stage 15`)
 
-| رقم المرحلة / البند | وصف المشكلة أو المتطلب الهندسي | هل تم إصلاحها فعلياً؟ | الملف والسطر الذي يحتوي على الإصلاح (في `MERSAD_AI_Preview_0.1`) | الاختبار الذي يثبت نجاح الإصلاح | هل عادت المشكلة مجدداً؟ | الإجراء المطلوب |
+| رقم المرحلة / البند | وصف المشكلة أو المتطلب الهندسي | هل تم إصلاحها فعلياً؟ | الملف والسطر الذي يحتوي على الإصلاح (في `MERSAD_AI_Preview_0.1`) | الاختبار الذي يثبت نجاح الإصلاح | هل عادت المشكلة مجدداً؟ | حالة الإغلاق النهائي والملاحظات التشغيلية (`Closure Status`) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Stage 1** (`STAGE1-GAP01, GAP02, GAP03, GAP06`) | التحقق من توافق حزم `pip` واستبدال `opencv-python-headless` بـ `opencv-python==4.11.0.86`، واسترجاع `WAL -> DELETE` الآمن في `SQLite` مع حظر `MEMORY/OFF`، وعزل تهيئة وقت التشغيل `init_runtime_env()` عن الاستيراد، وحماية تزامن `insights.py` بـ `run_atomic_tx`. | **نعم (تم الإصلاح والتحقق الفعلي)** | `check_install.py:669-735` (`verify_pip_deps`)، `registry.py:69-118, 411-438, 734-805` (`configure_sqlite_journal_mode`, `run_atomic_tx`, `migrate_db`)، `mersad_live.py:584-648` (`init_runtime_env`, `_should_auto_init_runtime`) | `STAGE1-GAP01`, `STAGE1-GAP02`, `STAGE1-GAP03`, `STAGE1-GAP06` (`selftest.py:1873-2135`) — **PASS** | **لا** (مُحصّنة في `FINAL_PREVIEW_0.1` وفي `CB99_REPO`) | لا يوجد إجراء برمجي إضافي؛ الحفاظ على بوابة `--verify-pip-deps` في `setup.bat` و`BUILD_EXE.bat`. |
 | **Stage 2** (`STAGE2-GAP04, GAP05, GAP07`) | عزل سجلات المحاكاة `src='demo'` عن إحصاءات وتنبؤات ومسارات الرصد الحي افتراضياً (`include_demo=False`)، وترحيل جدول `camera_links` (الترحيل رقم 6) مع عمود `via` وبناء الطوبولوجيا الحتمية، وإضافة فحص `--camera` مع ضمان `cap.release()` وحجب كلمات مرور RTSP. | **نعم (تم الإصلاح والتحقق الفعلي)** | `insights.py:144-235, 804-845` (`configure_topology`, `_fetch_sightings`)، `registry.py:642-672, 995-1035` (`camera_links` migration 6)، `check_install.py:396-495, 736` (`check_camera_source`) | `STAGE2-GAP04`, `STAGE2-GAP05-MIGRATION`, `STAGE2-GAP05-TOPOLOGY`, `STAGE2-GAP07` (`selftest.py:2146-2392`) — **PASS** | **لا** | لا يوجد إجراء إضافي. |
@@ -108,7 +137,7 @@
 
 ### ثانياً: التحقق الفعلي من بنود التدقيق (`AUDIT-001` إلى `AUDIT-012`)
 
-| رقم المشكلة | وصف المشكلة التفصيلي | هل تم إصلاحها فعلياً؟ | الملف والسطر الذي يحتوي على الإصلاح (في `MERSAD_AI_Preview_0.1`) | الاختبار الذي يثبت نجاح الإصلاح | هل عادت المشكلة مجدداً؟ | الإجراء المطلوب |
+| رقم المشكلة | وصف المشكلة التفصيلي | هل تم إصلاحها فعلياً؟ | الملف والسطر الذي يحتوي على الإصلاح (في `MERSAD_AI_Preview_0.1`) | الاختبار الذي يثبت نجاح الإصلاح | هل عادت المشكلة مجدداً؟ | حالة الإغلاق النهائي والملاحظات التشغيلية (`Closure Status`) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`AUDIT-001`** | خطر تنفيذ كود عشوائي (`Pickle RCE`) عند تحميل ملفات أوزان `.pt` مخصصة أو معدلة، أو تحميل نماذج من مسارات شبكية `UNC` أو روابط رمزية `Symlinks` أو خارج مجلد `models/` بدون توقيع موثوق. | **نعم** | `mersad_live.py:1795-1908` (`_scan_pt_pickle_safety`: فحص بايت كود `pickle` عبر `pickletools.genops` بحظر `REDUCE/BUILD/INST/OBJ` غير المسموحة وفرض قائمة سماح صارمة للوحدات)، `mersad_live.py:1911-2075` (`models/.trusted_models.json` الموقع بـ `HMAC-SHA256`)، `mersad_live.py:4637-4770` (`validate_plate_model_path`, `load_verified_yolo_model`) | `STAGE12-AUDIT001-PICKLE-RCE-BLOCK` (`selftest.py:3940-4019`) و`STAGE15-GAP01/GAP02` (`selftest.py:4721-4762`) — **PASS** | **لا** | لا يوجد إجراء إضافي؛ الحفاظ على `enforce_trusted=True` عند التشغيل. |
 | **`AUDIT-002`** | ثغرة اختراق المسارات (`Path Traversal`) أو استخدام `Symlinks` عبر حقل `filename` داخل `ground_truth.csv` أو`ground_truth.json` أثناء فحص أو تقييم مجموعات بيانات اللوحات. | **نعم** | `mersad_live.py:4775-4818` (`_resolve_safe_dataset_image`: يرفض المسارات المطلقة و`..` ويفحص `os.path.islink` لكل جزء من المسار ويتحقق من `os.path.commonpath([real_base, real_candidate]) == real_base`) | `STAGE12-AUDIT002-PATH-TRAVERSAL-BLOCK` (`selftest.py:4021-4076`) و`SEC-AUDIT-05` — **PASS** | **لا** | لا يوجد إجراء إضافي. |
@@ -127,7 +156,7 @@
 
 ### ثالثاً: التحقق الفعلي من الفجوات الهندسية (`GAP-01` إلى `GAP-18`)
 
-| رقم الفجوة | وصف المشكلة التفصيلي | هل تم إصلاحها فعلياً؟ | الملف والسطر الذي يحتوي على الإصلاح (في `MERSAD_AI_Preview_0.1`) | الاختبار الذي يثبت نجاح الإصلاح | هل عادت المشكلة مجدداً؟ | الإجراء المطلوب |
+| رقم الفجوة | وصف المشكلة التفصيلي | هل تم إصلاحها فعلياً؟ | الملف والسطر الذي يحتوي على الإصلاح (في `MERSAD_AI_Preview_0.1`) | الاختبار الذي يثبت نجاح الإصلاح | هل عادت المشكلة مجدداً؟ | حالة الإغلاق النهائي والملاحظات التشغيلية (`Closure Status`) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`GAP-01`** | غياب فحص آلي لتعارضات حزم `pip` (`pip check`) والتحقق من استبدال `opencv-python-headless` بحزمة الواجهة الكاملة `opencv-python==4.11.0.86`. | **نعم** | `check_install.py:669-735` (`verify_pip_deps`, `--verify-pip-deps`)، `setup.bat:79`، `BUILD_EXE.bat:39` | `STAGE1-GAP01` (`selftest.py:2076-2135`) — **PASS** | **لا** | لا يوجد إجراء إضافي. |
 | **`GAP-02`** | عدم الفصل في `migrate_db()` بين فشل وضع `WAL` على أنظمة الملفات غير الداعمة (الذي يتطلب تراجعاً آمناً ومتحققاً منه إلى `DELETE`) وبين أخطاء امتلاء القرص/القراءة فقط الحرجة، وعدم حظر وضعي `MEMORY` و`OFF`. | **نعم** | `registry.py:69-118, 623-626, 734-805` (`configure_sqlite_journal_mode`, `_is_critical_storage_error`, `migrate_db`) | `STAGE1-GAP02` (`selftest.py:1873-1966`) و`V7-SQLITE-FALLBACK` / `V7-SQLITE-UNC` (`selftest.py:5010-5018`) — **PASS** | **لا** | لا يوجد إجراء إضافي. |
@@ -152,7 +181,7 @@
 
 ### رابعاً: التحقق من جميع الإصلاحات والالتزامات السابقة عبر الجولات (`Rounds 1–5`, `V7`, `V7.1`, `PREVIEW 0.1`)
 
-| المعرّف / الالتزام | الوصف الهندسي والأمني | هل تم إصلاحه فعلياً؟ | الملف والسطر في النسخة الموحدة (`MERSAD_PREVIEW_0.1_FINAL`) | الاختبار المثبت | هل عادت المشكلة مجدداً؟ | الإجراء المطلوب |
+| المعرّف / الالتزام | الوصف الهندسي والأمني | هل تم إصلاحه فعلياً؟ | الملف والسطر في النسخة الموحدة (`MERSAD_PREVIEW_0.1_FINAL`) | الاختبار المثبت | هل عادت المشكلة مجدداً؟ | حالة الإغلاق النهائي والملاحظات التشغيلية (`Closure Status`) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`P0-1` / `P0-C` / `REM-AI-07`** | مطابقة اللوحات اليمنية بمختلف صيغ `OCR`، وفصل اللوحات المتشابهة بالأرقام والمختلفة بأحرف المحافظة، ومنع خفض حالة مركبة `wanted` عند استيراد `CSV`، وترتيب أولويات `lookup_vehicle` في مسار `ocr_fixed`. | **نعم** | `registry.py:459-538, 1105-1166, 1284-1432` (`norm_plate`, `_up_vehicle`, `lookup_vehicle`) | `P0-1`, `P0-C`, `PREVIEW01-LOOKUP-OCR-FIXED-GOV-PRIO` (`selftest.py:239-289, 5191-5200`) — **PASS** | **لا** | لا يوجد إجراء إضافي. |
 | **`P0-A`** | العزل الصارم لهويات الأشخاص عبر `person_id` الداخلي (`persons.id`) حتى при تشابه الأسماء (`Homonymous Persons`)، واشتراط `consent=1`، وحجر السجلات الإرثية الملتبسة (`quarantined=1`). | **نعم** | `registry.py:541-620, 1118-1258` (`migrate_legacy_faces`, `_up_person`, `delete`)، `mersad_live.py:1438-1500` (`refresh_known`) | `P0-A` (7 اختبارات في `selftest.py:319, 498, 500, 1126-1185`) — **PASS** | **لا** | لا يوجد إجراء إضافي. |
@@ -226,7 +255,7 @@
 
 ### المحور 6: منع تسريب الأسرار والمفاتيح (`Secrets & Keys Leakage Protection`)
 - **التحليل البرمجي الفعلي**:
-  - **حجب الأسرار من السجلات والواجهات (`notify.py:29-48` — `_redact`)**: تعترض دالة `_redact()` أي نص قبل كتابته في `mersad.log` أو سجل التدقيق أو إرجاعه في `JSON`، وتحذف رموز بوت تيليجرام (`bot<id>:<secret>` -> `bot<REDACTED_TOKEN>`) وكلمات مرور روابط الكاميرات (`rtsp://user:pass@host` -> `rtsp://user:***@host`) ومعلمات `?token=` أو `?password=`.
+  - **حجب الأسرار من السجلات والواجهات (`notify.py:29-48` — `_redact`)**: تعترض دالة `_redact()` أي نص قبل كتابته في `mersad.log` أو سجل التدقيق أو إرجاعه في `JSON`، وتحذف رموز بوت تيليجرام (`bot<id>:<secret>` -> `bot<REDACTED_TOKEN>`) وكلمات مرور روابط الكاميرات (`rtsp://<TEST_USER>:<REDACTED_TEST_PASSWORD>@host` -> `rtsp://user:***@host`) ومعلمات `?token=` أو `?password=`.
   - **فصل الأسرار عن الإعدادات العامة (`mersad_live.py:3605-3725`)**: تُحفظ الأسرار في ملف مستقل `.mersad_secrets.json` وتُمسح تلقائياً من `mersad_config.json`. وإذا وُجد `TELEGRAM_TOKEN` في متغيرات بيئة النظام، لا يُكتب أبداً كنص صريح داخل `mersad_config.json` (`P1-G`, `P3-9`).
   - **صلاحيات الملفات الحساسة (`registry.py:209-354`)**: تُنشأ ملفات `.mersad_secrets.json` و`.mersad_hmac.key` و`models/.trusted_models.json` عبر `atomic_write_secret_bytes()` بصلاحيات `0o600` منذ لحظة فتح الواصف (`os.open(..., 0o600)`) على أنظمة `POSIX`، وعبر `PowerShell` و`icacls /inheritance:r` وقصر الصلاحية على `SID` المستخدم الحالي فقط على نظام `Windows` (`_set_windows_private_acl`).
   - **خلو المستودع من أسرار حقيقية**: تم فحص جميع ملفات المشروع وملفات `.bat` و`.yml` والتأكد من عدم وجود أي رمز `GitHub PAT` أو `Telegram Bot Token` حقيقي مدمج في الكود.
@@ -284,10 +313,10 @@
 
 ---
 
-## 5. ملخص الإجراءات المطلوبة والتوصيات الختامية
+## 5. ملخص التوصيات الختامية وحالة الاعتماد النهائي (`Final Release Recommendations`)
 
 1. **اعتماد الشجرة الموحدة `MERSAD_PREVIEW_0.1_FINAL` كمصدر وحيد (`Single Source of Truth`)**:
-   - يجب اعتماد الملفات الموجودة في `MERSAD_PREVIEW_0.1_FINAL/` (فرع الإصدار النهائي `release/mersad-preview-0.1` عند التزام الكود `25131918a981ac2ac37923d4c738d9f93cdcbc5b` للنظام الرئيسي و`e9284356f4d1a8205946d5893121c6f8a2f22012` للمختبر) وإهمال النسخة غير المدمجة في `stage15_local_repo/` لأن الأخيرة تفتقر إلى تحديثات `PATCHED_V7_1` وإصلاحات `PREVIEW 0.1` الاثني عشر.
+   - المصدر المعتمد الحالي هو الفرع `fix/preview-0.1-postbuild-42273598736` عند الالتزام النهائي `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` لمشروع `MERSAD AI` والالتزام `748ac0158761812a6fff63ff6fe626b9df8c252b` لمشروع `MERSAD LAB` (بينما يُحفظ الوسم `rollback-stable-9491bcd` كأثر رجوع تاريخي فقط ولا يُعتمد كفرع حالي).
 2. **استكمال بوابة البناء والتشغيل على نظام `Windows 10/11 x64` متصل بالإنترنت**:
    - رفع حزمة التاريخ الجنائي `reports_and_logs/mersad_preview_0_1_verifiable_history.bundle` إلى المستودع وتشغيل `BUILD_AND_VERIFY_FINAL_WINDOWS_RELEASE.bat` لتنزيل أوزان النماذج الأربعة (`yolov8n.pt`, `EasyOCR`, `yunet.onnx`, `sface.onnx`) وبناء واختبار `MERSAD_AI.exe` و`MERSAD_LAB.exe` و`MERSAD_LAB_Setup_x64.exe` فعلياً على Windows.
 3. **التحصينات الميدانية الاختيارية قبل الانتقال من `Preview` إلى `Production`**:
