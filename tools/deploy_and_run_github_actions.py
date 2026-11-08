@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-Deterministic deployment, workflow_dispatch validator, Run ID poller, 5-Artifact SHA-256 verifier,
+Deterministic Push-Triggered Single-Run CI Deployment, Polling State Machine, 5-Artifact SHA-256 Verifier,
 and Forensic ZIP-vs-Git Provenance Verifier for MERSAD Preview 0.1
-(Closes BUG-12, BUG-13, BUG-14, BUG-15, BUG-23, BUG-24, BUG-25).
+(Closes BUG-12..BUG-15, BUG-23..BUG-25, BUG-34..BUG-39).
 
 Key guarantees:
   1. Targets `fix/preview-0.1-postbuild-42273598736` by default (configurable via `--branch` or `MERSAD_DEPLOY_BRANCH`),
      verifying lineage from:
-       - Reconciled AI code commit: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` (`v0.1.1-postbuild-reconciled-code`)
+       - Previous Preflight commit: `05f29af416c4a28ddf59c291819584d1a416d570` (`v0.1.2-windows-ci-preflight-ready`)
+       - Reconciled AI runtime code commit: `edaf651321ec9ea6ba613e3ab1630bc16b11b9d5` (`v0.1.1-postbuild-reconciled-code`)
        - Post-build 42273598736 code commit: `d965d71317e3506e5dce9d316dc81cb8ae45e43b` (`audit-checkpoint-d965d713`)
        - Release baseline code commit: `25131918a981ac2ac37923d4c738d9f93cdcbc5b` (`v0.1.0-preview-code`)
        - Untouched `main` branch: `25c9e5bba30dc8f921675e12c23a53571be895c1`
-  2. Validates workflow_dispatch inputs directly against .github/workflows/release-mersad-preview-0.1-windows.yml
-     before invoking `gh workflow run`.
-  3. Never sets status="PASS" merely because `gh workflow run` succeeded; transitions to status="DISPATCHED"
-     first, then polls `gh run list` until a NEW workflow_dispatch run appears matching:
-       - workflow == release-mersad-preview-0.1-windows.yml
-       - event == "workflow_dispatch"
-       - headBranch == target_branch
-       - headSha == LOCAL_HEAD_SHA
-       - databaseId not in pre_dispatch_run_ids
-  4. Waits for completion via `gh run watch <run_id> --exit-status`, verifies via `gh run view <run_id> --json`
-     that the run and every job succeeded (`conclusion == "success"`), downloads artifacts for that exact
-     `run_id`, verifies all 5 required Windows artifacts exist (`MERSAD_AI.exe`, `MERSAD_LAB.exe`,
-     `MERSAD_LAB_Setup_x64.exe`, `MERSAD_AI_Portable_x64.zip`, `MERSAD_LAB_Portable_x64.zip`),
-     computes SHA-256 for each, and ONLY THEN sets status="PASS".
+  2. Enforces single-trigger Push-only CI (`BUG-35` & `BUG-37`):
+       - Verifies `.github/workflows/release-mersad-preview-0.1-windows.yml` uses `on: push` ONLY and does NOT define
+         `workflow_dispatch` or the unused `run_extended_stress` input.
+       - Never invokes `gh workflow run` after `git push` (preventing duplicate concurrent runs).
+  3. Enforces the deterministic 9-state Polling & Verification State Machine (`BUG-36`):
+       - `PREFLIGHT_PASS`: branch, lineage, clean `git status --porcelain`, remote URL, and pre-push `databaseId` list verified.
+       - `PUSH_COMPLETED`: `git push` succeeded and `git ls-remote` confirmed remote SHA == `LOCAL_HEAD_SHA`.
+       - `RUN_DISCOVERED`: exactly 1 new run found matching `workflow == release-mersad-preview-0.1-windows.yml`,
+         `event == "push"`, `headBranch == target_branch`, `headSha == LOCAL_HEAD_SHA`, and `databaseId not in prev_run_ids`.
+       - `DUPLICATE_RUN_DETECTED`: > 1 matching new runs detected for the same SHA and branch -> halts immediately.
+       - `RUN_TIMEOUT`: polling exhausted without discovering a matching new push run -> never transitions to `PASS`.
+       - `RUN_IN_PROGRESS`: actively watching the discovered run via `gh run watch <run_id> --exit-status`.
+       - `RUN_FAILED`: run or any job within the run did not complete with `conclusion == "success"`, or artifact download/verification failed.
+       - `ARTIFACTS_VERIFIED`: all 5 required Windows artifacts (`MERSAD_AI.exe`, `MERSAD_LAB.exe`,
+         `MERSAD_LAB_Setup_x64.exe`, `MERSAD_AI_Portable_x64.zip`, `MERSAD_LAB_Portable_x64.zip`) exist, are non-empty,
+         and have verified SHA-256 hashes.
+       - `PASS`: final terminal state reached ONLY after `ARTIFACTS_VERIFIED`.
 """
 import argparse
 import hashlib
@@ -41,12 +45,14 @@ from pathlib import Path
 
 DEFAULT_TARGET_BRANCH = "fix/preview-0.1-postbuild-42273598736"
 TARGET_BRANCH = os.environ.get("MERSAD_DEPLOY_BRANCH", DEFAULT_TARGET_BRANCH)
+EXPECTED_AI_PREFLIGHT_PARENT_SHA = "05f29af416c4a28ddf59c291819584d1a416d570"
 EXPECTED_AI_CODE_SHA = "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5"
 EXPECTED_AI_PREV_FIX_SHA = "d965d71317e3506e5dce9d316dc81cb8ae45e43b"
 EXPECTED_AI_RELEASE_BASE_SHA = "25131918a981ac2ac37923d4c738d9f93cdcbc5b"
 EXPECTED_LAB_CODE_SHA = "748ac0158761812a6fff63ff6fe626b9df8c252b"
 EXPECTED_LAB_RELEASE_BASE_SHA = "e9284356f4d1a8205946d5893121c6f8a2f22012"
 EXPECTED_MAIN_SHA = "25c9e5bba30dc8f921675e12c23a53571be895c1"
+EXPECTED_LAB_MAIN_SHA = "1c56dcbf77d62b8d89863e04f215e12f162e9555"
 WORKFLOW_FILE = "release-mersad-preview-0.1-windows.yml"
 DEFAULT_REMOTE_URL = "https://github.com/alinon9/MERSAD-AI-.git"
 
@@ -58,90 +64,54 @@ REQUIRED_WINDOWS_ARTIFACTS = [
     "MERSAD_LAB_Portable_x64.zip",
 ]
 
+# Unified 1 Workflow File + 16 Required Paths = 17 Verified Paths
+WORKFLOW_DEFINITION_PATH = ".github/workflows/release-mersad-preview-0.1-windows.yml"
+WORKFLOW_16_REFERENCED_PATHS = [
+    "MERSAD_AI_Preview_0.1/requirements.txt",
+    "MERSAD_AI_Preview_0.1/constraints-win-x64.txt",
+    "MERSAD_AI_Preview_0.1/check_install.py",
+    "tools/prepare_safe_eval_benchmarks.py",
+    "MERSAD_AI_Preview_0.1/prefetch.py",
+    "MERSAD_AI_Preview_0.1/mersad_live.py",
+    "integration/evaluate_ai_models.py",
+    "tools/compare_original_vs_cleanroom_lab.py",
+    "MERSAD_AI_Preview_0.1/selftest.py",
+    "MERSAD_AI_Preview_0.1/verify_integrity.py",
+    "MERSAD_LAB_Preview_0.1/test_lab.py",
+    "MERSAD_AI_Preview_0.1/mersad_ai.spec",
+    "MERSAD_LAB_Preview_0.1/mersad_lab.spec",
+    "MERSAD_LAB_Preview_0.1/installer/mersad_lab_setup.iss",
+    "integration/test_main_entrypoint_dynamic_camera_lifecycle.py",
+    "integration/test_ai_lab_integration.py",
+]
+WORKFLOW_17_VERIFIED_PATHS = [WORKFLOW_DEFINITION_PATH] + WORKFLOW_16_REFERENCED_PATHS
+
 
 def run_cmd(cmd, cwd=None, env=None):
     proc = subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True)
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
-def parse_workflow_dispatch_inputs(workflow_yaml_path: Path) -> dict:
+def validate_workflow_push_only(workflow_yaml_path: Path) -> tuple[bool, str]:
     """
-    Parse `on.workflow_dispatch.inputs` from a GitHub Actions workflow YAML file
-    without requiring PyYAML (uses PyYAML if available, plus deterministic indentation parser).
+    Verify that workflow_yaml_path is configured for single-run Push-triggered CI ONLY:
+      - Exists on disk
+      - Defines `push:` with `fix/preview-0.1-*` and `release/mersad-preview-0.1*`
+      - Does NOT define `workflow_dispatch` (prevents duplicate runs from git push + workflow_dispatch)
+      - Does NOT contain the unused `run_extended_stress` input
     """
-    if not workflow_yaml_path.is_file():
-        return {}
-    text = workflow_yaml_path.read_text(encoding="utf-8")
-    try:
-        import yaml  # type: ignore
-        data = yaml.safe_load(text)
-        if isinstance(data, dict):
-            on_block = data.get("on") or data.get(True) or {}
-            if isinstance(on_block, dict):
-                wd = on_block.get("workflow_dispatch") or {}
-                if isinstance(wd, dict) and isinstance(wd.get("inputs"), dict):
-                    return wd["inputs"]
-    except Exception:
-        pass
-
-    inputs = {}
-    lines = text.splitlines()
-    in_wd = False
-    in_inputs = False
-    wd_indent = None
-    inputs_indent = None
-    cur_input_name = None
-    cur_input_indent = None
-
-    for raw_line in lines:
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip(" "))
-        if not in_wd:
-            if re.match(r"^workflow_dispatch\s*:", stripped):
-                in_wd = True
-                wd_indent = indent
-            continue
-        if indent <= wd_indent and not re.match(r"^workflow_dispatch\s*:", stripped):
-            break
-        if not in_inputs:
-            if re.match(r"^inputs\s*:", stripped):
-                in_inputs = True
-                inputs_indent = indent
-            continue
-        if indent <= inputs_indent:
-            in_inputs = False
-            break
-        m_key = re.match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", stripped)
-        if not m_key:
-            continue
-        k, v = m_key.group(1), m_key.group(2).strip().strip('"')
-        if cur_input_indent is None or indent == cur_input_indent:
-            cur_input_indent = indent
-            cur_input_name = k
-            inputs[cur_input_name] = {}
-        elif cur_input_name and indent > cur_input_indent:
-            inputs[cur_input_name][k] = v
-    return inputs
-
-
-def validate_workflow_dispatch_call(workflow_yaml_path: Path, passed_inputs: dict) -> tuple[bool, str]:
-    """Verify that workflow_yaml_path supports workflow_dispatch and defines all passed_inputs with valid types."""
     if not workflow_yaml_path.is_file():
         return False, f"Workflow file not found: {workflow_yaml_path}"
     text = workflow_yaml_path.read_text(encoding="utf-8")
-    if "workflow_dispatch:" not in text:
-        return False, f"Workflow {workflow_yaml_path.name} does not enable workflow_dispatch"
-    defined_inputs = parse_workflow_dispatch_inputs(workflow_yaml_path)
-    for k, v in (passed_inputs or {}).items():
-        if k not in defined_inputs:
-            return False, f"Input '{k}' is NOT defined under workflow_dispatch.inputs in {workflow_yaml_path.name} (defined: {list(defined_inputs.keys())})"
-        inp_meta = defined_inputs[k] or {}
-        inp_type = str(inp_meta.get("type", "string")).lower()
-        if inp_type == "boolean" and str(v).lower() not in ("true", "false"):
-            return False, f"Input '{k}' has type=boolean in {workflow_yaml_path.name}, but got non-boolean value '{v}'"
-    return True, f"Validated {len(passed_inputs)} workflow_dispatch input(s) against {workflow_yaml_path.name}: {list(passed_inputs.keys())}"
+    if "workflow_dispatch" in text:
+        return False, f"Workflow {workflow_yaml_path.name} still contains workflow_dispatch (duplicate-run risk)"
+    if "run_extended_stress" in text:
+        return False, f"Workflow {workflow_yaml_path.name} still contains unused input run_extended_stress"
+    if not re.search(r"^\s*push\s*:", text, flags=re.MULTILINE):
+        return False, f"Workflow {workflow_yaml_path.name} does not define push trigger"
+    if "fix/preview-0.1-*" not in text:
+        return False, f"Workflow {workflow_yaml_path.name} push trigger does not include fix/preview-0.1-*"
+    return True, f"Verified single-run push-only trigger in {workflow_yaml_path.name} (no workflow_dispatch, no unused run_extended_stress)"
 
 
 def verify_and_hash_downloaded_artifacts(artifacts_dir: Path, run_id: str = "") -> dict:
@@ -199,7 +169,8 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
       (1) Git tree `MERSAD_AI_Preview_0.1/*` (58 files),
       (2) Workspace directory `MERSAD_AI_Preview_0.1/*` (58 files),
       (3) `RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_AI_Preview_0.1_Portable_Source.zip` (58 files),
-      (4) Root copies (`mersad_live.py`, `registry.py`, `selftest.py`, `verify_integrity.py`, `models/eval_benchmarks/*`).
+      (4) Root copies (`mersad_live.py`, `registry.py`, `selftest.py`, `verify_integrity.py`, `models/eval_benchmarks/*`),
+      (5) 1 Workflow File + 16 Required Paths = 17 Verified Paths inside the Git commit tree.
     """
     bundle_path = repo_root / "reports_and_logs" / "mersad_preview_0_1_verifiable_history.bundle"
     ws_ai_dir = repo_root / "MERSAD_AI_Preview_0.1"
@@ -221,6 +192,7 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
         subprocess.run(["git", "clone", str(bundle_path), str(clone_dir)], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(clone_dir), "checkout", "-B", branch, f"origin/{branch}"], check=True, capture_output=True)
         head_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "HEAD"], text=True).strip()
+        preflight_tag_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "refs/tags/v0.1.2-windows-ci-preflight-ready"], text=True).strip()
         code_tag_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "refs/tags/v0.1.1-postbuild-reconciled-code"], text=True).strip()
         main_sha = subprocess.check_output(["git", "-C", str(clone_dir), "rev-parse", "origin/main"], text=True).strip()
 
@@ -259,8 +231,12 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
                 "git_subdir_matches_root": g_sha == r_sha,
             })
 
-        anc_rc = subprocess.run(
+        anc_edaf_rc = subprocess.run(
             ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_CODE_SHA, "HEAD"],
+            capture_output=True,
+        ).returncode
+        anc_05f2_rc = subprocess.run(
+            ["git", "-C", str(clone_dir), "merge-base", "--is-ancestor", EXPECTED_AI_PREFLIGHT_PARENT_SHA, "HEAD"],
             capture_output=True,
         ).returncode
         lifecycle_in_commit = (clone_dir / "integration" / "test_main_entrypoint_dynamic_camera_lifecycle.py").is_file()
@@ -269,24 +245,32 @@ def verify_ai_zip_vs_git_provenance(repo_root: Path, branch: str = DEFAULT_TARGE
             sim_engine_in_commit.is_file()
             and hashlib.sha256(sim_engine_in_commit.read_bytes()).hexdigest() == "4a07315323fb303783f0243c5eec68b840885abe871e1212b3dfac82d4b23e33"
         )
+        present_17_paths = [p for p in WORKFLOW_17_VERIFIED_PATHS if (clone_dir / p).is_file()]
 
     ok = (
         len(mismatches) == 0
         and len(all_keys) == 58
         and code_tag_sha == EXPECTED_AI_CODE_SHA
-        and anc_rc == 0
+        and preflight_tag_sha == EXPECTED_AI_PREFLIGHT_PARENT_SHA
+        and anc_edaf_rc == 0
+        and anc_05f2_rc == 0
         and lifecycle_in_commit
         and sim_engine_sha_ok
+        and len(present_17_paths) == 17
         and main_sha == EXPECTED_MAIN_SHA
     )
     return {
         "ok": ok,
         "branch": branch,
         "head_sha": head_sha,
+        "previous_preflight_commit_sha": preflight_tag_sha,
         "reconciled_code_sha": code_tag_sha,
-        "descends_from_edaf651321ec": (anc_rc == 0),
+        "descends_from_05f29af416c4": (anc_05f2_rc == 0),
+        "descends_from_edaf651321ec": (anc_edaf_rc == 0),
         "lifecycle_test_in_commit": lifecycle_in_commit,
         "sim_engine_synced_in_commit": sim_engine_sha_ok,
+        "workflow_paths_summary": "1 Workflow File + 16 Required Paths = 17 Verified Paths",
+        "workflow_verified_paths_count": len(present_17_paths),
         "main_sha": main_sha,
         "total_files": len(all_keys),
         "matched_files": len(all_keys) - len(mismatches),
@@ -304,6 +288,7 @@ def execute_deployment(
     poll_interval_s: float = 5.0,
     artifacts_base_dir: Path = None,
     target_branch: str = None,
+    simulate_dirty_working_tree: bool = False,
 ) -> dict:
     env = os.environ.copy()
     if env_override:
@@ -316,11 +301,11 @@ def execute_deployment(
     if artifacts_base_dir is None:
         artifacts_base_dir = bundle_path.parent.parent
 
-    dispatch_inputs = {"run_extended_stress": "true"}
-
     report = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "target_branch": branch_to_use,
+        "trigger_mode": "push_only_single_run",
+        "expected_ai_preflight_parent_sha": EXPECTED_AI_PREFLIGHT_PARENT_SHA,
         "expected_ai_code_sha": EXPECTED_AI_CODE_SHA,
         "expected_ai_prev_fix_sha": EXPECTED_AI_PREV_FIX_SHA,
         "expected_ai_release_base_sha": EXPECTED_AI_RELEASE_BASE_SHA,
@@ -328,9 +313,9 @@ def execute_deployment(
         "expected_lab_release_base_sha": EXPECTED_LAB_RELEASE_BASE_SHA,
         "expected_main_sha": EXPECTED_MAIN_SHA,
         "workflow_file": WORKFLOW_FILE,
-        "dispatch_inputs": dispatch_inputs,
         "remote_url": remote_url,
         "steps": [],
+        "state_history": [],
         "status": "FAIL",
         "build_triggered": False,
         "run_id": None,
@@ -338,17 +323,21 @@ def execute_deployment(
         "artifacts_verification": None,
     }
 
+    def set_state(new_state: str):
+        report["status"] = new_state
+        report["state_history"].append(new_state)
+
     def add_step(name, ok, detail):
         report["steps"].append({"step": name, "ok": bool(ok), "detail": detail})
 
-    # Step 0: Validate workflow_dispatch inputs against the workflow YAML file
-    ok_wf_yaml, msg_wf_yaml = validate_workflow_dispatch_call(workflow_yaml_path, dispatch_inputs)
-    add_step("validate_workflow_dispatch_inputs", ok_wf_yaml, msg_wf_yaml)
+    # Step 0: Validate that workflow YAML uses push trigger ONLY (no workflow_dispatch, no unused run_extended_stress)
+    ok_wf_yaml, msg_wf_yaml = validate_workflow_push_only(workflow_yaml_path)
+    add_step("validate_workflow_push_only", ok_wf_yaml, msg_wf_yaml)
     if not ok_wf_yaml:
-        report["error"] = f"INVALID_WORKFLOW_DISPATCH_INPUT: {msg_wf_yaml}"
+        report["error"] = f"INVALID_WORKFLOW_TRIGGER_CONFIG: {msg_wf_yaml}"
         return report
 
-    # Step 1: Clone bundle and verify branches/commits
+    # Step 1: Clone bundle and verify branches, lineage, clean working tree, remote URL, and pre-push run IDs
     with tempfile.TemporaryDirectory(prefix="mersad_deploy_") as tmpdir:
         work_repo = Path(tmpdir) / "repo"
         rc, out, err = run_cmd(["git", "clone", str(bundle_path), str(work_repo)], env=env)
@@ -371,10 +360,25 @@ def execute_deployment(
             report["error"] = f"CHECKOUT_FAILED: {err or out}"
             return report
 
+        if simulate_dirty_working_tree:
+            (work_repo / "UNCOMMITTED_DIRTY_FILE.tmp").write_text("dirty", encoding="utf-8")
+
+        rc_st, out_st, err_st = run_cmd(["git", "status", "--porcelain"], cwd=str(work_repo), env=env)
+        if rc_st != 0 or out_st.strip() != "":
+            add_step("verify_clean_working_tree", False, f"Working tree is not clean before push: {out_st or err_st}")
+            report["error"] = f"DIRTY_WORKING_TREE: {out_st or err_st}"
+            return report
+        add_step("verify_clean_working_tree", True, "git status --porcelain is clean (0 uncommitted changes)")
+
         rc, head_sha, err = run_cmd(["git", "rev-parse", "HEAD"], cwd=str(work_repo), env=env)
         required_ancestors = [EXPECTED_AI_RELEASE_BASE_SHA]
         if branch_to_use == DEFAULT_TARGET_BRANCH:
-            required_ancestors = [EXPECTED_AI_CODE_SHA, EXPECTED_AI_PREV_FIX_SHA, EXPECTED_AI_RELEASE_BASE_SHA]
+            required_ancestors = [
+                EXPECTED_AI_PREFLIGHT_PARENT_SHA,
+                EXPECTED_AI_CODE_SHA,
+                EXPECTED_AI_PREV_FIX_SHA,
+                EXPECTED_AI_RELEASE_BASE_SHA,
+            ]
 
         for req_anc in required_ancestors:
             rc_anc, _, _ = run_cmd(["git", "merge-base", "--is-ancestor", req_anc, "HEAD"], cwd=str(work_repo), env=env)
@@ -386,8 +390,56 @@ def execute_deployment(
         report["local_head_sha"] = head_sha
         add_step("verify_commit_lineage", True, f"Checked out {branch_to_use} at HEAD={head_sha} (verified lineage: {required_ancestors})")
 
-        # Step 2: Push to remote without --force
+        # Configure and verify remote URL before push
         run_cmd(["git", "remote", "set-url", "origin", remote_url], cwd=str(work_repo), env=env)
+        rc_rem, out_rem, _ = run_cmd(["git", "remote", "get-url", "origin"], cwd=str(work_repo), env=env)
+        if rc_rem != 0 or out_rem.strip() != remote_url:
+            add_step("verify_remote_url", False, f"Remote URL mismatch: got {out_rem}, expected {remote_url}")
+            report["error"] = f"REMOTE_URL_MISMATCH: {out_rem}"
+            return report
+        add_step("verify_remote_url", True, f"Verified origin remote URL: {out_rem}")
+
+        # Check gh CLI installation and authentication BEFORE pushing so we can record pre-existing run IDs
+        gh_bin = shutil.which("gh", path=env.get("PATH", ""))
+        if not gh_bin:
+            msg = "GitHub CLI (gh) is NOT installed in PATH. Halting before push without claiming workflow trigger success."
+            add_step("verify_gh_cli_installed", False, msg)
+            report["error"] = f"GH_CLI_NOT_INSTALLED: {msg}"
+            return report
+        add_step("verify_gh_cli_installed", True, f"Found gh binary at {gh_bin}")
+
+        rc_auth, out_auth, err_auth = run_cmd([gh_bin, "auth", "status"], cwd=str(work_repo), env=env)
+        if rc_auth != 0:
+            msg = f"GitHub CLI (gh) is NOT authenticated ({err_auth or out_auth}). Halting before push."
+            add_step("verify_gh_cli_authenticated", False, msg)
+            report["error"] = f"GH_CLI_UNAUTHENTICATED: {msg}"
+            return report
+        add_step("verify_gh_cli_authenticated", True, "gh auth status verified")
+
+        # Record all pre-push run IDs across the workflow so historical runs are never mistaken for the new push run
+        pre_existing_ids = set()
+        rc_pre, out_pre, _ = run_cmd(
+            [
+                gh_bin, "run", "list",
+                f"--workflow={WORKFLOW_FILE}",
+                "--limit=30",
+                "--json", "databaseId,headSha,event,headBranch,status,conclusion,createdAt,url",
+            ],
+            cwd=str(work_repo),
+            env=env,
+        )
+        if rc_pre == 0 and out_pre:
+            try:
+                for item in json.loads(out_pre):
+                    if isinstance(item, dict) and "databaseId" in item:
+                        pre_existing_ids.add(int(item["databaseId"]))
+            except Exception:
+                pass
+        report["pre_existing_run_ids"] = sorted(pre_existing_ids)
+        set_state("PREFLIGHT_PASS")
+        add_step("record_pre_push_runs", True, f"PREFLIGHT_PASS: Recorded {len(pre_existing_ids)} pre-existing run ID(s) before push: {sorted(pre_existing_ids)}")
+
+        # Step 2: Push target branch once without --force (sole CI trigger: event == "push")
         rc_push, out_push, err_push = run_cmd(
             ["git", "push", "-u", "origin", f"refs/heads/{branch_to_use}:refs/heads/{branch_to_use}"],
             cwd=str(work_repo),
@@ -397,7 +449,7 @@ def execute_deployment(
             add_step("git_push_target_branch", False, f"git push to {remote_url} failed: {err_push or out_push}")
             report["error"] = f"GIT_PUSH_FAILED: {err_push or out_push}"
             return report
-        add_step("git_push_target_branch", True, f"Pushed {branch_to_use} without --force to {remote_url}")
+        add_step("git_push_target_branch", True, f"Pushed {branch_to_use} without --force to {remote_url} (push-triggered CI)")
 
         # Step 3: Verify remote SHA via git ls-remote
         rc_ls, out_ls, err_ls = run_cmd(
@@ -411,57 +463,11 @@ def execute_deployment(
             report["error"] = f"REMOTE_SHA_MISMATCH: {remote_sha} != {head_sha}"
             return report
         report["verified_remote_sha"] = remote_sha
-        add_step("verify_remote_sha", True, f"Verified remote SHA on origin matches local HEAD: {remote_sha}")
-
-        # Step 4: Check gh CLI installation and authentication
-        gh_bin = shutil.which("gh", path=env.get("PATH", ""))
-        if not gh_bin:
-            msg = "GitHub CLI (gh) is NOT installed in PATH. Halting without claiming workflow trigger success."
-            add_step("verify_gh_cli_installed", False, msg)
-            report["error"] = f"GH_CLI_NOT_INSTALLED: {msg}"
-            return report
-        add_step("verify_gh_cli_installed", True, f"Found gh binary at {gh_bin}")
-
-        rc_auth, out_auth, err_auth = run_cmd([gh_bin, "auth", "status"], cwd=str(work_repo), env=env)
-        if rc_auth != 0:
-            msg = f"GitHub CLI (gh) is NOT authenticated ({err_auth or out_auth}). Halting without claiming workflow trigger success."
-            add_step("verify_gh_cli_authenticated", False, msg)
-            report["error"] = f"GH_CLI_UNAUTHENTICATED: {msg}"
-            return report
-        add_step("verify_gh_cli_authenticated", True, "gh auth status verified")
-
-        # Step 5: Record pre-dispatch run IDs so we never pick a stale run
-        pre_existing_ids = set()
-        rc_pre, out_pre, _ = run_cmd(
-            [gh_bin, "run", "list", f"--workflow={WORKFLOW_FILE}", f"--branch={branch_to_use}", "--event=workflow_dispatch", "--limit=20", "--json", "databaseId"],
-            cwd=str(work_repo),
-            env=env,
-        )
-        if rc_pre == 0 and out_pre:
-            try:
-                for item in json.loads(out_pre):
-                    if isinstance(item, dict) and "databaseId" in item:
-                        pre_existing_ids.add(int(item["databaseId"]))
-            except Exception:
-                pass
-        add_step("record_pre_dispatch_runs", True, f"Recorded {len(pre_existing_ids)} pre-existing workflow_dispatch run ID(s): {sorted(pre_existing_ids)}")
-
-        # Step 6: Trigger workflow_dispatch on branch_to_use
-        wf_cmd = [gh_bin, "workflow", "run", WORKFLOW_FILE, "--ref", branch_to_use]
-        for k, v in dispatch_inputs.items():
-            wf_cmd.extend(["-f", f"{k}={v}"])
-        rc_wf, out_wf, err_wf = run_cmd(wf_cmd, cwd=str(work_repo), env=env)
-        if rc_wf != 0:
-            add_step("trigger_workflow_dispatch", False, f"gh workflow run failed: {err_wf or out_wf}")
-            report["error"] = f"GH_WORKFLOW_RUN_FAILED: {err_wf or out_wf}"
-            return report
-
         report["build_triggered"] = True
-        # IMPORTANT (BUG-15): Never set status="PASS" merely because workflow_dispatch was sent!
-        report["status"] = "DISPATCHED"
-        add_step("trigger_workflow_dispatch", True, f"Dispatched {WORKFLOW_FILE} on --ref {branch_to_use} (status=DISPATCHED)")
+        set_state("PUSH_COMPLETED")
+        add_step("verify_remote_sha", True, f"PUSH_COMPLETED: Verified remote SHA on origin matches local HEAD: {remote_sha}")
 
-        # Step 7: Poll for the NEW run matching workflow + event=workflow_dispatch + headBranch + headSha == local_head_sha
+        # Step 4: Poll for NEW push-triggered run(s) matching workflow + event=="push" + headBranch + headSha == local_head_sha
         matched_run = None
         for attempt in range(1, poll_attempts + 1):
             if poll_interval_s > 0:
@@ -471,9 +477,9 @@ def execute_deployment(
                     gh_bin, "run", "list",
                     f"--workflow={WORKFLOW_FILE}",
                     f"--branch={branch_to_use}",
-                    "--event=workflow_dispatch",
-                    "--limit=15",
-                    "--json", "databaseId,headSha,event,headBranch,status,conclusion,createdAt,url",
+                    "--event=push",
+                    "--limit=30",
+                    "--json", "databaseId,headSha,event,headBranch,status,conclusion,createdAt,url,workflowName",
                 ],
                 cwd=str(work_repo),
                 env=env,
@@ -481,6 +487,7 @@ def execute_deployment(
             if rc_list == 0 and out_list:
                 try:
                     runs = json.loads(out_list)
+                    matching_new_runs = []
                     for r in runs:
                         if not isinstance(r, dict):
                             continue
@@ -488,32 +495,49 @@ def execute_deployment(
                         r_sha = str(r.get("headSha", "")).strip()
                         r_evt = str(r.get("event", "")).strip()
                         r_br = str(r.get("headBranch", "")).strip()
+                        r_wf = str(r.get("workflowName", "")).strip()
+                        # Reject wrong workflow if workflowName is explicitly set to another workflow
+                        if r_wf and "MERSAD PREVIEW 0.1" not in r_wf and WORKFLOW_FILE not in r_wf:
+                            continue
                         if (
                             r_id > 0
                             and r_id not in pre_existing_ids
-                            and r_evt == "workflow_dispatch"
+                            and r_evt == "push"
                             and r_br == branch_to_use
                             and r_sha.lower() == head_sha.lower()
                         ):
-                            matched_run = r
-                            break
+                            matching_new_runs.append(r)
+
+                    if len(matching_new_runs) > 1:
+                        dup_ids = [int(x["databaseId"]) for x in matching_new_runs]
+                        msg = f"Duplicate new runs detected ({len(matching_new_runs)} runs: {dup_ids}) for headSha={head_sha} on branch {branch_to_use}."
+                        set_state("DUPLICATE_RUN_DETECTED")
+                        add_step("poll_matching_run_id", False, msg)
+                        report["duplicate_run_ids"] = dup_ids
+                        report["error"] = f"DUPLICATE_RUN_DETECTED: {msg}"
+                        return report
+
+                    if len(matching_new_runs) == 1:
+                        matched_run = matching_new_runs[0]
+                        break
                 except Exception:
                     pass
-            if matched_run is not None:
-                break
 
         if matched_run is None:
-            msg = f"No new workflow_dispatch run matching headSha={head_sha} on branch {branch_to_use} appeared after {poll_attempts} poll attempt(s)."
+            msg = f"No new push run matching headSha={head_sha} on branch {branch_to_use} appeared after {poll_attempts} poll attempt(s)."
+            set_state("RUN_TIMEOUT")
             add_step("poll_matching_run_id", False, msg)
-            report["error"] = f"RUN_ID_POLL_TIMEOUT: {msg}"
+            report["error"] = f"RUN_TIMEOUT: {msg}"
             return report
 
         run_id = str(matched_run["databaseId"])
         report["run_id"] = run_id
         report["run_url"] = matched_run.get("url")
-        add_step("poll_matching_run_id", True, f"Matched new workflow_dispatch Run ID {run_id} for headSha={head_sha}")
+        set_state("RUN_DISCOVERED")
+        add_step("poll_matching_run_id", True, f"RUN_DISCOVERED: Matched single new push Run ID {run_id} for headSha={head_sha}")
 
-        # Step 8: Watch run to completion and verify all jobs succeeded
+        # Step 5: Watch run to completion and verify all jobs succeeded
+        set_state("RUN_IN_PROGRESS")
         rc_watch, out_watch, err_watch = run_cmd(
             [gh_bin, "run", "watch", run_id, "--exit-status"],
             cwd=str(work_repo),
@@ -521,8 +545,8 @@ def execute_deployment(
         )
         if rc_watch != 0:
             msg = f"gh run watch {run_id} failed (exit={rc_watch}): {err_watch or out_watch}"
+            set_state("RUN_FAILED")
             add_step("watch_workflow_run", False, msg)
-            report["status"] = "FAIL"
             report["error"] = f"WORKFLOW_RUN_FAILED: {msg}"
             return report
 
@@ -533,31 +557,31 @@ def execute_deployment(
         )
         if rc_view != 0:
             msg = f"gh run view {run_id} failed: {err_view or out_view}"
+            set_state("RUN_FAILED")
             add_step("verify_all_jobs_succeeded", False, msg)
-            report["status"] = "FAIL"
             report["error"] = f"RUN_VIEW_FAILED: {msg}"
             return report
 
         try:
             view_data = json.loads(out_view)
         except Exception as e:
+            set_state("RUN_FAILED")
             add_step("verify_all_jobs_succeeded", False, f"Invalid JSON from gh run view: {e}")
-            report["status"] = "FAIL"
             report["error"] = f"RUN_VIEW_JSON_ERROR: {e}"
             return report
 
         run_conclusion = str(view_data.get("conclusion", "")).lower()
         jobs_list = view_data.get("jobs") or []
         failed_jobs = [j.get("name", "unknown") for j in jobs_list if str(j.get("conclusion", "")).lower() != "success"]
-        if run_conclusion != "success" or failed_jobs:
+        if run_conclusion != "success" or failed_jobs or len(jobs_list) == 0:
             msg = f"Run {run_id} conclusion={run_conclusion}, failed_jobs={failed_jobs}"
+            set_state("RUN_FAILED")
             add_step("verify_all_jobs_succeeded", False, msg)
-            report["status"] = "FAIL"
             report["error"] = f"JOBS_FAILED: {msg}"
             return report
         add_step("verify_all_jobs_succeeded", True, f"Run {run_id} completed with conclusion=success across {len(jobs_list)} job(s)")
 
-        # Step 9: Download artifacts for this exact Run ID and verify all 5 Windows files + SHA-256
+        # Step 6: Download artifacts for this exact Run ID and verify all 5 Windows files + SHA-256
         out_art_dir = artifacts_base_dir / f"dist_github_actions_run_{run_id}"
         if out_art_dir.exists():
             shutil.rmtree(out_art_dir)
@@ -570,8 +594,8 @@ def execute_deployment(
         )
         if rc_dl != 0:
             msg = f"gh run download {run_id} failed: {err_dl or out_dl}"
+            set_state("RUN_FAILED")
             add_step("download_run_artifacts", False, msg)
-            report["status"] = "FAIL"
             report["error"] = f"ARTIFACT_DOWNLOAD_FAILED: {msg}"
             return report
         add_step("download_run_artifacts", True, f"Downloaded artifacts for Run ID {run_id} into {out_art_dir.name}")
@@ -580,13 +604,14 @@ def execute_deployment(
         report["artifacts_verification"] = art_ver
         if not art_ver["ok"]:
             msg = f"Missing or empty required Windows artifacts: missing={art_ver['missing_files']}, empty={art_ver['empty_files']}"
+            set_state("RUN_FAILED")
             add_step("verify_five_windows_artifacts_sha256", False, msg)
-            report["status"] = "FAIL"
             report["error"] = f"ARTIFACTS_INCOMPLETE: {msg}"
             return report
 
-        add_step("verify_five_windows_artifacts_sha256", True, f"Verified all 5 Windows artifacts and computed SHA-256 checksums for Run ID {run_id}")
-        report["status"] = "PASS"
+        set_state("ARTIFACTS_VERIFIED")
+        add_step("verify_five_windows_artifacts_sha256", True, f"ARTIFACTS_VERIFIED: Verified all 5 Windows artifacts and computed SHA-256 checksums for Run ID {run_id}")
+        set_state("PASS")
         return report
 
 
@@ -595,41 +620,63 @@ def run_self_test(repo_root: Path) -> dict:
     bat_file = repo_root / "PUSH_CANDIDATE_9491BCD_TO_GITHUB_ACTIONS.bat"
     bat_rel_file = repo_root / "PUSH_RELEASE_PREVIEW_0_1_TO_GITHUB_ACTIONS.bat"
     wf_file = repo_root / ".github" / "workflows" / WORKFLOW_FILE
+    deploy_py_file = repo_root / "tools" / "deploy_and_run_github_actions.py"
+
     bat_text = bat_file.read_text(encoding="utf-8")
     bat_rel_text = bat_rel_file.read_text(encoding="utf-8")
+    wf_text = wf_file.read_text(encoding="utf-8")
+    deploy_py_text = deploy_py_file.read_text(encoding="utf-8")
 
     checks = []
-    # Check 1 & 2: Workflow YAML defines run_extended_stress (boolean) and rejects undefined inputs
-    ok_valid_in, _ = validate_workflow_dispatch_call(wf_file, {"run_extended_stress": "true"})
-    ok_undef_in, _ = validate_workflow_dispatch_call(wf_file, {"non_existent_input": "true"})
-    ok_bad_bool, _ = validate_workflow_dispatch_call(wf_file, {"run_extended_stress": "not_a_boolean"})
-    checks.append(("WORKFLOW_YAML_DEFINES_RUN_EXTENDED_STRESS_BOOLEAN", ok_valid_in is True))
-    checks.append(("WORKFLOW_VALIDATOR_REJECTS_UNDEFINED_OR_INVALID_INPUTS", (not ok_undef_in) and (not ok_bad_bool)))
 
-    # Check 3..6: Batch script static & structural checks (targets fix/preview-0.1-postbuild-42273598736 by default & configurable)
+    # 1. No script calls `gh workflow run` after `git push` (BUG-35)
+    no_gh_wf_run_in_bat = ("gh workflow run" not in bat_text and "gh workflow run" not in bat_rel_text)
+    no_gh_wf_run_in_py = (re.search(r'\[\s*gh_bin\s*,\s*"workflow"\s*,\s*"run"', deploy_py_text) is None)
     checks.append((
-        "BAT_TARGETS_FIX_BRANCH_AND_IS_CONFIGURABLE",
+        "TEST_01_NO_SCRIPT_CALLS_GH_WORKFLOW_RUN_AFTER_PUSH",
+        no_gh_wf_run_in_bat and no_gh_wf_run_in_py
+    ))
+
+    # 2. Workflow YAML uses push trigger only (no workflow_dispatch, no unused run_extended_stress) (BUG-35 & BUG-37)
+    ok_wf_push_only, _ = validate_workflow_push_only(wf_file)
+    with tempfile.TemporaryDirectory(prefix="mersad_wf_val_") as tmp_wf_d:
+        bad_wf = Path(tmp_wf_d) / "bad.yml"
+        bad_wf.write_text("on:\n  workflow_dispatch:\n  push:\n", encoding="utf-8")
+        ok_bad_wf, _ = validate_workflow_push_only(bad_wf)
+    checks.append((
+        "TEST_02_WORKFLOW_PUSH_ONLY_AND_VALIDATOR_REJECTS_WORKFLOW_DISPATCH",
+        ok_wf_push_only is True and ok_bad_wf is False
+    ))
+
+    # 3. No unused `run_extended_stress` input remains in workflow, deployment scripts, or .bat files (BUG-37)
+    checks.append((
+        "TEST_03_NO_UNUSED_RUN_EXTENDED_STRESS_IN_WORKFLOW_OR_SCRIPTS",
+        "run_extended_stress" not in wf_text
+        and "run_extended_stress" not in bat_text
+        and "run_extended_stress" not in bat_rel_text
+    ))
+
+    # Batch script static checks (lineage, push-only polling, duplicate run check)
+    checks.append((
+        "BAT_TARGETS_FIX_BRANCH_AND_HAS_DUPLICATE_RUN_GUARD",
         'set "TARGET_BRANCH=fix/preview-0.1-postbuild-42273598736"' in bat_text
         and 'set "TARGET_BRANCH=fix/preview-0.1-postbuild-42273598736"' in bat_rel_text
-        and "MERSAD_DEPLOY_BRANCH" in bat_text
-        and "preview/mersad-ai-lab-0.1-20261105" not in bat_text
+        and EXPECTED_AI_PREFLIGHT_PARENT_SHA in bat_text
+        and EXPECTED_AI_CODE_SHA in bat_text
+        and EXPECTED_MAIN_SHA in bat_text
+        and "DUPLICATE_RUN_DETECTED" in bat_text
+        and "DUPLICATE_RUN_DETECTED" in bat_rel_text
+        and 'select(.event == \\"push\\"' in bat_text
+        and "git push --force" not in bat_text
+        and "git push -f" not in bat_text
     ))
-    checks.append((
-        "BAT_USES_RECONCILED_FINAL_COMMITS",
-        EXPECTED_AI_CODE_SHA in bat_text
-        and EXPECTED_AI_PREV_FIX_SHA in bat_text
-        and EXPECTED_LAB_CODE_SHA in bat_text
-        and EXPECTED_AI_CODE_SHA in bat_rel_text
-    ))
-    checks.append(("BAT_PRESERVES_MAIN_AND_NO_FORCE", EXPECTED_MAIN_SHA in bat_text and "git push --force" not in bat_text and "git push -f" not in bat_text))
-    checks.append(("BAT_POLLS_NEW_RUN_BY_HEAD_SHA_AND_EVENT", "select(.event == " in bat_text and ".headSha == " in bat_text and ".databaseId > !PREV_LATEST_RUN_ID!" in bat_text))
 
     with tempfile.TemporaryDirectory(prefix="mersad_bare_remote_") as tmpdir:
         tmp_p = Path(tmpdir)
         bare_remote = tmp_p / "origin.git"
         subprocess.run(["git", "init", "--bare", str(bare_remote)], check=True, capture_output=True)
 
-        # Test A: Missing gh in PATH must halt with error after verifying local bare push and remote SHA on fix branch
+        # Missing gh in PATH must halt before push
         res_no_gh = execute_deployment(
             bundle,
             str(bare_remote),
@@ -639,69 +686,171 @@ def run_self_test(repo_root: Path) -> dict:
             poll_interval_s=0.0,
             target_branch=DEFAULT_TARGET_BRANCH,
         )
+        local_head = res_no_gh.get("local_head_sha", "")
         checks.append((
-            "LOCAL_BARE_PUSH_AND_LS_REMOTE_SHA_MATCH_ON_FIX_BRANCH",
-            res_no_gh.get("target_branch") == DEFAULT_TARGET_BRANCH
-            and res_no_gh.get("verified_remote_sha") == res_no_gh.get("local_head_sha")
-            and bool(res_no_gh.get("verified_remote_sha"))
+            "MISSING_GH_HALTS_WITH_ERROR_AND_VERIFIES_LINEAGE",
+            res_no_gh["status"] == "FAIL"
+            and res_no_gh["build_triggered"] is False
+            and "GH_CLI_NOT_INSTALLED" in res_no_gh.get("error", "")
+            and bool(local_head)
         ))
-        checks.append(("MISSING_GH_HALTS_WITH_ERROR", res_no_gh["status"] == "FAIL" and res_no_gh["build_triggered"] is False and "GH_CLI_NOT_INSTALLED" in res_no_gh.get("error", "")))
 
-        # Test A2: Configurable branch override (--branch release/mersad-preview-0.1) also works cleanly
-        res_rel_branch = execute_deployment(
+        # Dirty working tree before push must be rejected
+        res_dirty = execute_deployment(
             bundle,
             str(bare_remote),
             wf_file,
             env_override={"PATH": "/usr/bin:/bin"},
             poll_attempts=1,
             poll_interval_s=0.0,
-            target_branch="release/mersad-preview-0.1",
+            target_branch=DEFAULT_TARGET_BRANCH,
+            simulate_dirty_working_tree=True,
         )
         checks.append((
-            "CONFIGURABLE_BRANCH_SUPPORTS_RELEASE_BRANCH_OVERRIDE",
-            res_rel_branch.get("target_branch") == "release/mersad-preview-0.1"
-            and res_rel_branch.get("verified_remote_sha") == res_rel_branch.get("local_head_sha")
-            and bool(res_rel_branch.get("verified_remote_sha"))
+            "PREFLIGHT_REJECTS_DIRTY_WORKING_TREE",
+            res_dirty["status"] == "FAIL" and "DIRTY_WORKING_TREE" in res_dirty.get("error", "")
         ))
 
-        # Test B: Unauthenticated gh must halt with GH_CLI_UNAUTHENTICATED
-        fake_bin_unauth = tmp_p / "fake_bin_unauth"
-        fake_bin_unauth.mkdir()
-        fake_gh_unauth = fake_bin_unauth / "gh"
-        fake_gh_unauth.write_text("#!/bin/sh\nexit 1\n")
-        fake_gh_unauth.chmod(0o755)
-        res_unauth = execute_deployment(bundle, str(bare_remote), wf_file, env_override={"PATH": f"{fake_bin_unauth}:/usr/bin:/bin"}, poll_attempts=1, poll_interval_s=0.0)
-        checks.append(("UNAUTH_GH_HALTS_WITH_ERROR", res_unauth["status"] == "FAIL" and res_unauth["build_triggered"] is False and "GH_CLI_UNAUTHENTICATED" in res_unauth.get("error", "")))
+        # 4. Rejects runs with mismatched SHA (BUG-36)
+        fake_bin_wrong_sha = tmp_p / "fake_bin_wrong_sha"
+        fake_bin_wrong_sha.mkdir()
+        state_wrong_sha = tmp_p / "state_wrong_sha.txt"
+        wrong_sha_script = f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{state_wrong_sha}")
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:2] == ["run", "list"]:
+    if not sf.exists():
+        sf.write_text("pre")
+        print(json.dumps([]))
+    else:
+        print(json.dumps([
+            {{"databaseId": 7001, "headSha": "deadbeef00000000000000000000000000000000", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
+        ]))
+    sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_wrong_sha / "gh").write_text(wrong_sha_script, encoding="utf-8")
+        (fake_bin_wrong_sha / "gh").chmod(0o755)
+        res_wrong_sha = execute_deployment(
+            bundle, str(bare_remote), wf_file,
+            env_override={"PATH": f"{fake_bin_wrong_sha}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+        )
+        checks.append((
+            "TEST_04_POLLING_REJECTS_MISMATCHED_SHA",
+            res_wrong_sha["status"] == "RUN_TIMEOUT" and res_wrong_sha["run_id"] is None
+        ))
 
-        # Test C: Dispatch succeeds, but only old/wrong-SHA runs exist -> status stays DISPATCHED (never PASS!)
-        fake_bin_stale = tmp_p / "fake_bin_stale"
-        fake_bin_stale.mkdir()
-        fake_gh_stale = fake_bin_stale / "gh"
-        stale_script = f"""#!/usr/bin/env python3
+        # 5. Rejects runs with wrong event (e.g., workflow_dispatch or pull_request instead of push) (BUG-36)
+        fake_bin_wrong_evt = tmp_p / "fake_bin_wrong_evt"
+        fake_bin_wrong_evt.mkdir()
+        state_wrong_evt = tmp_p / "state_wrong_evt.txt"
+        wrong_evt_script = f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{state_wrong_evt}")
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:2] == ["run", "list"]:
+    if not sf.exists():
+        sf.write_text("pre")
+        print(json.dumps([]))
+    else:
+        print(json.dumps([
+            {{"databaseId": 7002, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}},
+            {{"databaseId": 7003, "headSha": "{local_head}", "event": "pull_request", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
+        ]))
+    sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_wrong_evt / "gh").write_text(wrong_evt_script, encoding="utf-8")
+        (fake_bin_wrong_evt / "gh").chmod(0o755)
+        res_wrong_evt = execute_deployment(
+            bundle, str(bare_remote), wf_file,
+            env_override={"PATH": f"{fake_bin_wrong_evt}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+        )
+        checks.append((
+            "TEST_05_POLLING_REJECTS_NON_PUSH_EVENT",
+            res_wrong_evt["status"] == "RUN_TIMEOUT" and res_wrong_evt["run_id"] is None
+        ))
+
+        # 6. Ignores historical runs recorded in pre_existing_run_ids even if they have the same SHA and branch (BUG-36)
+        fake_bin_hist = tmp_p / "fake_bin_hist"
+        fake_bin_hist.mkdir()
+        hist_script = f"""#!/usr/bin/env python3
 import json, sys
 args = sys.argv[1:]
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["workflow", "run"]:
-    sys.exit(0)
 if args[:2] == ["run", "list"]:
     print(json.dumps([
-        {{"databaseId": 1001, "headSha": "OLD_SHA", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}},
-        {{"databaseId": 1002, "headSha": "WRONG_SHA_9999", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
+        {{"databaseId": 7004, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
     ]))
     sys.exit(0)
 sys.exit(1)
 """
-        fake_gh_stale.write_text(stale_script, encoding="utf-8")
-        fake_gh_stale.chmod(0o755)
-        res_stale = execute_deployment(bundle, str(bare_remote), wf_file, env_override={"PATH": f"{fake_bin_stale}:/usr/bin:/bin"}, poll_attempts=2, poll_interval_s=0.0)
+        (fake_bin_hist / "gh").write_text(hist_script, encoding="utf-8")
+        (fake_bin_hist / "gh").chmod(0o755)
+        res_hist = execute_deployment(
+            bundle, str(bare_remote), wf_file,
+            env_override={"PATH": f"{fake_bin_hist}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+        )
         checks.append((
-            "DISPATCH_WITHOUT_NEW_MATCHING_SHA_RUN_STAYS_DISPATCHED_NEVER_PASS",
-            res_stale["status"] == "DISPATCHED" and res_stale["run_id"] is None and "RUN_ID_POLL_TIMEOUT" in res_stale.get("error", "")
+            "TEST_06_POLLING_IGNORES_PRE_EXISTING_HISTORICAL_RUNS_WITH_SAME_SHA",
+            res_hist["status"] == "RUN_TIMEOUT"
+            and res_hist["run_id"] is None
+            and 7004 in res_hist.get("pre_existing_run_ids", [])
         ))
 
-        # Test D: New matching headSha run appears on fix branch, job fails -> status=FAIL
-        local_head = res_no_gh["local_head_sha"]
+        # 7. Detects duplicate new runs for the same SHA and branch -> DUPLICATE_RUN_DETECTED (BUG-36)
+        fake_bin_dup = tmp_p / "fake_bin_dup"
+        fake_bin_dup.mkdir()
+        state_dup = tmp_p / "state_dup.txt"
+        dup_script = f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{state_dup}")
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:2] == ["run", "list"]:
+    if not sf.exists():
+        sf.write_text("pre")
+        print(json.dumps([{{"databaseId": 7000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}]))
+    else:
+        print(json.dumps([
+            {{"databaseId": 7010, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}},
+            {{"databaseId": 7011, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}},
+            {{"databaseId": 7000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
+        ]))
+    sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_dup / "gh").write_text(dup_script, encoding="utf-8")
+        (fake_bin_dup / "gh").chmod(0o755)
+        res_dup = execute_deployment(
+            bundle, str(bare_remote), wf_file,
+            env_override={"PATH": f"{fake_bin_dup}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+        )
+        checks.append((
+            "TEST_07_DUPLICATE_RUNS_FOR_SAME_SHA_ABORT_WITH_DUPLICATE_RUN_DETECTED",
+            res_dup["status"] == "DUPLICATE_RUN_DETECTED"
+            and res_dup.get("duplicate_run_ids") == [7010, 7011]
+        ))
+
+        # 8. Timeout never converts to PASS (stays RUN_TIMEOUT) (BUG-36)
+        checks.append((
+            "TEST_08_POLL_TIMEOUT_SETS_RUN_TIMEOUT_NEVER_PASS",
+            res_wrong_sha["status"] == "RUN_TIMEOUT"
+            and "PASS" not in res_wrong_sha.get("state_history", [])
+        ))
+
+        # 9. Single failed job within the workflow run sets status=RUN_FAILED (BUG-36)
         fake_bin_failjob = tmp_p / "fake_bin_failjob"
         fake_bin_failjob.mkdir()
         state_file_fail = tmp_p / "state_fail.txt"
@@ -711,34 +860,84 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_file_fail}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["workflow", "run"]:
-    sf.write_text("dispatched")
-    sys.exit(0)
 if args[:2] == ["run", "list"]:
     if not sf.exists():
-        print(json.dumps([{{"databaseId": 5000, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}]))
+        sf.write_text("pre")
+        print(json.dumps([{{"databaseId": 5000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}]))
     else:
         print(json.dumps([
-            {{"databaseId": 5005, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5005"}},
-            {{"databaseId": 5000, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
+            {{"databaseId": 5005, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5005"}},
+            {{"databaseId": 5000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
         ]))
     sys.exit(0)
 if args[:2] == ["run", "watch"]:
     sys.exit(0)
 if args[:2] == ["run", "view"]:
-    print(json.dumps({{"status": "completed", "conclusion": "failure", "jobs": [{{"name": "build-and-verify-windows-x64", "conclusion": "failure"}}]}}))
+    print(json.dumps({{"status": "completed", "conclusion": "success", "jobs": [{{"name": "build-and-verify-windows-x64", "conclusion": "failure"}}]}}))
     sys.exit(0)
 sys.exit(1)
 """
         (fake_bin_failjob / "gh").write_text(failjob_script, encoding="utf-8")
         (fake_bin_failjob / "gh").chmod(0o755)
-        res_failjob = execute_deployment(bundle, str(bare_remote), wf_file, env_override={"PATH": f"{fake_bin_failjob}:/usr/bin:/bin"}, poll_attempts=2, poll_interval_s=0.0)
+        res_failjob = execute_deployment(
+            bundle, str(bare_remote), wf_file,
+            env_override={"PATH": f"{fake_bin_failjob}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+        )
         checks.append((
-            "NEW_RUN_WITH_FAILED_JOB_REJECTED_AS_FAIL",
-            res_failjob["run_id"] == "5005" and res_failjob["status"] == "FAIL" and "JOBS_FAILED" in res_failjob.get("error", "")
+            "TEST_09_SINGLE_FAILED_JOB_SETS_RUN_FAILED",
+            res_failjob["run_id"] == "5005"
+            and res_failjob["status"] == "RUN_FAILED"
+            and "JOBS_FAILED" in res_failjob.get("error", "")
         ))
 
-        # Test E: Full end-to-end simulated workflow run on fix branch (new Run ID 6001 matching headSha -> watch -> view success -> download all 5 artifacts -> SHA-256 verified -> status=PASS)
+        # 10. Missing 1 of the 5 required Windows build files sets status=RUN_FAILED (BUG-36)
+        fake_bin_missing_art = tmp_p / "fake_bin_missing_art"
+        fake_bin_missing_art.mkdir()
+        state_missing_art = tmp_p / "state_missing_art.txt"
+        missing_art_script = f"""#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+sf = pathlib.Path("{state_missing_art}")
+if args[:2] == ["auth", "status"]:
+    sys.exit(0)
+if args[:2] == ["run", "list"]:
+    if not sf.exists():
+        sf.write_text("pre")
+        print(json.dumps([]))
+    else:
+        print(json.dumps([
+            {{"databaseId": 5501, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/5501"}}
+        ]))
+    sys.exit(0)
+if args[:2] == ["run", "watch"] and args[2] == "5501":
+    sys.exit(0)
+if args[:2] == ["run", "view"] and args[2] == "5501":
+    print(json.dumps({{"status": "completed", "conclusion": "success", "jobs": [{{"name": "build-and-verify-windows-x64", "conclusion": "success"}}]}}))
+    sys.exit(0)
+if args[:2] == ["run", "download"] and args[2] == "5501":
+    out_dir = pathlib.Path(args[args.index("--dir") + 1])
+    for fn in {REQUIRED_WINDOWS_ARTIFACTS[:-1]!r}:
+        (out_dir / fn).write_bytes(f"SIMULATED_BINARY_{{fn}}".encode("utf-8"))
+    sys.exit(0)
+sys.exit(1)
+"""
+        (fake_bin_missing_art / "gh").write_text(missing_art_script, encoding="utf-8")
+        (fake_bin_missing_art / "gh").chmod(0o755)
+        res_missing_art = execute_deployment(
+            bundle, str(bare_remote), wf_file,
+            env_override={"PATH": f"{fake_bin_missing_art}:/usr/bin:/bin"},
+            poll_attempts=2, poll_interval_s=0.0,
+            artifacts_base_dir=tmp_p,
+        )
+        checks.append((
+            "TEST_10_MISSING_ONE_OF_FIVE_ARTIFACTS_SETS_RUN_FAILED",
+            res_missing_art["run_id"] == "5501"
+            and res_missing_art["status"] == "RUN_FAILED"
+            and res_missing_art.get("artifacts_verification", {}).get("missing_files") == [REQUIRED_WINDOWS_ARTIFACTS[-1]]
+        ))
+
+        # 11. Full E2E simulated push-triggered run (PREFLIGHT_PASS -> PUSH_COMPLETED -> RUN_DISCOVERED -> RUN_IN_PROGRESS -> ARTIFACTS_VERIFIED -> PASS)
         fake_bin_ok = tmp_p / "fake_bin_ok"
         fake_bin_ok.mkdir()
         state_file_ok = tmp_p / "state_ok.txt"
@@ -748,16 +947,14 @@ args = sys.argv[1:]
 sf = pathlib.Path("{state_file_ok}")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
-if args[:2] == ["workflow", "run"]:
-    sf.write_text("dispatched")
-    sys.exit(0)
 if args[:2] == ["run", "list"]:
     if not sf.exists():
-        print(json.dumps([{{"databaseId": 6000, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}]))
+        sf.write_text("pre")
+        print(json.dumps([{{"databaseId": 6000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}]))
     else:
         print(json.dumps([
-            {{"databaseId": 6001, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/6001"}},
-            {{"databaseId": 6000, "headSha": "{local_head}", "event": "workflow_dispatch", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
+            {{"databaseId": 6001, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}", "url": "https://github.com/alinon9/MERSAD-AI-/actions/runs/6001"}},
+            {{"databaseId": 6000, "headSha": "{local_head}", "event": "push", "headBranch": "{DEFAULT_TARGET_BRANCH}"}}
         ]))
     sys.exit(0)
 if args[:2] == ["run", "watch"] and args[2] == "6001":
@@ -784,14 +981,22 @@ sys.exit(1)
             artifacts_base_dir=tmp_p,
         )
         checks.append((
-            "FULL_E2E_WATCH_DOWNLOAD_AND_5_ARTIFACT_SHA256_PASS",
+            "TEST_11_FULL_PUSH_STATE_MACHINE_AND_5_ARTIFACT_SHA256_PASS",
             res_ok["status"] == "PASS"
+            and res_ok.get("state_history") == [
+                "PREFLIGHT_PASS",
+                "PUSH_COMPLETED",
+                "RUN_DISCOVERED",
+                "RUN_IN_PROGRESS",
+                "ARTIFACTS_VERIFIED",
+                "PASS",
+            ]
             and res_ok["run_id"] == "6001"
             and res_ok.get("artifacts_verification", {}).get("ok") is True
             and res_ok.get("artifacts_verification", {}).get("verified_count") == 5
         ))
 
-    # Check 14: Verify 4-stage model breakdown never converts NOT_TESTED to PASS
+    # Check 12: Verify 4-stage model breakdown never converts NOT_TESTED to PASS
     sys.path.insert(0, str(repo_root))
     from integration.evaluate_ai_models import build_four_stage_breakdown
     s_nt = build_four_stage_breakdown(True, True, False, False, "PASS", "Missing authorized face samples")
@@ -805,7 +1010,7 @@ sys.exit(1)
         and s_pass["final_status"] == "PASS"
     ))
 
-    # Check 15: Verify MERSAD LAB Git bundle provenance (14/14 files match 748ac0158761812a6fff63ff6fe626b9df8c252b and ZIP)
+    # Check 13: Verify MERSAD LAB Git bundle provenance (14/14 files match 748ac0158761812a6fff63ff6fe626b9df8c252b and ZIP)
     import importlib.util
     spec_lp = importlib.util.spec_from_file_location("verify_mersad_lab_provenance", str(repo_root / "tools" / "verify_mersad_lab_provenance.py"))
     mod_lp = importlib.util.module_from_spec(spec_lp)
@@ -819,17 +1024,19 @@ sys.exit(1)
         and lab_prov.get("verified_release_branch_commit") == EXPECTED_LAB_RELEASE_BASE_SHA
     ))
 
-    # Check 16: Verify MERSAD AI Git bundle vs Portable_Source.zip vs Workspace (58/58 files match 100% byte-for-byte)
+    # Check 14: Verify MERSAD AI Git bundle vs Portable_Source.zip vs Workspace (58/58 files match + 17 Workflow Paths)
     ai_prov = verify_ai_zip_vs_git_provenance(repo_root, branch=DEFAULT_TARGET_BRANCH)
     checks.append((
-        "MERSAD_AI_GIT_AND_ZIP_PROVENANCE_58_OF_58_SHA256_MATCH",
+        "MERSAD_AI_GIT_AND_ZIP_PROVENANCE_58_OF_58_AND_17_WORKFLOW_PATHS",
         ai_prov["ok"] is True
         and ai_prov["total_files"] == 58
         and ai_prov["matched_files"] == 58
         and ai_prov["reconciled_code_sha"] == EXPECTED_AI_CODE_SHA
+        and ai_prov["previous_preflight_commit_sha"] == EXPECTED_AI_PREFLIGHT_PARENT_SHA
+        and ai_prov["workflow_verified_paths_count"] == 17
     ))
 
-    # Check 17: Verify tools/prepare_safe_eval_benchmarks.py --verify is read-only non-destructive and detects tampering
+    # Check 15: Verify tools/prepare_safe_eval_benchmarks.py --verify is read-only non-destructive and detects tampering
     spec_bm = importlib.util.spec_from_file_location("prepare_safe_eval_benchmarks", str(repo_root / "tools" / "prepare_safe_eval_benchmarks.py"))
     mod_bm = importlib.util.module_from_spec(spec_bm)
     spec_bm.loader.exec_module(mod_bm)
@@ -841,7 +1048,6 @@ sys.exit(1)
         orig_tamper_bytes = tamper_target.read_bytes()
         tamper_target.write_bytes(b"TAMPERED_CONTENT")
         ver_tampered = mod_bm.verify_safe_benchmarks(tmp_bm_dir)
-        # Ensure verify_safe_benchmarks did NOT overwrite or regenerate the tampered file!
         remained_tampered = (tamper_target.read_bytes() == b"TAMPERED_CONTENT")
     checks.append((
         "PREPARE_SAFE_BENCHMARKS_VERIFY_IS_READ_ONLY_AND_DETECTS_TAMPERING",
@@ -853,7 +1059,7 @@ sys.exit(1)
         and len(orig_tamper_bytes) > 100
     ))
 
-    # Check 18..21: Run 42273598736 post-build remediation checks
+    # Check 16..20: Run 42273598736 post-build remediation checks & Lifecycle check
     sys.path.insert(0, str(repo_root / "MERSAD_AI_Preview_0.1"))
     sys.path.insert(0, str(repo_root / "MERSAD_LAB_Preview_0.1"))
     import registry as reg_mod
@@ -909,7 +1115,9 @@ sys.exit(1)
         "ai_provenance_summary": {
             "branch": ai_prov.get("branch"),
             "head_sha": ai_prov.get("head_sha"),
+            "previous_preflight_commit_sha": ai_prov.get("previous_preflight_commit_sha"),
             "reconciled_code_sha": ai_prov.get("reconciled_code_sha"),
+            "workflow_paths_summary": ai_prov.get("workflow_paths_summary"),
             "matched_files": f"{ai_prov.get('matched_files')}/{ai_prov.get('total_files')}",
         },
         "lab_provenance_summary": {

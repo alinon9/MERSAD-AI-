@@ -3,7 +3,7 @@
   "active_branch": "fix/preview-0.1-postbuild-42273598736",
   "release_baseline_branch": "release/mersad-preview-0.1",
   "commits": {
-    "mersad_ai_fix_branch_head_commit": "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5",
+    "mersad_ai_fix_branch_head_commit": "New verified HEAD directly above 05f29af416c4a28ddf59c291819584d1a416d570",
     "mersad_ai_reconciled_code_commit": "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5",
     "mersad_ai_reconciled_code_tag": "v0.1.1-postbuild-reconciled-code",
     "mersad_ai_initial_postbuild_42273598736_code_commit": "d965d71317e3506e5dce9d316dc81cb8ae45e43b",
@@ -21,7 +21,8 @@
       "rollback-stable-9491bcd": "9491bcd0d610c51ce76b599591db5c9f0b84cd44",
       "rollback-stage15-64b0dde": "64b0dde9013c973261da37e21861c642679cf5eb",
       "main_untouched": "25c9e5bba30dc8f921675e12c23a53571be895c1",
-      "audit-checkpoint-7f35cb10": "7f35cb1007a229a72ac0cd1be61fd5a81eb891bd"
+      "audit-checkpoint-7f35cb10": "7f35cb1007a229a72ac0cd1be61fd5a81eb891bd",
+      "v0.1.2-windows-ci-preflight-ready": "05f29af416c4a28ddf59c291819584d1a416d570"
     },
     "mersad_lab_fix_branch_head_commit": "748ac0158761812a6fff63ff6fe626b9df8c252b",
     "mersad_lab_fix_branch_code_commit": "748ac0158761812a6fff63ff6fe626b9df8c252b",
@@ -30,7 +31,10 @@
       "rollback-stable-lab": "1c56dcbf77d62b8d89863e04f215e12f162e9555",
       "main_untouched": "1c56dcbf77d62b8d89863e04f215e12f162e9555"
     },
-    "mersad_ai_233_pass_checkpoint_commit": "7f35cb1007a229a72ac0cd1be61fd5a81eb891bd"
+    "mersad_ai_233_pass_checkpoint_commit": "7f35cb1007a229a72ac0cd1be61fd5a81eb891bd",
+    "mersad_ai_current_branch_head_description": "New verified HEAD directly above 05f29af416c4a28ddf59c291819584d1a416d570 (fix(ci): make preview deployment single-run and reconcile readiness evidence)",
+    "mersad_ai_previous_preflight_commit": "05f29af416c4a28ddf59c291819584d1a416d570",
+    "mersad_ai_previous_preflight_tag": "v0.1.2-windows-ci-preflight-ready"
   },
   "git_bundles_verification": {
     "ai_bundle_path": "reports_and_logs/mersad_preview_0_1_verifiable_history.bundle",
@@ -96,8 +100,8 @@
       "log": "reports_and_logs/logs/10_preview01_ai_lab_integration_real_engine.log"
     },
     "deployment_and_provenance_self_test": {
-      "passed": 21,
-      "total": 21,
+      "passed": 23,
+      "total": 23,
       "status": "PASS",
       "log": "reports_and_logs/logs/15_github_actions_deployment_attempt.log"
     }
@@ -128,7 +132,7 @@
       "note": "YuNet, SFace, and YOLOv8n retain ground_truth_acceptance_status=NOT_TESTED until real consented human faces and natural photorealistic vehicle images are imported via prepare_safe_eval_benchmarks.py."
     }
   },
-  "final_verdict": "PASS — READY FOR WINDOWS CI RE-RUN",
+  "final_verdict": "READY FOR USER-APPROVED PUSH (WITH DOCUMENTED OFFLINE SANDBOX LIMITATIONS)",
   "field_readiness_claimed": false,
   "unified_decision_matrix": [
     {
@@ -223,9 +227,9 @@
     },
     {
       "id": "MAT-10",
-      "suite": "Deployment, Configurable Branch & Provenance Self-Test (deploy_and_run_github_actions.py --self-test)",
+      "suite": "Single-Run Push CI, 9-State Polling Machine & Provenance Self-Test (deploy_and_run_github_actions.py --self-test)",
       "status": "PASS",
-      "passed": 21,
+      "passed": 23,
       "failed": 0,
       "not_tested": 0,
       "blocked": 0,
@@ -2082,8 +2086,8 @@
       }
     ]
   },
-  "bugs_closed_count": 34,
-  "bugs_closed_range": "BUG-01..BUG-34",
+  "bugs_closed_count": 39,
+  "bugs_closed_range": "BUG-01..BUG-39",
   "historical_selftest_progression": [
     {
       "commit": "3bf86f1eee49b351ac1dcf4e630c149e7d38b777",
@@ -2248,6 +2252,22 @@
       "operational_credentials_present": false,
       "plaintext_legacy_example_password_occurrences_in_bundle": 0,
       "protection_mechanism": "Regex + SHA-256 token guard in tools/verify_release_bundle_integrity.py detects any unredacted RTSP password or __TEST_SECRET_CANARY__ leak in documentation while allowing <REDACTED_TEST_PASSWORD> and ***."
+    },
+    "mersad_ai_current_branch_head_parent": "05f29af416c4a28ddf59c291819584d1a416d570",
+    "post_commit_generated_release_artifacts_layer": {
+      "description": "Generated immediately after creating the local Git commit to prevent circular SHA-256 self-reference",
+      "files": [
+        "MANIFEST.json",
+        "SOURCE_TREE_MANIFEST.json",
+        "BUNDLE_MANIFEST.json",
+        "SHA256SUMS.txt",
+        "RELEASE_DELIVERABLES/PREVIEW_0.1/MANIFEST.json",
+        "RELEASE_DELIVERABLES/PREVIEW_0.1/SOURCE_TREE_MANIFEST.json",
+        "RELEASE_DELIVERABLES/PREVIEW_0.1/BUNDLE_MANIFEST.json",
+        "RELEASE_DELIVERABLES/PREVIEW_0.1/SHA256SUMS.txt",
+        "reports_and_logs/mersad_preview_0_1_verifiable_history.bundle",
+        "RELEASE_DELIVERABLES/PREVIEW_0.1/MERSAD_PREVIEW_0.1_FINAL_RELEASE_BUNDLE.zip"
+      ]
     }
   },
   "windows_ci_preflight_remediation_bug34": {
@@ -2286,6 +2306,119 @@
       "MERSAD_LAB_Preview_0.1/installer/mersad_lab_setup.iss",
       "integration/test_main_entrypoint_dynamic_camera_lifecycle.py",
       "integration/test_ai_lab_integration.py"
+    ],
+    "workflow_paths_summary": "1 Workflow File + 16 Required Paths = 17 Verified Paths",
+    "workflow_definition_file": ".github/workflows/release-mersad-preview-0.1-windows.yml",
+    "workflow_17_verified_paths_in_git": [
+      ".github/workflows/release-mersad-preview-0.1-windows.yml",
+      "MERSAD_AI_Preview_0.1/requirements.txt",
+      "MERSAD_AI_Preview_0.1/constraints-win-x64.txt",
+      "MERSAD_AI_Preview_0.1/check_install.py",
+      "tools/prepare_safe_eval_benchmarks.py",
+      "MERSAD_AI_Preview_0.1/prefetch.py",
+      "MERSAD_AI_Preview_0.1/mersad_live.py",
+      "integration/evaluate_ai_models.py",
+      "tools/compare_original_vs_cleanroom_lab.py",
+      "MERSAD_AI_Preview_0.1/selftest.py",
+      "MERSAD_AI_Preview_0.1/verify_integrity.py",
+      "MERSAD_LAB_Preview_0.1/test_lab.py",
+      "MERSAD_AI_Preview_0.1/mersad_ai.spec",
+      "MERSAD_LAB_Preview_0.1/mersad_lab.spec",
+      "MERSAD_LAB_Preview_0.1/installer/mersad_lab_setup.iss",
+      "integration/test_main_entrypoint_dynamic_camera_lifecycle.py",
+      "integration/test_ai_lab_integration.py"
     ]
+  },
+  "production_readiness_status": "NOT ESTABLISHED",
+  "source_and_ci_preflight_preparation_percent": 100.0,
+  "separated_readiness_indicators_bug39": {
+    "source_and_ci_preflight_preparation_percent": 100.0,
+    "api_readiness_field_mapping": {
+      "overall_engineering_readiness_pct": 100.0,
+      "meaning": "SOURCE_AND_CI_PREFLIGHT_PREPARATION_PERCENT (measures source code, security controls, Windows build specs, and evaluation/calibration software tooling only; never implies runtime model, hardware, or production readiness)",
+      "runtime_models_and_deps_readiness_pct_in_sandbox": 0.0,
+      "field_data_calibration_readiness_pct_in_sandbox": 0.0,
+      "deployment_classification_in_sandbox": "READY_FOR_LAPTOP_SETUP_AND_DEMO"
+    },
+    "indicators": [
+      {
+        "indicator": "Source Code & Structural Verification",
+        "status": "PASS"
+      },
+      {
+        "indicator": "Unit & Security Tests",
+        "status": "PASS"
+      },
+      {
+        "indicator": "AI-LAB Software Integration",
+        "status": "13 PASS + 2 NOT_TESTED"
+      },
+      {
+        "indicator": "Windows Native Build",
+        "status": "NOT_TESTED"
+      },
+      {
+        "indicator": "Four Heavy Models Acceptance",
+        "status": "NOT_TESTED"
+      },
+      {
+        "indicator": "Physical RTSP/USB Cameras",
+        "status": "NOT_TESTED"
+      },
+      {
+        "indicator": "Field Calibration",
+        "status": "NOT_TESTED"
+      },
+      {
+        "indicator": "Two-Hour Field Soak",
+        "status": "NOT_TESTED"
+      },
+      {
+        "indicator": "Production Readiness",
+        "status": "NOT ESTABLISHED"
+      }
+    ]
+  },
+  "ci_deployment_hardening_bug35_to_bug39": {
+    "bug35_single_run_push_only_ci": {
+      "trigger_mode": "push_only",
+      "workflow_dispatch_removed": true,
+      "gh_workflow_run_calls_removed": true,
+      "status": "PASS"
+    },
+    "bug36_polling_state_machine": {
+      "states": [
+        "PREFLIGHT_PASS",
+        "PUSH_COMPLETED",
+        "RUN_DISCOVERED",
+        "RUN_IN_PROGRESS",
+        "RUN_FAILED",
+        "RUN_TIMEOUT",
+        "DUPLICATE_RUN_DETECTED",
+        "ARTIFACTS_VERIFIED",
+        "PASS"
+      ],
+      "duplicate_run_guard": true,
+      "historical_run_id_exclusion": true,
+      "status": "PASS"
+    },
+    "bug37_unused_input_removed": {
+      "removed_input": "run_extended_stress",
+      "reason": "Input was never referenced in any conditional step in release-mersad-preview-0.1-windows.yml; all 5 CI build & verification phases execute unconditionally.",
+      "status": "PASS"
+    },
+    "bug38_commit_lineage_reconciled": {
+      "mersad_ai_current_branch_head": "New verified HEAD directly above 05f29af416c4a28ddf59c291819584d1a416d570",
+      "mersad_ai_previous_preflight_commit": "05f29af416c4a28ddf59c291819584d1a416d570",
+      "mersad_ai_runtime_code_commit": "edaf651321ec9ea6ba613e3ab1630bc16b11b9d5",
+      "mersad_lab_head_commit": "748ac0158761812a6fff63ff6fe626b9df8c252b",
+      "workflow_paths_unified": "1 Workflow File + 16 Required Paths = 17 Verified Paths",
+      "status": "PASS"
+    },
+    "bug39_readiness_indicators_separated": {
+      "source_and_ci_preflight_preparation_percent": 100.0,
+      "production_readiness": "NOT ESTABLISHED",
+      "status": "PASS"
+    }
   }
 }
