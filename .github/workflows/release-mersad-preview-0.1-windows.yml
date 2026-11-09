@@ -29,6 +29,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          # Force UTF-8 in every Python child process, including EasyOCR's progress hook.
+          $env:PYTHONUTF8 = "1"
+          $env:PYTHONIOENCODING = "utf-8:strict"
           python -m pip install --upgrade pip
           if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
           pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
@@ -38,7 +41,9 @@ jobs:
           pip uninstall -y opencv-python-headless
           pip install --force-reinstall --no-deps opencv-python==4.11.0.86
           if ($LASTEXITCODE -ne 0) { throw "enforce GUI opencv-python failed ($LASTEXITCODE)" }
-          python MERSAD_AI_Preview_0.1/check_install.py --verify-pip-deps
+          python -X utf8 MERSAD_AI_Preview_0.1/test_prefetch_console_encoding.py
+          if ($LASTEXITCODE -ne 0) { throw "Windows console encoding regression test failed ($LASTEXITCODE)" }
+          python -X utf8 MERSAD_AI_Preview_0.1/check_install.py --verify-pip-deps
           if ($LASTEXITCODE -ne 0) { throw "check_install.py --verify-pip-deps failed ($LASTEXITCODE)" }
 
           # Verify or install Inno Setup 6 (ISCC.exe) explicitly on GitHub Actions runner
@@ -60,11 +65,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python MERSAD_AI_Preview_0.1/prefetch.py
+          $env:PYTHONUTF8 = "1"
+          $env:PYTHONIOENCODING = "utf-8:strict"
+          python -X utf8 MERSAD_AI_Preview_0.1/prefetch.py
           if ($LASTEXITCODE -ne 0) { throw "prefetch.py failed ($LASTEXITCODE)" }
-          python MERSAD_AI_Preview_0.1/mersad_live.py --verify-models
+          python -X utf8 MERSAD_AI_Preview_0.1/mersad_live.py --verify-models
           if ($LASTEXITCODE -ne 0) { throw "--verify-models failed ($LASTEXITCODE)" }
-          python -u integration/evaluate_ai_models.py --require-real-models
+          python -X utf8 -u integration/evaluate_ai_models.py --require-real-models
           if ($LASTEXITCODE -ne 0) { throw "evaluate_ai_models.py --require-real-models failed ($LASTEXITCODE)" }
 
       - name: Phase 2 — Extract Original MERSAD LAB (Commit ed7b8f727243da4878e547f08489af581c83291c if present) & Compare with Clean-Room LAB
