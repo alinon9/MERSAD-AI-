@@ -777,29 +777,9 @@ def run_security_lan_and_multiprocess_tests():
             "m.log('session start', cam)\n"
             "stop_ev.set()\n"
             "if not m._notify_mod.wait_listener_stopped(timeout=3.0): raise RuntimeError('Telegram listener did not stop after ownership check')\n"
-            "_original_mutex_acquire = m.R._acquire_windows_db_mutex\n"
-            "def _observed_mutex_acquire(path, *args, **kwargs):\n"
-            "    _mark_progress('waiting_for_windows_mutex')\n"
-            "    handle = _original_mutex_acquire(path, *args, **kwargs)\n"
-            "    _mark_progress('windows_mutex_acquired')\n"
-            "    return handle\n"
-            "m.R._acquire_windows_db_mutex = _observed_mutex_acquire\n"
-            "_original_run_atomic_tx = m.R.run_atomic_tx\n"
-            "def _observed_run_atomic_tx(db, lock, fn, db_path=None, retries=20):\n"
-            "    _mark_progress('run_atomic_entered')\n"
-            "    def _observed_callback(conn):\n"
-            "        _mark_progress('transaction_callback_entered')\n"
-            "        result = fn(conn)\n"
-            "        _mark_progress('transaction_callback_finished')\n"
-            "        return result\n"
-            "    result = _original_run_atomic_tx(db, lock, _observed_callback, db_path=db_path, retries=retries)\n"
-            "    _mark_progress('run_atomic_returned')\n"
-            "    return result\n"
-            "m.R.run_atomic_tx = _observed_run_atomic_tx\n"
             "_mark_progress('ready_for_batch')\n"
             "def _write_alert_batch(conn):\n"
             "    for idx in range(50):\n"
-            "        if idx in (0, 24, 49): _mark_progress(f'transaction_insert_{idx + 1}')\n"
             "        now = time.time()\n"
             "        subject = f'{cam}_PL_{idx}'\n"
             "        cur = conn.execute(\n"
@@ -1547,18 +1527,33 @@ def run_round4_tests():
     orig_data_dir = os.environ.get("MERSAD_DATA_DIR")
     try:
         os.environ["MERSAD_DATA_DIR"] = d_tmp
+        acl_helper = reg_mod._set_windows_private_acl
+        acl_calls = []
+        def _count_acl_calls(path, is_dir=False):
+            acl_calls.append((path, is_dir))
+            return acl_helper(path, is_dir=is_dir)
+        reg_mod._set_windows_private_acl = _count_acl_calls
+
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         p_first = reg_mod.pseud("12345")
         key_file = os.path.join(d_tmp, ".mersad_hmac.key")
         key_mode = stat_mod.S_IMODE(os.stat(key_file).st_mode)
+        acl_calls_after_first = len(acl_calls)
+        p_cached = reg_mod.pseud("12345")
+        cache_avoids_repeated_acl = (os.name != "nt" or len(acl_calls) == acl_calls_after_first)
+        reg_mod._set_windows_private_acl = acl_helper
+
         # Clear cache to simulate restart -> must reload same key and produce identical pseudonym
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         p_after_restart = reg_mod.pseud("12345")
 
         # Truncate/corrupt the key file -> must raise RuntimeError and NOT silently overwrite!
         with open(key_file, "wb") as kf:
             kf.write(b"corrupt_11b")
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         corrupt_raised = False
         try:
             reg_mod.pseud("12345")
@@ -1569,6 +1564,7 @@ def run_round4_tests():
         # Unwritable directory -> must raise RuntimeError and NOT use a static fallback key!
         os.environ["MERSAD_DATA_DIR"] = os.path.join(d_tmp, "nonexistent_subdir_unwritable")
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         unwritable_raised = False
         try:
             reg_mod.pseud("12345")
@@ -1576,12 +1572,14 @@ def run_round4_tests():
             unwritable_raised = True
 
         check("P1-D", "HMAC key created with 0600, persists across restart, refuses corrupt key overwrite, and fails closed without static fallback",
-              p_first == p_after_restart and key_mode == 0o600 and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
-              (p_first, p_after_restart, oct(key_mode), corrupt_raised, still_corrupt_len, unwritable_raised))
+              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_mode == 0o600 and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
+              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, acl_calls_after_first, oct(key_mode), corrupt_raised, still_corrupt_len, unwritable_raised))
     finally:
         if orig_data_dir is not None:
             os.environ["MERSAD_DATA_DIR"] = orig_data_dir
+        reg_mod._set_windows_private_acl = acl_helper
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         shutil.rmtree(d_tmp, ignore_errors=True)
 
     # Test interrupted atomic write on .mersad_secrets.json preserves previous file and leaves 0 temp files
@@ -2703,6 +2701,7 @@ def run_stage3_gap_regression_tests():
     try:
         os.environ["MERSAD_DATA_DIR"] = gap11_dir
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         g11_db_path = os.path.join(gap11_dir, "gap11.db")
         c_g11 = sqlite3.connect(g11_db_path, timeout=10.0, check_same_thread=False)
         m.APPDIR = gap11_dir
@@ -2763,10 +2762,12 @@ def run_stage3_gap_regression_tests():
         bak_p = os.path.join(gap11_dir, ".mersad_hmac.key.bak")
         os.rename(key_p, bak_p)
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         ver_missing_key = m.verify()
         no_silent_recreate = not os.path.exists(key_p)
         os.rename(bak_p, key_p)
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         ver_restored = m.verify()
         c_g11.close()
 
@@ -2788,6 +2789,7 @@ def run_stage3_gap_regression_tests():
         else:
             os.environ.pop("MERSAD_DATA_DIR", None)
         reg_mod._HMAC_KEY_CACHE.clear()
+        reg_mod._HMAC_KEY_CACHE_META.clear()
         reg_mod.init(m.db, m.DBL, m.log, m.refresh_known, db_path=m.DB_PATH)
         shutil.rmtree(gap11_dir, ignore_errors=True)
 
