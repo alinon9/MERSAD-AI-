@@ -66,6 +66,43 @@ def download_verified(filename, url, min_bytes=50_000, expected_sha256=None, ret
     )
 
 
+def install_easyocr_download_retries(easyocr_utils, retries=4, base_delay=2.0):
+    """Retry transient EasyOCR release-download failures without bypassing its MD5 checks.
+
+    EasyOCR 1.7.2 uses urllib.request.urlretrieve once and writes to temp.zip.
+    GitHub release/CDN 5xx responses (notably 502/503/504) are transient; retry
+    those and network timeouts only. Permanent HTTP errors fail immediately.
+    """
+    original_urlretrieve = easyocr_utils.urlretrieve
+    transient_http = {408, 425, 429, 500, 502, 503, 504}
+
+    def resilient_urlretrieve(url, filename=None, reporthook=None, data=None):
+        attempts = max(1, int(retries))
+        for attempt in range(attempts):
+            try:
+                return original_urlretrieve(url, filename, reporthook, data)
+            except urllib.error.HTTPError as exc:
+                retryable = exc.code in transient_http
+                if not retryable or attempt + 1 >= attempts:
+                    raise
+            except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError):
+                if attempt + 1 >= attempts:
+                    raise
+            # urlretrieve may leave a partial archive after a failed transfer.
+            # Remove only EasyOCR's temporary download target, never model files.
+            if filename and os.path.isfile(filename):
+                try:
+                    os.remove(filename)
+                except OSError:
+                    pass
+            delay = min(float(base_delay) * (2 ** attempt), 20.0)
+            print(f"[EasyOCR download retry] transient network failure; retry {attempt + 2}/{attempts} in {delay:.0f}s")
+            time.sleep(delay)
+
+    easyocr_utils.urlretrieve = resilient_urlretrieve
+    return original_urlretrieve
+
+
 def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
     """Download and verify all required AI models (YuNet, SFace, EasyOCR ar+en, YOLOv8n)."""
     os.makedirs(os.path.join(models_dir, "easyocr"), exist_ok=True)
@@ -89,6 +126,8 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
         print(f"  [OK] EasyOCR Arabic/English weights already verified in {easy_dir} ({reason_easy})")
     else:
         import easyocr
+        import easyocr.utils as easyocr_utils
+        install_easyocr_download_retries(easyocr_utils, retries=4, base_delay=2.0)
         dev_info = resolve_compute_device(os.environ.get("MERSAD_DEVICE", "auto"))
         # EasyOCR performs its normal network downloads here. UTF-8 console
         # configuration above fixes its progress hook without patching its code.
