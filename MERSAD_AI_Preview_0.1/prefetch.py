@@ -1,12 +1,33 @@
-"""Run ONCE with internet: safely downloads every AI model from pinned sources with socket timeouts,
-bounded retries, atomic .part files, SHA-256 verification (for OpenCV Zoo ONNX models),
-and structural PyTorch ZIP/checkpoint & EasyOCR weight verification so the program and built .exe work fully OFFLINE.
-Never overwrites or deletes an existing valid model file if a download fails partway."""
+"""Download and verify all MERSAD AI models for offline use.
+
+The EasyOCR 1.7.2 progress hook writes the Unicode FULL BLOCK character to
+stdout. Windows hosted runners can expose cp1252 streams, which cannot encode
+that character. Normalize only the Python console streams before importing
+or calling EasyOCR; downloads and integrity checks remain unchanged.
+"""
 import hashlib, os, shutil, socket, sys, time, urllib.error, urllib.request, uuid, zipfile
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
+
+def configure_utf8_console():
+    """Make Python text output safe on Windows cp1252 consoles without masking I/O errors."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="strict")
+            except (OSError, ValueError):
+                # Embedded/redirected streams may not support reconfiguration.
+                # The workflow also sets PYTHONUTF8/PYTHONIOENCODING before launch.
+                pass
+
+
+# Must run before any EasyOCR import or Reader construction.
+configure_utf8_console()
 
 from mersad_live import (
     MODELS,
@@ -69,6 +90,8 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
     else:
         import easyocr
         dev_info = resolve_compute_device(os.environ.get("MERSAD_DEVICE", "auto"))
+        # EasyOCR performs its normal network downloads here. UTF-8 console
+        # configuration above fixes its progress hook without patching its code.
         try:
             easyocr.Reader(["ar", "en"], gpu=dev_info["use_gpu"], model_storage_directory=easy_dir, download_enabled=True)
         except TypeError:
@@ -99,7 +122,6 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
         except Exception:
             pass
 
-    # Verify YOLO model actually loads via Ultralytics if installed
     try:
         from ultralytics import YOLO
         _ = YOLO(yolo_target)
@@ -107,11 +129,12 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
     except ImportError:
         pass
 
-    print("\nAll models are verified and ready in the 'models' folder for offline operation.")
+    print("\\nAll models are verified and ready in the 'models' folder for offline operation.")
     return True
 
 
 def main():
+    configure_utf8_console()
     os.chdir(BASE_DIR)
     prefetch_all_models(models_dir="models")
 
