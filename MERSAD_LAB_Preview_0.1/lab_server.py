@@ -13,7 +13,10 @@ import json
 import logging
 import os
 import re
-import resource
+try:
+    import resource
+except ImportError:  # The resource module is Unix-only; Windows uses Win32 process counters.
+    resource = None
 import secrets
 import signal
 import socket
@@ -63,15 +66,56 @@ def resolve_lab_asset(filename: str) -> str:
 
 
 def get_process_telemetry(start_time: float) -> dict:
+    """Return portable process telemetry without requiring Unix-only modules on Windows."""
     rss_mb = 0.0
     try:
         if sys.platform.startswith("linux") and os.path.isfile("/proc/self/statm"):
-            parts = open("/proc/self/statm", encoding="ascii").read().split()
+            with open("/proc/self/statm", encoding="ascii") as statm:
+                parts = statm.read().split()
             rss_mb = round((int(parts[1]) * os.sysconf("SC_PAGE_SIZE")) / (1024.0 * 1024.0), 2)
-        else:
+        elif sys.platform == "win32":
+            # GetProcessMemoryInfo reports the current working set in bytes.
+            # This keeps the LAB memory-pressure telemetry meaningful on Windows.
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(counters)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            get_current_process = kernel32.GetCurrentProcess
+            get_current_process.restype = wintypes.HANDLE
+            psapi = ctypes.WinDLL("Psapi.dll", use_last_error=True)
+            get_memory_info = psapi.GetProcessMemoryInfo
+            get_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+                wintypes.DWORD,
+            ]
+            get_memory_info.restype = wintypes.BOOL
+            if not get_memory_info(get_current_process(), ctypes.byref(counters), counters.cb):
+                raise OSError(ctypes.get_last_error(), "GetProcessMemoryInfo failed")
+            rss_mb = round(counters.WorkingSetSize / (1024.0 * 1024.0), 2)
+        elif resource is not None:
             ru = resource.getrusage(resource.RUSAGE_SELF)
-            rss_mb = round(ru.ru_maxrss / 1024.0, 2)
+            # ru_maxrss is bytes on macOS and KiB on other common Unix platforms.
+            rss_bytes = ru.ru_maxrss if sys.platform == "darwin" else ru.ru_maxrss * 1024.0
+            rss_mb = round(rss_bytes / (1024.0 * 1024.0), 2)
     except Exception:
+        # Telemetry must never bring down the LAB health endpoint.
         rss_mb = 0.0
     cpu_sec = round(float(time.process_time()), 3)
     uptime_sec = round(max(0.001, time.time() - start_time), 2)
