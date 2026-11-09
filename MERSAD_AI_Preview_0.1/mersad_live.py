@@ -2647,10 +2647,10 @@ def detect_vehicles(img, model, device=None):
 
 
 def find_plates(img, yolo=None, device=None):
-    """YOLO plate model if provided (--plate-model), else classic OpenCV Canny rectangle search.
-    GAP-17 engineering note: Replacing classic Canny contour detection in field deployments requires
-    providing a dedicated YOLO plate detector (--plate-model) trained on real Yemeni license plates.
-    Geometric thresholds are kept stable unless backed by a reproducible before/after benchmark via evaluate_plates_dataset()."""
+    """Detect plate candidates and rank geometric contours by plate-like interior appearance.
+    The classical fallback favours bright, high-contrast plate interiors over larger dark
+    windshield rectangles commonly present in LAB scenes. It remains a candidate detector,
+    not a substitute for a dedicated Yemeni plate model trained on field data."""
     if img is None or getattr(img, "size", 0) == 0:
         return []
     H, W = img.shape[:2]
@@ -2668,15 +2668,47 @@ def find_plates(img, yolo=None, device=None):
             if x2 > x1 and y2 > y1:
                 out.append((x1, y1, x2 - x1, y2 - y1))
         return out
-    g = cv2.bilateralFilter(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 9, 60, 60)
-    cs, _ = cv2.findContours(cv2.Canny(g, 60, 180), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    out = []
-    for c in sorted(cs, key=cv2.contourArea, reverse=True)[:15]:
-        x, y, w, h = cv2.boundingRect(c)
-        if w > 80 and h > 0 and 2 <= w / h <= 6 and \
-           len(cv2.approxPolyDP(c, 0.03 * cv2.arcLength(c, True), True)) == 4:
-            out.append((x, y, w, h))
-    return out[:3]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    filtered = cv2.bilateralFilter(gray, 9, 60, 60)
+    contours, _ = cv2.findContours(cv2.Canny(filtered, 60, 180), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    ranked = []
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:40]:
+        x, y, w, h = cv2.boundingRect(contour)
+        if w <= 80 or h <= 0 or not (2 <= w / h <= 6):
+            continue
+        if len(cv2.approxPolyDP(contour, 0.03 * cv2.arcLength(contour, True), True)) != 4:
+            continue
+        # Ignore the border pixels: white plate interiors should outrank dark glass.
+        inset_x = max(2, int(w * 0.08))
+        inset_y = max(2, int(h * 0.15))
+        inner = filtered[y + inset_y:min(H, y + h - inset_y), x + inset_x:min(W, x + w - inset_x)]
+        if inner.size == 0:
+            continue
+        mean_luma = float(np.mean(inner)) / 255.0
+        bright_fraction = float(np.mean(inner >= 150))
+        ratio_score = max(0.0, 1.0 - abs((w / float(h)) - 4.0) / 4.0)
+        area_fraction = min(1.0, (w * h) / max(1.0, W * H * 0.04))
+        score = 0.55 * bright_fraction + 0.25 * mean_luma + 0.15 * ratio_score + 0.05 * area_fraction
+        ranked.append((score, (x, y, w, h)))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    # Return up to three distinct top candidates; downstream OCR can still inspect alternatives.
+    selected = []
+    for score, box in ranked:
+        x, y, w, h = box
+        duplicate = False
+        for sx, sy, sw, sh in selected:
+            ix1, iy1 = max(x, sx), max(y, sy)
+            ix2, iy2 = min(x + w, sx + sw), min(y + h, sy + sh)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = w * h + sw * sh - inter
+            if union > 0 and inter / union >= 0.85:
+                duplicate = True
+                break
+        if not duplicate:
+            selected.append(box)
+        if len(selected) >= 3:
+            break
+    return selected
 
 
 def preprocess_plate(crop):
