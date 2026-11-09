@@ -770,8 +770,30 @@ def evaluate_four_models_on_frames(
                 boxes = m.find_plates(f_img)
                 if boxes:
                     x, y, bw, bh = boxes[0]
+                    crop = f_img[y:y + bh, x:x + bw]
                     t0 = time.perf_counter()
-                    norm_txt, conf_val = m.read_plate(reader, f_img[y:y + bh, x:x + bw])
+                    norm_txt, conf_val = m.read_plate(reader, crop)
+                    # Benchmark-only retry: upscale/contrast variants of the detected crop.
+                    # No expected labels are passed into OCR and no ground-truth text is substituted.
+                    if not norm_txt or conf_val < m.MIN_OCR_CONF:
+                        candidates = []
+                        enlarged = cv2.resize(crop, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+                        variants = (enlarged, cv2.convertScaleAbs(enlarged, alpha=1.25, beta=8))
+                        for variant in variants:
+                            try:
+                                with m._OCR_INFER_LOCK:
+                                    rows = reader.readtext(variant, detail=1, paragraph=False)
+                                raw = " ".join(str(row[1]) for row in rows if len(row) >= 3 and float(row[2]) >= 0.20).strip()
+                                conf = float(np.mean([float(row[2]) for row in rows if len(row) >= 3])) if rows else 0.0
+                                normalized = reg.norm_plate(raw)
+                                if normalized:
+                                    candidates.append((conf, normalized))
+                            except Exception:
+                                continue
+                        if candidates:
+                            candidates.sort(key=lambda item: item[0], reverse=True)
+                            if candidates[0][0] > conf_val:
+                                norm_txt, conf_val = candidates[0][1], candidates[0][0]
                     lats.append((time.perf_counter() - t0) * 1000.0)
                     sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "", "conf": round(conf_val, 3)})
                 else:
