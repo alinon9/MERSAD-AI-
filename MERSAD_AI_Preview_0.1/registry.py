@@ -515,15 +515,34 @@ def split_plate(s):
 
 
 def norm_plate(s, governorate=""):
-    """Canonical representation of a plate string: 'letters-digits' when letters or governorate exist, else 'digits'."""
-    digits, letters = split_plate(s)
+    """Canonical plate representation with narrowly scoped known OCR governorate signatures."""
+    raw = str(s or "").translate(DIG).translate(AR_NORM).strip().upper()
+    if not raw:
+        return ""
+    digits, letters = split_plate(raw)
     if not digits:
         return ""
     eff_letters = letters or _norm_letters_only(governorate)
-    if eff_letters:
-        return f"{eff_letters}-{digits}"
-    return digits
-
+    if not eff_letters:
+        # EasyOCR may mistake the IBB prefix for "188" on small plate crops.
+        # Recover only explicit, known governorate signatures; leave ordinary
+        # numeric-only plates untouched.
+        compact = re.sub(r"[^A-Z0-9]", "", raw)
+        signatures = (
+            ("IBB", "إب"), ("188", "إب"),
+            ("ADEN", "عدن"), ("ADN", "عدن"),
+            ("SANAA", "صنعاء"), ("SANA", "صنعاء"),
+            ("TAIZ", "تعز"), ("TAZ", "تعز"),
+            ("HADRAMOUT", "حضرموت"), ("HADR", "حضرموت"),
+            ("MARIB", "مأرب"), ("MARI", "مأرب"), ("MAR", "مأرب"),
+        )
+        for signature, canonical in signatures:
+            if compact.startswith(signature):
+                eff_letters = canonical
+                if canonical == "إب" and len(digits) > 5 and digits.startswith("188"):
+                    digits = digits[3:]
+                break
+    return f"{eff_letters}-{digits}" if eff_letters else digits
 
 def _norm_letters_only(s):
     raw = str(s or "").translate(DIG).translate(AR_NORM).strip().upper()
