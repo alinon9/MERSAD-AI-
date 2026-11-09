@@ -3,6 +3,7 @@ Runs without real camera, GPU, or internet, and passes both WITH and WITHOUT sci
 Separates PASS, SKIP, and FAIL explicitly.
    python selftest.py"""
 import hashlib, json, os, shutil, socket, sqlite3, subprocess, sys, tempfile, threading, time, types, urllib.error, urllib.request
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from email import message_from_bytes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
@@ -734,10 +735,49 @@ def run_security_lan_and_multiprocess_tests():
             "m.db.close()\n"
             "print(f'MP_OUT:{cam}:errs={errs}:listener={int(listener_owned)}:synced={synced_total}:route={msg}')\n"
         )
-        p1 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM1", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        p2 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM2", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        o1, e1 = p1.communicate(timeout=30)
-        o2, e2 = p2.communicate(timeout=30)
+        p1 = p2 = None
+        try:
+            p1 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM1", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            p2 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM2", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+            # Drain both child pipes concurrently. Sequential communicate() calls
+            # gave the second Windows worker a fresh 30s timeout only after the
+            # first worker had already consumed most of the wall-clock budget.
+            # SQLite/audit stress is intentionally kept at 2 x 50 writes.
+            mp_timeout = 75
+            with ThreadPoolExecutor(max_workers=2) as mp_pool:
+                f1 = mp_pool.submit(p1.communicate, timeout=mp_timeout)
+                f2 = mp_pool.submit(p2.communicate, timeout=mp_timeout)
+                try:
+                    o1, e1 = f1.result(timeout=mp_timeout + 5)
+                    o2, e2 = f2.result(timeout=mp_timeout + 5)
+                except (subprocess.TimeoutExpired, FutureTimeoutError) as exc:
+                    for child in (p1, p2):
+                        if child is not None and child.poll() is None:
+                            child.kill()
+                    # The futures own communicate() and finish draining after kill.
+                    try:
+                        o1, e1 = f1.result(timeout=5)
+                    except Exception as drain_exc:
+                        o1, e1 = "", f"stdout/stderr drain failed: {drain_exc}"
+                    try:
+                        o2, e2 = f2.result(timeout=5)
+                    except Exception as drain_exc:
+                        o2, e2 = "", f"stdout/stderr drain failed: {drain_exc}"
+                    raise RuntimeError(
+                        f"Concurrent DB stress workers exceeded {mp_timeout}s; "
+                        f"exit_codes={(p1.poll(), p2.poll())}; "
+                        f"CAM1_out={o1[-500:]!r}; CAM1_err={e1[-500:]!r}; "
+                        f"CAM2_out={o2[-500:]!r}; CAM2_err={e2[-500:]!r}"
+                    ) from exc
+        finally:
+            for child in (p1, p2):
+                if child is not None and child.poll() is None:
+                    child.kill()
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
         mp_exit_codes = (p1.returncode, p2.returncode)
 
         mp_db = sqlite3.connect(os.path.join(mp_dir, "mersad.db"))

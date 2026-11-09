@@ -443,6 +443,26 @@ def main():
     print(f"  JSON Report            : {args.output_json}")
     print("========================================================================================")
 
+    for suite_name, suite in (("Original LAB", orig_suite), ("Clean-Room LAB", clean_suite)):
+        failures = [item for item in suite.get("checks", []) if item.get("status") == "FAIL"]
+        for item in failures:
+            print(f"[PHASE2 CHECK FAILURE] {suite_name} | {item.get('id')}: {item.get('detail')}")
+        if suite.get("reason"):
+            print(f"[PHASE2 SUITE REASON] {suite_name}: {suite['reason']}")
+        if suite_name == "Clean-Room LAB" and suite.get("status") != "PASS":
+            for line in suite.get("raw_output_tail", [])[-10:]:
+                print(f"[PHASE2 CLEANROOM OUTPUT] {line}")
+
+    # The original LAB may legitimately remain BLOCKED when the historical source
+    # cannot be restored, but the current Clean-Room LAB must pass all 20 checks.
+    if args.require_cleanroom_pass and clean_suite.get("status") != "PASS":
+        print(
+            f"[FAILED] Clean-Room LAB suite is {clean_suite.get('status')} "
+            f"({clean_suite.get('passed', 0)}/{clean_suite.get('total', 0)} PASS); "
+            "required 20/20 PASS before release.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if args.require_unblocked and overall_phase2_status != "PASS":
         print(f"[BLOCKED/FAILED] Phase 2 status is {overall_phase2_status}. Cannot mark Phase 2 as PASS without verified commit {TARGET_ORIGINAL_COMMIT}.", file=sys.stderr)
         sys.exit(2)
