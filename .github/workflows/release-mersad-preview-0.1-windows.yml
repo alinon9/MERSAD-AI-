@@ -6,6 +6,7 @@ on:
       - "preview/mersad-ai-lab-0.1-*"
       - "release/mersad-preview-0.1*"
       - "fix/preview-0.1-*"
+      - "fix/easyocr-windows-utf8-*"
 
 permissions:
   contents: read
