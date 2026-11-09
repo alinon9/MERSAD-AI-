@@ -229,11 +229,19 @@ def generate_plates_benchmark(plates_dir: Path) -> dict:
         vx1, vy1, vx2, vy2 = 140, 150, 500, 410
         cv2.rectangle(img, (vx1, vy1), (vx2, vy2), (130, 90, 55), -1)
         cv2.rectangle(img, (vx1, vy1), (vx2, vy2), (200, 175, 135), 2)
-        px1, py1, px2, py2 = 215, 338, 425, 390
+        # The printed code is the same Latin alias normalized by registry.py to
+        # the Arabic governorate in ground_truth.json. Use a wide plate and a
+        # heavier font so narrow letters (notably I in TAIZ/MARI/IBB) remain visible.
+        px1, py1, px2, py2 = 170, 326, 470, 400
         cv2.rectangle(img, (px1, py1), (px2, py2), (252, 252, 252), -1)
         cv2.rectangle(img, (px1, py1), (px2, py2), (10, 10, 10), 3)
         plate_txt = f"{gov_en[:4]} {digits}"
-        cv2.putText(img, plate_txt, (px1 + 14, py2 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (10, 10, 10), 2, cv2.LINE_AA)
+        plate_font = cv2.FONT_HERSHEY_DUPLEX
+        plate_scale, plate_thickness = 1.0, 3
+        (text_w, text_h), _ = cv2.getTextSize(plate_txt, plate_font, plate_scale, plate_thickness)
+        text_x = px1 + max(8, (px2 - px1 - text_w) // 2)
+        text_y = py1 + ((py2 - py1) + text_h) // 2
+        cv2.putText(img, plate_txt, (text_x, text_y), plate_font, plate_scale, (10, 10, 10), plate_thickness, cv2.LINE_AA)
 
         out_p = plates_dir / fname
         cv2.imwrite(str(out_p), img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
