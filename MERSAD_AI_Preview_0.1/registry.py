@@ -482,6 +482,7 @@ _LATIN_GOV_TO_AR = {
     # governorate-code token; they do not alter numeric-only plate matching.
     "TAZ": "تعز",
     "HADR": "حضرموت",
+    "HAR": "حضرموت",
     "HADRAMOUT": "حضرموت",
     "IBB": "إب",
     "MARIB": "مأرب",
@@ -529,7 +530,7 @@ def norm_plate(s, governorate=""):
         # numeric-only plates untouched.
         compact = re.sub(r"[^A-Z0-9]", "", raw)
         signatures = (
-            ("IBB", "إب"), ("188", "إب"),
+            ("IBB", "إب"), ("I88", "إب"), ("L88", "إب"), ("188", "إب"),
             ("ADEN", "عدن"), ("ADN", "عدن"),
             ("SANAA", "صنعاء"), ("SANA", "صنعاء"),
             ("TAIZ", "تعز"), ("TAZ", "تعز"),
