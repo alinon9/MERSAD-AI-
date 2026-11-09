@@ -59,6 +59,10 @@ jobs:
             Write-Host "[Setup] Installing Tesseract OCR via Chocolatey for auxiliary benchmark..."
             choco install tesseract -y --no-progress
           }
+          # Regenerate only the repository's safe synthetic fixtures. The generator
+          # refuses to overwrite operator-imported consented faces or natural vehicle data.
+          python tools/prepare_safe_eval_benchmarks.py --generate
+          if ($LASTEXITCODE -ne 0) { throw "prepare_safe_eval_benchmarks.py --generate failed ($LASTEXITCODE)" }
           python tools/prepare_safe_eval_benchmarks.py --verify
           if ($LASTEXITCODE -ne 0) { throw "prepare_safe_eval_benchmarks.py --verify failed ($LASTEXITCODE)" }
 
