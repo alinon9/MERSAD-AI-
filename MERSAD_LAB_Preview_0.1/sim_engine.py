@@ -94,15 +94,23 @@ class VirtualCamera:
         cv2.circle(img, (vx1 + 40, vy2 - 55), 16, (215, 245, 255), -1)
         cv2.circle(img, (vx2 - 40, vy2 - 55), 16, (215, 245, 255), -1)
 
-        # High-contrast rectangular license plate in lower vehicle region (compatible with find_plates Canny + real Tesseract/EasyOCR)
-        px1 = int((vx1 + vx2) * 0.5) - 105
-        py1 = vy2 - 72
-        px2 = px1 + 210
-        py2 = py1 + 52
+        # Larger, high-contrast plate with a heavier duplex font. Keep the displayed
+        # Latin governorate code consistent with registry._LATIN_GOV_TO_AR and leave
+        # enough horizontal margin so narrow letters (especially I) are not clipped.
+        plate_w, plate_h = 260, 64
+        plate_cx = int((vx1 + vx2) * 0.5)
+        px1 = plate_cx - plate_w // 2
+        py1 = vy2 - 82
+        px2, py2 = px1 + plate_w, py1 + plate_h
         cv2.rectangle(img, (px1, py1), (px2, py2), (252, 252, 252), -1)
         cv2.rectangle(img, (px1, py1), (px2, py2), (10, 10, 10), 3)
         plate_txt = f"{self.plate_ascii.split()[0][:4]} {self.plate_digits}"
-        cv2.putText(img, plate_txt, (px1 + 14, py2 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (10, 10, 10), 2, cv2.LINE_AA)
+        plate_font = cv2.FONT_HERSHEY_DUPLEX
+        plate_scale, plate_thickness = 0.88, 3
+        (text_w, text_h), _ = cv2.getTextSize(plate_txt, plate_font, plate_scale, plate_thickness)
+        text_x = px1 + max(8, (plate_w - text_w) // 2)
+        text_y = py1 + (plate_h + text_h) // 2
+        cv2.putText(img, plate_txt, (text_x, text_y), plate_font, plate_scale, (10, 10, 10), plate_thickness, cv2.LINE_AA)
 
         # Telemetry banner at top
         cv2.rectangle(img, (0, 0), (w, 30), (22, 26, 32), -1)
