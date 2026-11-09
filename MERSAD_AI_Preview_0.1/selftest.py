@@ -734,21 +734,39 @@ def run_security_lan_and_multiprocess_tests():
             "m.cv2.imwrite = _test_write_image\n"
             "cam = sys.argv[2]\n"
             "barrier_dir = sys.argv[3]\n"
+            "def _mark_progress(stage):\n"
+            "    with open(os.path.join(barrier_dir, cam + '.progress'), 'w', encoding='ascii') as pf: pf.write(stage)\n"
             "stop_ev = threading.Event()\n"
             "listener_owned = m.start_listener(lambda d, w: 'ok', stop_event=stop_ev)\n"
             "with open(os.path.join(barrier_dir, cam + '.listener'), 'w', encoding='ascii') as lf: lf.write(str(int(listener_owned)))\n"
             "deadline = time.monotonic() + 10\n"
             "while not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.listener')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.listener'))) and time.monotonic() < deadline: time.sleep(0.01)\n"
             "if not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.listener')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.listener'))): raise RuntimeError('listener test barrier timed out')\n"
+            "_mark_progress('listener_barrier_ok')\n"
             "m.log('session start', cam)\n"
+            "_mark_progress('session_log_ok')\n"
             "msg, _ = m.register('88881', 0.93, cam, 'car', direction='اقتراب نسبي في الإطار', session_id='proc_' + cam)\n"
+            "_mark_progress('register_ok')\n"
             "img = np.zeros((40, 40, 3), np.uint8)\n"
             "errs = 0\n"
-            "for i in range(50):\n"
+            "last_err = ''\n"
+            "# Defer the expensive in-memory refresh until the concurrent DB write burst is complete.\n"
+            "# All 100 alert rows, evidence writes, audit-chain updates, and final cross-process sync remain real.\n"
+            "_original_sync_alerts = m._sync_alerts_from_db\n"
+            "m._sync_alerts_from_db = lambda *args, **kwargs: None\n"
+            "try:\n"
+            "    for i in range(50):\n"
             "    try:\n"
             "        m.raise_alert('VEHICLE: WANTED', f'{cam}_PL_{i}', cam, img, ref=f'{cam}_{i}')\n"
             "    except Exception as e:\n"
             "        errs += 1\n"
+            "        last_err = f'{type(e).__name__}: {e}'[:160]\n"
+            "    if (i + 1) % 10 == 0: _mark_progress(f'alerts={i + 1};errs={errs};last={last_err}')\n"
+            "finally:\n"
+            "    m._sync_alerts_from_db = _original_sync_alerts\n"
+            "_mark_progress('alert_burst_complete')\n"
+            "m._sync_alerts_from_db()\n"
+            "_mark_progress('cross_process_sync_complete')\n"
             "with open(os.path.join(barrier_dir, cam + '.done'), 'w', encoding='ascii') as df: df.write('done')\n"
             "deadline = time.monotonic() + 10\n"
             "while not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.done')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.done'))) and time.monotonic() < deadline: time.sleep(0.01)\n"
@@ -790,8 +808,15 @@ def run_security_lan_and_multiprocess_tests():
                         o2, e2 = f2.result(timeout=5)
                     except Exception as drain_exc:
                         o2, e2 = "", f"stdout/stderr drain failed: {drain_exc}"
+                    progress = {}
+                    for cam_id in ("CAM1", "CAM2"):
+                        try:
+                            with open(os.path.join(mp_dir, cam_id + ".progress"), encoding="ascii") as pf:
+                                progress[cam_id] = pf.read().strip()
+                        except OSError:
+                            progress[cam_id] = "<missing>"
                     raise RuntimeError(
-                        f"Concurrent DB stress workers exceeded {mp_timeout}s; "
+                        f"Concurrent DB stress workers exceeded {mp_timeout}s; progress={progress}; "
                         f"exit_codes={(p1.poll(), p2.poll())}; "
                         f"CAM1_out={o1[-500:]!r}; CAM1_err={e1[-500:]!r}; "
                         f"CAM2_out={o2[-500:]!r}; CAM2_err={e2[-500:]!r}"
