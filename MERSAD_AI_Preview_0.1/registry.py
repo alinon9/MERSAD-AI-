@@ -516,11 +516,42 @@ def split_plate(s):
     return digits, letters
 
 
+def _known_governorate_plate_from_raw(raw):
+    """Recover a known governorate prefix before OCR digit-confusion repair can corrupt it.
+
+    EasyOCR can join the Latin governorate code and serial into one token (SANA48210).
+    These narrow signatures are accepted only when followed solely by 3-8 serial digits.
+    """
+    compact = re.sub(r"[^A-Z0-9]", "", str(raw or "").upper())
+    signatures = dict(_LATIN_GOV_TO_AR)
+    signatures.update({
+        "ADN": "عدن",
+        "A05N": "عدن",   # observed EasyOCR confusion for ADEN
+        "T4Z": "تعز",    # observed EasyOCR confusion for TAZ/TAIZ
+        "I88": "إب",
+        "L88": "إب",
+        "188": "إب",
+    })
+    for signature in sorted(signatures, key=len, reverse=True):
+        if not compact.startswith(signature):
+            continue
+        suffix = compact[len(signature):]
+        if not suffix or any(ch.isalpha() for ch in suffix):
+            continue
+        serial = "".join(re.findall(r"\d", suffix))
+        if 3 <= len(serial) <= 8:
+            return f"{signatures[signature]}-{serial}"
+    return ""
+
+
 def norm_plate(s, governorate=""):
-    """Canonical plate representation with narrowly scoped known OCR governorate signatures."""
+    """Canonical plate representation; preserve known governorate prefixes before OCR digit repair."""
     raw = str(s or "").translate(DIG).translate(AR_NORM).strip().upper()
     if not raw:
         return ""
+    known_prefix_plate = _known_governorate_plate_from_raw(raw)
+    if known_prefix_plate:
+        return known_prefix_plate
     digits, letters = split_plate(raw)
     if not digits:
         return ""

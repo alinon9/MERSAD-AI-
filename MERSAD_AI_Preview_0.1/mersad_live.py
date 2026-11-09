@@ -2864,15 +2864,21 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
     if not candidates:
         return None, 0.0
 
+    # Prefer a recognized Yemeni governorate + five-digit serial over malformed
+    # alternatives with stray Latin prefixes and extra digits. This uses OCR output only.
+    known_governorates = set(getattr(R, "_LATIN_GOV_TO_AR", {}).values())
     counts = {}
     for normalized, confidence in candidates:
-        entry = counts.setdefault(normalized, {"votes": 0, "confidence": 0.0, "best": 0.0})
+        entry = counts.setdefault(normalized, {"votes": 0, "confidence": 0.0, "best": 0.0, "structured": False})
         entry["votes"] += 1
         entry["confidence"] += confidence
         entry["best"] = max(entry["best"], confidence)
+        gov, sep, serial = normalized.rpartition("-")
+        if sep and gov in known_governorates and serial.isdigit() and len(serial) == 5:
+            entry["structured"] = True
     winner, stats = max(
         counts.items(),
-        key=lambda item: (item[1]["votes"], item[1]["best"], item[1]["confidence"])
+        key=lambda item: (item[1]["structured"], item[1]["votes"], item[1]["best"], item[1]["confidence"])
     )
     if stats["best"] < min_conf:
         return None, 0.0
