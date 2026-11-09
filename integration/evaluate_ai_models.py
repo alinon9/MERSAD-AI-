@@ -769,11 +769,19 @@ def evaluate_four_models_on_frames(
             for f_img, (cam_id, exp_plate, _, _) in zip(frames, EXPECTED_LAB_PLATES):
                 boxes = m.find_plates(f_img)
                 candidates = []
+                candidate_diagnostics = []
                 t0 = time.perf_counter()
                 for x, y, bw, bh in boxes:
                     crop = f_img[y:y + bh, x:x + bw]
-                    # Use the production multi-pass OCR pipeline, but record low-confidence text too.
-                    norm_txt, conf_val = m.read_plate(reader, crop, min_conf=0.20)
+                    attempt_trace = []
+                    # Acceptance must exercise the same confidence threshold as production.
+                    norm_txt, conf_val = m.read_plate(reader, crop, trace=attempt_trace)
+                    candidate_diagnostics.append({
+                        "box_xywh": [int(x), int(y), int(bw), int(bh)],
+                        "prediction": norm_txt or "",
+                        "confidence": round(float(conf_val), 4),
+                        "trace": attempt_trace,
+                    })
                     if norm_txt:
                         candidates.append((norm_txt, conf_val))
                 if candidates:
@@ -788,8 +796,12 @@ def evaluate_four_models_on_frames(
                 else:
                     norm_txt, conf_val = "", 0.0
                 lats.append((time.perf_counter() - t0) * 1000.0)
-                sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "",
-                                    "conf": round(conf_val, 3), "plate_candidates": len(boxes)})
+                sample = {"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "",
+                          "conf": round(conf_val, 3), "plate_candidates": len(boxes)}
+                if classification_label == "LIVE_LAB_HTTP_MJPEG_STREAM_INFERENCE":
+                    sample["frame_shape"] = list(f_img.shape)
+                    sample["candidate_diagnostics"] = candidate_diagnostics
+                sample_rows.append(sample)
             plates_gt_p = AI_DIR / "models" / "eval_benchmarks" / "plates" / "ground_truth.json"
             if plates_gt_p.is_file():
                 p_gt_data = json.loads(plates_gt_p.read_text(encoding="utf-8"))
