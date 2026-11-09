@@ -69,13 +69,6 @@ def test_original_cp1252_failure_is_reproduced():
     raise AssertionError("Regression fixture failed: cp1252 unexpectedly encoded U+2588")
 
 
-if __name__ == "__main__":
-    test_cp1252_stream_is_reconfigured_before_unicode_progress()
-    test_original_cp1252_failure_is_reproduced()
-    test_easyocr_transient_gateway_download_retries()
-    print("PASS: Windows EasyOCR console + transient download regression (3/3)")
-
-
 def test_easyocr_transient_gateway_download_retries():
     import ast
     import os
@@ -135,3 +128,10 @@ def test_easyocr_transient_gateway_download_retries():
     else:
         raise AssertionError("HTTP 403 must fail immediately")
     assert attempts["count"] == 1, attempts
+
+
+if __name__ == "__main__":
+    test_cp1252_stream_is_reconfigured_before_unicode_progress()
+    test_original_cp1252_failure_is_reproduced()
+    test_easyocr_transient_gateway_download_retries()
+    print("PASS: Windows EasyOCR console + transient download regression (3/3)")
