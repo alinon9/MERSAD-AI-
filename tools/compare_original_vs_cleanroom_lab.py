@@ -166,8 +166,18 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
 
     env = dict(os.environ)
     env["PYTHONPATH"] = str(lab_dir)
+    env["PYTHONIOENCODING"] = "utf-8:backslashreplace"
     try:
-        proc = subprocess.run(cmd, cwd=str(lab_dir), env=env, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd,
+            cwd=str(lab_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
         out = (proc.stdout or "") + "\n" + (proc.stderr or "")
         checks = []
         for line in out.splitlines():
@@ -180,7 +190,12 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
                 })
         passed = sum(1 for c in checks if c["status"] == "PASS")
         failed = sum(1 for c in checks if c["status"] == "FAIL")
-        status = "PASS" if (proc.returncode == 0 and passed > 0 and failed == 0) else "FAIL"
+        if label == "CleanRoom_LAB_Preview_0.1":
+            # The release gate is exactly 20 independent checks; a truncated or
+            # partially skipped suite must not pass merely because it has no FAIL lines.
+            status = "PASS" if (proc.returncode == 0 and passed == 20 and failed == 0 and len(checks) == 20) else "FAIL"
+        else:
+            status = "PASS" if (proc.returncode == 0 and passed > 0 and failed == 0) else "FAIL"
         return {
             "label": label,
             "executed": True,

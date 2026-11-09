@@ -40,6 +40,17 @@ import time
 import urllib.error
 import urllib.request
 
+# Windows CI may expose a legacy console code page (for example cp1252), while
+# quality grades and API diagnostics intentionally contain Arabic text.
+# Force UTF-8 for both streams so logging cannot turn a successful test into a failure.
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        try:
+            _reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (OSError, ValueError):
+            pass
+
 import cv2
 import numpy as np
 
@@ -53,9 +64,9 @@ RESULTS = []
 
 def ok(name: str, detail: str = ""):
     global PASS
-    PASS += 1
     msg = f"  [PASS] {name}" + (f" -- {detail}" if detail else "")
     print(msg)
+    PASS += 1
     RESULTS.append({"test": name, "status": "PASS", "detail": detail})
 
 
