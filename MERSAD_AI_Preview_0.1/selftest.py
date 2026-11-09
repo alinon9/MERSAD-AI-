@@ -236,10 +236,13 @@ def run_unit_tests():
     p_taz = reg_mod.norm_plate("TAZ-73901")
     p_mar = reg_mod.norm_plate("MAR-30827")
     p_ibb = reg_mod.norm_plate("18891406")
+    p_ibb_i = reg_mod.norm_plate("I8891406")
+    p_har = reg_mod.norm_plate("HAR-55120")
     check("OCR", "known Yemeni governorate OCR signatures normalize while numeric-only plates stay unchanged",
           p_taz == "تعز-73901" and p_mar == "مأرب-30827" and p_ibb == "إب-91406"
+          and p_ibb_i == "إب-91406" and p_har == "حضرموت-55120"
           and reg_mod.norm_plate("123456") == "123456",
-          (p_taz, p_mar, p_ibb, reg_mod.norm_plate("123456")))
+          (p_taz, p_mar, p_ibb, p_ibb_i, p_har, reg_mod.norm_plate("123456")))
 
     # P0-1: Realistic Yemeni OCR lookup with governorate/letters against digits-only registry record
     reg_mod.save_vehicle({"plate": "91234", "status": "wanted", "model": "Hilux"}, "unit")
@@ -337,6 +340,16 @@ def run_unit_tests():
     # Video & OCR edge cases + P2-8 classes= filter & benchmark
     check("VIDEO", "empty or None frames handled safely without crash",
           m.detect_vehicles(None, YOLO("x")) == [] and m.find_plates(np.zeros((0, 0, 3), np.uint8)) == [] and m.read_plate(Reader([]), np.zeros((0, 0, 3), np.uint8)) == (None, 0.0))
+    # LAB scene has a larger dark windshield and a smaller bright plate; rank the plate first.
+    plate_scene = np.full((480, 640, 3), 48, dtype=np.uint8)
+    cv2.rectangle(plate_scene, (175, 170), (465, 238), (85, 110, 130), -1)
+    cv2.rectangle(plate_scene, (175, 170), (465, 238), (210, 180, 140), 2)
+    cv2.rectangle(plate_scene, (189, 330), (449, 394), (252, 252, 252), -1)
+    cv2.rectangle(plate_scene, (189, 330), (449, 394), (10, 10, 10), 3)
+    ranked_plates = m.find_plates(plate_scene)
+    top_plate_iou = max((m._bbox_iou(box, (189, 330, 260, 64)) for box in ranked_plates[:1]), default=0.0)
+    check("OCR-PLATE-RANK", "bright plate candidate outranks larger dark windshield candidate (IoU >= 0.75)",
+          bool(ranked_plates) and top_plate_iou >= 0.75, (ranked_plates, top_plate_iou))
     YOLO_CALL_KWARGS.clear()
     m.detect_vehicles(np.zeros((480, 640, 3), np.uint8), YOLO("x"))
     check("P2-8", "detect_vehicles passes classes=[2, 3, 5, 7] filter to YOLO model",
