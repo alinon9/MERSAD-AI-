@@ -6,7 +6,7 @@ Round 4 upgrades:
   status updates, deletion, and known-face loading, plus safe migration/quarantine of legacy ambiguous faces.
 - P1-D: Removal of static fallback HMAC key, atomic secret/key file writing with 0600 permissions from creation,
   and explicit refusal to silently overwrite corrupt/truncated HMAC keys."""
-import contextlib, csv, hashlib, hmac, io, logging, os, re, secrets, shutil, sqlite3, stat, subprocess, threading, time
+import contextlib, csv, errno, hashlib, hmac, io, logging, os, re, secrets, shutil, sqlite3, stat, subprocess, threading, time
 
 try:
     import fcntl
@@ -44,6 +44,44 @@ def _ensure_lock_byte(fd):
 
 def _ensure_windows_lock_byte(fd):
     return _ensure_lock_byte(fd)
+
+
+def _acquire_windows_byte_lock(fd, timeout_sec=60.0, poll_interval=0.025):
+    """
+    Acquire the one-byte Windows inter-process lock without msvcrt's fixed
+    LK_LOCK retry limit (which raises EDEADLK after about ten attempts).
+    LK_NBLCK makes one non-blocking attempt; retry only recognized lock-
+    contention errors until the bounded deadline expires.
+    """
+    if msvcrt is None:
+        return
+
+    deadline = time.monotonic() + max(0.1, float(timeout_sec))
+    contention_errnos = {
+        errno.EACCES,
+        errno.EAGAIN,
+        errno.EDEADLK,
+        getattr(errno, "EDEADLOCK", errno.EDEADLK),
+    }
+    contention_winerrors = {32, 33}  # ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION
+
+    while True:
+        # msvcrt.locking operates on the byte range beginning at the current
+        # file position. Reset it before every attempt.
+        fd.seek(0)
+        try:
+            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno not in contention_errnos and getattr(exc, "winerror", None) not in contention_winerrors:
+                raise
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out after {timeout_sec:.1f}s waiting for Windows database lock"
+                ) from exc
+            time.sleep(min(max(0.001, float(poll_interval)), remaining))
 
 
 def _is_network_filesystem_path(path):
@@ -378,7 +416,7 @@ def interprocess_db_lock(db_path=None):
                     fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
                 elif msvcrt is not None:
                     _ensure_windows_lock_byte(fd)
-                    msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+                    _acquire_windows_byte_lock(fd)
             except Exception:
                 try: fd.close()
                 except Exception: pass
