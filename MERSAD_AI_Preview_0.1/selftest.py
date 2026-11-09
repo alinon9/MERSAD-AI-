@@ -830,6 +830,13 @@ def run_security_lan_and_multiprocess_tests():
                     except subprocess.TimeoutExpired:
                         pass
         mp_exit_codes = (p1.returncode, p2.returncode)
+        if mp_exit_codes != (0, 0):
+            raise RuntimeError(
+                "Concurrent DB stress child process failed before DB verification; "
+                f"exit_codes={mp_exit_codes}; "
+                f"CAM1_out={o1[-1000:]!r}; CAM1_err={e1[-1000:]!r}; "
+                f"CAM2_out={o2[-1000:]!r}; CAM2_err={e2[-1000:]!r}"
+            )
 
         mp_db = sqlite3.connect(os.path.join(mp_dir, "mersad.db"))
         tot_alerts = mp_db.execute("SELECT COUNT(*), COUNT(DISTINCT id) FROM alerts").fetchall()[0]
