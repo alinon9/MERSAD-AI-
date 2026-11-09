@@ -477,11 +477,16 @@ _LATIN_GOV_TO_AR = {
     "SANAA": "صنعاء",
     "SANA": "صنعاء",
     "TAIZ": "تعز",
+    # Common EasyOCR omissions on narrow uppercase glyphs in small plates:
+    # TAIZ -> TAZ and MARIB/MARI -> MAR. These aliases are limited to the
+    # governorate-code token; they do not alter numeric-only plate matching.
+    "TAZ": "تعز",
     "HADR": "حضرموت",
     "HADRAMOUT": "حضرموت",
     "IBB": "إب",
     "MARIB": "مأرب",
     "MARI": "مأرب",
+    "MAR": "مأرب",
 }
 
 
