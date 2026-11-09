@@ -29,6 +29,8 @@ AR_NORM = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ة": "ه", "ى": "
 OCR_DIGIT_CONFUSIONS = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "|": "1", "S": "5", "s": "5", "B": "8", "Z": "2"})
 hkey = lambda h: re.sub(r"[\s()_\-:/]", "", str(h or "")).lower()
 _HMAC_KEY_CACHE = {}
+_HMAC_KEY_CACHE_META = {}
+_HMAC_KEY_LOCK = threading.RLock()
 _IPC_RLOCK = threading.RLock()
 _IPC_STATE = {"depth": 0, "fd": None}
 
@@ -403,53 +405,119 @@ def atomic_write_secret_bytes(target_path, data_bytes):
 _HMAC_KEY_FILENAME = ".mersad_hmac.key"
 
 
+def _hmac_key_stat_signature(st):
+    """Stable file-identity signature used to invalidate cached HMAC keys after replacement or modification."""
+    return (
+        int(getattr(st, "st_dev", 0)),
+        int(getattr(st, "st_ino", 0)),
+        int(st.st_size),
+        int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))),
+        int(getattr(st, "st_ctime_ns", int(st.st_ctime * 1_000_000_000))),
+        int(getattr(st, "st_file_attributes", 0)),
+    )
+
+
 def _get_hmac_key():
-    """Load or create a local 32-byte secret key for HMAC pseudonymization and audit chain signing (P1-D, GAP-11).
-    - Never falls back to a static hardcoded key: raises RuntimeError if key storage is unavailable or unwritable.
-    - Never silently overwrites a corrupt or truncated key file (which would alter existing pseudonyms)."""
-    base_dir = os.environ.get("MERSAD_DATA_DIR") or os.getcwd()
-    key_path = os.path.abspath(os.path.join(base_dir, _HMAC_KEY_FILENAME))
-    if os.path.lexists(key_path):
+    """Load or create the local 32-byte HMAC key and cache it after a verified read.
+
+    Windows ACL validation invokes PowerShell/whoami. It must happen when a key
+    is first loaded (or its file identity changes), not once for every audit row.
+    A stat signature invalidates the in-memory key if the file is replaced or
+    modified. Corrupt keys and symlinks still fail closed.
+    """
+    with _HMAC_KEY_LOCK:
+        base_dir = os.environ.get("MERSAD_DATA_DIR") or os.getcwd()
+        key_path = os.path.abspath(os.path.join(base_dir, _HMAC_KEY_FILENAME))
+
         if os.path.islink(key_path):
             _HMAC_KEY_CACHE.pop(key_path, None)
+            _HMAC_KEY_CACHE_META.pop(key_path, None)
             raise RuntimeError(f"Security error: HMAC key file {key_path} cannot be a symbolic link")
-        if os.name == "nt":
-            try:
-                _set_windows_private_acl(base_dir, is_dir=True)
-                _set_windows_private_acl(key_path, is_dir=False)
-            except OSError as e:
-                _HMAC_KEY_CACHE.pop(key_path, None)
-                raise RuntimeError(f"Cannot securely protect Windows HMAC key at {key_path}: {e}") from e
+
         try:
-            with open(key_path, "rb") as f:
-                k = f.read()
+            st_before = os.stat(key_path, follow_symlinks=False)
+        except FileNotFoundError:
+            st_before = None
         except OSError as e:
             _HMAC_KEY_CACHE.pop(key_path, None)
-            raise RuntimeError(f"Cannot read HMAC key file {key_path}: {e}") from e
-        if len(k) < 32:
-            _HMAC_KEY_CACHE.pop(key_path, None)
-            raise RuntimeError(
-                f"Corrupt or truncated HMAC key file at {key_path} ({len(k)} bytes < 32). "
-                "Refusing to silently generate a replacement key to protect audit pseudonym integrity."
-            )
-        if os.name == "posix":
-            try:
-                st_mode = stat.S_IMODE(os.stat(key_path).st_mode)
-                if (st_mode & 0o077) != 0:
-                    os.chmod(key_path, 0o600)
-            except OSError:
-                pass
-        _HMAC_KEY_CACHE[key_path] = k
-        return k
+            _HMAC_KEY_CACHE_META.pop(key_path, None)
+            raise RuntimeError(f"Cannot inspect HMAC key file {key_path}: {e}") from e
 
-    _HMAC_KEY_CACHE.pop(key_path, None)
-    k = secrets.token_bytes(32)
-    try:
-        atomic_write_secret_bytes(key_path, k)
-    except OSError as e:
-        raise RuntimeError(f"Cannot securely create or persist HMAC key at {key_path}: {e}") from e
-    _HMAC_KEY_CACHE[key_path] = k
-    return k
+        if st_before is not None:
+            if not stat.S_ISREG(st_before.st_mode):
+                _HMAC_KEY_CACHE.pop(key_path, None)
+                _HMAC_KEY_CACHE_META.pop(key_path, None)
+                raise RuntimeError(f"Security error: HMAC key path {key_path} is not a regular file")
+
+            current_signature = _hmac_key_stat_signature(st_before)
+            cached_key = _HMAC_KEY_CACHE.get(key_path)
+            if (
+                isinstance(cached_key, bytes)
+                and len(cached_key) >= 32
+                and _HMAC_KEY_CACHE_META.get(key_path) == current_signature
+            ):
+                return cached_key
+
+            if os.name == "nt":
+                try:
+                    _set_windows_private_acl(base_dir, is_dir=True)
+                    _set_windows_private_acl(key_path, is_dir=False)
+                except OSError as e:
+                    _HMAC_KEY_CACHE.pop(key_path, None)
+                    _HMAC_KEY_CACHE_META.pop(key_path, None)
+                    raise RuntimeError(f"Cannot securely protect Windows HMAC key at {key_path}: {e}") from e
+
+            try:
+                with open(key_path, "rb") as f:
+                    opened_stat = os.fstat(f.fileno())
+                    k = f.read()
+                after_stat = os.stat(key_path, follow_symlinks=False)
+            except OSError as e:
+                _HMAC_KEY_CACHE.pop(key_path, None)
+                _HMAC_KEY_CACHE_META.pop(key_path, None)
+                raise RuntimeError(f"Cannot read HMAC key file {key_path}: {e}") from e
+
+            if os.path.islink(key_path) or (
+                _hmac_key_stat_signature(opened_stat) != _hmac_key_stat_signature(after_stat)
+            ):
+                _HMAC_KEY_CACHE.pop(key_path, None)
+                _HMAC_KEY_CACHE_META.pop(key_path, None)
+                raise RuntimeError(f"Security error: HMAC key file {key_path} changed while being read")
+
+            if len(k) < 32:
+                _HMAC_KEY_CACHE.pop(key_path, None)
+                _HMAC_KEY_CACHE_META.pop(key_path, None)
+                raise RuntimeError(
+                    f"Corrupt or truncated HMAC key file at {key_path} ({len(k)} bytes < 32). "
+                    "Refusing to silently generate a replacement key to protect audit pseudonym integrity."
+                )
+
+            if os.name == "posix":
+                try:
+                    st_mode = stat.S_IMODE(after_stat.st_mode)
+                    if (st_mode & 0o077) != 0:
+                        os.chmod(key_path, 0o600)
+                        after_stat = os.stat(key_path, follow_symlinks=False)
+                except OSError:
+                    pass
+
+            _HMAC_KEY_CACHE[key_path] = k
+            _HMAC_KEY_CACHE_META[key_path] = _hmac_key_stat_signature(after_stat)
+            return k
+
+        _HMAC_KEY_CACHE.pop(key_path, None)
+        _HMAC_KEY_CACHE_META.pop(key_path, None)
+        k = secrets.token_bytes(32)
+        try:
+            atomic_write_secret_bytes(key_path, k)
+            created_stat = os.stat(key_path, follow_symlinks=False)
+        except OSError as e:
+            raise RuntimeError(f"Cannot securely create or persist HMAC key at {key_path}: {e}") from e
+        if os.path.islink(key_path) or not stat.S_ISREG(created_stat.st_mode):
+            raise RuntimeError(f"Security error: newly created HMAC key at {key_path} is not a regular file")
+        _HMAC_KEY_CACHE[key_path] = k
+        _HMAC_KEY_CACHE_META[key_path] = _hmac_key_stat_signature(created_stat)
+        return k
 
 
 def pseud(s):
