@@ -72,4 +72,66 @@ def test_original_cp1252_failure_is_reproduced():
 if __name__ == "__main__":
     test_cp1252_stream_is_reconfigured_before_unicode_progress()
     test_original_cp1252_failure_is_reproduced()
-    print("PASS: Windows cp1252 EasyOCR progress encoding regression (2/2)")
+    test_easyocr_transient_gateway_download_retries()
+    print("PASS: Windows EasyOCR console + transient download regression (3/3)")
+
+
+def test_easyocr_transient_gateway_download_retries():
+    import ast
+    import os
+    import pathlib
+    import socket
+    import tempfile
+    import time
+    import urllib.error
+    from types import SimpleNamespace
+
+    source = PREFETCH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(PREFETCH))
+    function = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "install_easyocr_download_retries"
+    )
+    namespace = {
+        "urllib": urllib,
+        "os": os,
+        "socket": socket,
+        "time": time,
+        "print": lambda *args, **kwargs: None,
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(PREFETCH), "exec"), namespace)
+
+    with tempfile.TemporaryDirectory() as folder:
+        target = pathlib.Path(folder) / "temp.zip"
+        attempts = {"count": 0}
+
+        def flaky_download(url, filename=None, reporthook=None, data=None):
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise urllib.error.HTTPError(url, 504, "Gateway Time-out", {}, None)
+            pathlib.Path(filename).write_bytes(b"complete-archive")
+            return filename, None
+
+        utils = SimpleNamespace(urlretrieve=flaky_download)
+        namespace["install_easyocr_download_retries"](utils, retries=4, base_delay=0)
+        result = utils.urlretrieve("https://example.invalid/model.zip", str(target))
+        assert attempts["count"] == 3, attempts
+        assert result[0] == str(target)
+        assert target.read_bytes() == b"complete-archive"
+
+    # Permanent errors must not be retried or hidden.
+    attempts = {"count": 0}
+
+    def forbidden(url, filename=None, reporthook=None, data=None):
+        attempts["count"] += 1
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
+    utils = SimpleNamespace(urlretrieve=forbidden)
+    namespace["install_easyocr_download_retries"](utils, retries=4, base_delay=0)
+    try:
+        utils.urlretrieve("https://example.invalid/model.zip", "unused.zip")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+    else:
+        raise AssertionError("HTTP 403 must fail immediately")
+    assert attempts["count"] == 1, attempts
