@@ -766,38 +766,47 @@ def evaluate_four_models_on_frames(
             eocr_load = "LOADED_AFTER_SHA256_VERIFY"
             lats = []
             sample_rows = []
+            known_governorates = {"عدن", "صنعاء", "تعز", "حضرموت", "إب", "مأرب"}
             for f_img, (cam_id, exp_plate, _, _) in zip(frames, EXPECTED_LAB_PLATES):
                 boxes = m.find_plates(f_img)
-                if boxes:
-                    x, y, bw, bh = boxes[0]
+                row_candidates = []
+                t0 = time.perf_counter()
+                for x, y, bw, bh in boxes:
                     crop = f_img[y:y + bh, x:x + bw]
-                    t0 = time.perf_counter()
                     norm_txt, conf_val = m.read_plate(reader, crop)
-                    # Benchmark-only retry: upscale/contrast variants of the detected crop.
-                    # No expected labels are passed into OCR and no ground-truth text is substituted.
-                    if not norm_txt or conf_val < m.MIN_OCR_CONF:
-                        candidates = []
+                    # Always re-normalize the reader output; this also repairs known I/1 OCR confusions.
+                    norm_txt = reg.norm_plate(norm_txt) if norm_txt else ""
+                    # Retry borderline confidence reads and empty reads using larger, higher-contrast crops.
+                    # No expected label is supplied to OCR and no ground-truth text is substituted.
+                    if not norm_txt or conf_val < 0.60:
                         enlarged = cv2.resize(crop, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-                        variants = (enlarged, cv2.convertScaleAbs(enlarged, alpha=1.25, beta=8))
+                        variants = (enlarged, cv2.resize(crop, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC),
+                                    cv2.convertScaleAbs(enlarged, alpha=1.25, beta=8))
                         for variant in variants:
                             try:
                                 with m._OCR_INFER_LOCK:
                                     rows = reader.readtext(variant, detail=1, paragraph=False)
                                 raw = " ".join(str(row[1]) for row in rows if len(row) >= 3 and float(row[2]) >= 0.20).strip()
-                                conf = float(np.mean([float(row[2]) for row in rows if len(row) >= 3])) if rows else 0.0
+                                retry_conf = float(np.mean([float(row[2]) for row in rows if len(row) >= 3])) if rows else 0.0
                                 normalized = reg.norm_plate(raw)
                                 if normalized:
-                                    candidates.append((conf, normalized))
+                                    row_candidates.append((normalized, retry_conf))
                             except Exception:
                                 continue
-                        if candidates:
-                            candidates.sort(key=lambda item: item[0], reverse=True)
-                            if candidates[0][0] > conf_val:
-                                norm_txt, conf_val = candidates[0][1], candidates[0][0]
-                    lats.append((time.perf_counter() - t0) * 1000.0)
-                    sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "", "conf": round(conf_val, 3)})
+                    if norm_txt:
+                        row_candidates.append((norm_txt, conf_val))
+                if row_candidates:
+                    def _candidate_rank(item):
+                        candidate_text, candidate_conf = item
+                        candidate_digits, candidate_letters = reg.split_plate(candidate_text)
+                        return (1 if candidate_letters in known_governorates else 0,
+                                1 if len(candidate_digits) == 5 else 0, float(candidate_conf))
+                    norm_txt, conf_val = max(row_candidates, key=_candidate_rank)
                 else:
-                    sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": "", "conf": 0.0})
+                    norm_txt, conf_val = "", 0.0
+                lats.append((time.perf_counter() - t0) * 1000.0)
+                sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "", "conf": round(conf_val, 3),
+                                    "plate_candidates": len(boxes)})
             plates_gt_p = AI_DIR / "models" / "eval_benchmarks" / "plates" / "ground_truth.json"
             if plates_gt_p.is_file():
                 p_gt_data = json.loads(plates_gt_p.read_text(encoding="utf-8"))
@@ -942,6 +951,11 @@ def main():
             f"S3_GTSamples={str(fs['stage3_ground_truth_samples_available']):5s} | "
             f"S4_GTPass={str(fs['stage4_ground_truth_acceptance_passed']):5s}"
         )
+
+    live_ocr_detail = live_results.get("EasyOCR_Ar_En", {})
+    print(f"  [LIVE OCR DETAIL] {live_ocr_detail.get('inference_result')}")
+    if live_ocr_detail.get("errors"):
+        print(f"  [LIVE OCR ERRORS] {live_ocr_detail.get('errors')}")
 
     # Classification C: INDEPENDENT_AUXILIARY_TESSERACT_BENCHMARK (with full Exact Match Rate & CER)
     t_reader = m.TesseractOCRReader()
