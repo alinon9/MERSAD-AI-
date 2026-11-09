@@ -84,6 +84,67 @@ def _acquire_windows_byte_lock(fd, timeout_sec=60.0, poll_interval=0.025):
             time.sleep(min(max(0.001, float(poll_interval)), remaining))
 
 
+
+def _acquire_windows_db_mutex(db_path, timeout_sec=60.0):
+    """Acquire a named Win32 mutex for the SQLite database path.
+
+    A kernel mutex is process-safe, automatically becomes available if its
+    owner crashes, and avoids CRT byte-range-lock retry/descriptor edge cases
+    on Windows. WAIT_ABANDONED still grants ownership and is safe to recover.
+    """
+    import ctypes
+
+    canonical_path = os.path.normcase(os.path.abspath(str(db_path))).casefold()
+    digest = hashlib.sha256(canonical_path.encode("utf-8")).hexdigest()[:32]
+    mutex_name = "Local\\MERSAD_DB_LOCK_" + digest
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel32.ReleaseMutex.argtypes = [ctypes.c_void_p]
+    kernel32.ReleaseMutex.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+
+    handle = kernel32.CreateMutexW(None, 0, mutex_name)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    wait_ms = max(1, min(int(max(0.1, float(timeout_sec)) * 1000), 0xFFFFFFFE))
+    result = int(kernel32.WaitForSingleObject(handle, wait_ms))
+    if result in (0x00000000, 0x00000080):  # WAIT_OBJECT_0 / WAIT_ABANDONED
+        return ("windows_mutex", handle, kernel32)
+
+    error_code = ctypes.get_last_error()
+    try:
+        kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+    if result == 0x00000102:  # WAIT_TIMEOUT
+        raise TimeoutError(
+            f"Timed out after {timeout_sec:.1f}s waiting for Windows database mutex"
+        )
+    if result == 0xFFFFFFFF:  # WAIT_FAILED
+        raise ctypes.WinError(error_code)
+    raise OSError(f"Unexpected WaitForSingleObject result: 0x{result:08X}")
+
+
+def _release_windows_db_mutex(lock_handle):
+    """Release and close a named Win32 database mutex acquired by this thread."""
+    if not (isinstance(lock_handle, tuple) and len(lock_handle) == 3
+            and lock_handle[0] == "windows_mutex"):
+        return
+    _, handle, kernel32 = lock_handle
+    try:
+        if not kernel32.ReleaseMutex(handle):
+            import ctypes
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _is_network_filesystem_path(path):
     """Recognize Windows UNC and mapped remote-drive paths before selecting SQLite journaling."""
     raw = str(path or "")
@@ -400,28 +461,35 @@ def pseud(s):
 
 @contextlib.contextmanager
 def interprocess_db_lock(db_path=None):
-    """Re-entrant thread + OS-level inter-process file lock for atomic multi-process SQLite writes (P0-E)."""
+    """Re-entrant thread + OS-level inter-process lock for atomic SQLite writes (P0-E)."""
     t_lock = D.get("lock")
     p = db_path or D.get("db_path") or os.path.join(os.environ.get("MERSAD_DATA_DIR") or os.getcwd(), "mersad.db")
-    lock_file = f"{p}.ipclock"
     _IPC_RLOCK.acquire()
     if t_lock is not None:
         t_lock.acquire()
     depth_incremented = False
     try:
         if _IPC_STATE["depth"] == 0 and p and p != ":memory:":
-            fd = open(lock_file, "a+b")
-            try:
-                if fcntl is not None:
-                    fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
-                elif msvcrt is not None:
-                    _ensure_windows_lock_byte(fd)
-                    _acquire_windows_byte_lock(fd)
-            except Exception:
-                try: fd.close()
-                except Exception: pass
-                raise
-            _IPC_STATE["fd"] = fd
+            if fcntl is not None:
+                lock_handle = open(f"{p}.ipclock", "a+b")
+                try:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    lock_handle.close()
+                    raise
+            elif os.name == "nt":
+                lock_handle = _acquire_windows_db_mutex(p)
+            elif msvcrt is not None:
+                lock_handle = open(f"{p}.ipclock", "a+b")
+                try:
+                    _ensure_windows_lock_byte(lock_handle)
+                    _acquire_windows_byte_lock(lock_handle)
+                except Exception:
+                    lock_handle.close()
+                    raise
+            else:
+                lock_handle = None
+            _IPC_STATE["fd"] = lock_handle
         _IPC_STATE["depth"] += 1
         depth_incremented = True
         yield
@@ -429,18 +497,30 @@ def interprocess_db_lock(db_path=None):
         if depth_incremented:
             _IPC_STATE["depth"] -= 1
         if _IPC_STATE["depth"] == 0 and _IPC_STATE["fd"] is not None:
-            fd = _IPC_STATE["fd"]
+            lock_handle = _IPC_STATE["fd"]
             _IPC_STATE["fd"] = None
             try:
                 if fcntl is not None:
-                    fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                    lock_handle.close()
+                elif (isinstance(lock_handle, tuple) and len(lock_handle) == 3
+                      and lock_handle[0] == "windows_mutex"):
+                    _release_windows_db_mutex(lock_handle)
                 elif msvcrt is not None:
-                    fd.seek(0)
-                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                    lock_handle.seek(0)
+                    msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    lock_handle.close()
+                else:
+                    close = getattr(lock_handle, "close", None)
+                    if callable(close):
+                        close()
             except Exception:
-                pass
-            try: fd.close()
-            except Exception: pass
+                try:
+                    close = getattr(lock_handle, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
         if t_lock is not None:
             t_lock.release()
         _IPC_RLOCK.release()
