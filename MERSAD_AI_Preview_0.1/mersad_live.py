@@ -222,7 +222,10 @@ MODEL_MIN_BYTES = {
     "yolov8n.pt": 6_000_000
 }
 YOLO_RELEASE_VERSION = "v8.3.0"
-YOLO_MODEL_URL = f"https://github.com/ultralytics/assets/releases/download/{YOLO_RELEASE_VERSION}/yolov8n.pt" 
+# Official Ultralytics model mirror pinned to an immutable repository revision.
+# Its Git-LFS object declares SHA-256 31e20dde... and exact size 6,534,387 bytes.
+YOLO_HF_REVISION = "8a9e1a55f987a77f9966c2ac3f80aa8aa37b3c1a"
+YOLO_MODEL_URL = f"https://huggingface.co/Ultralytics/YOLOv8/resolve/{YOLO_HF_REVISION}/yolov8n.pt" 
 FONT, COS_T = cv2.FONT_HERSHEY_SIMPLEX, 0.363        # SFace cosine threshold
 VCLS = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}   # Default COCO classes
 VCLS_NAMES = {"car": "car", "automobile": "car", "sedan": "car", "suv": "car", "van": "car",
