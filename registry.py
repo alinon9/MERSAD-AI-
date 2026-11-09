@@ -461,17 +461,30 @@ def pseud(s):
 
 @contextlib.contextmanager
 def interprocess_db_lock(db_path=None):
-    """Re-entrant thread + OS-level inter-process lock for atomic SQLite writes (P0-E)."""
+    """Re-entrant thread + OS-level inter-process lock for atomic SQLite writes (P0-E).
+
+    Lock order is always local DB lock -> process-state lock -> OS mutex.
+    Some read/report paths already hold the local DB RLock before invoking a
+    migration or transaction. Acquiring the process-state lock first here
+    would let another thread hold it while waiting for the DB lock, creating
+    a lock-order inversion and a cross-thread deadlock.
+    """
     t_lock = D.get("lock")
     p = db_path or D.get("db_path") or os.path.join(os.environ.get("MERSAD_DATA_DIR") or os.getcwd(), "mersad.db")
-    _IPC_RLOCK.acquire()
-    if t_lock is not None:
-        t_lock.acquire()
+    t_lock_acquired = False
+    ipc_acquired = False
     depth_incremented = False
     try:
+        if t_lock is not None:
+            t_lock.acquire()
+            t_lock_acquired = True
+
+        _IPC_RLOCK.acquire()
+        ipc_acquired = True
+
         if _IPC_STATE["depth"] == 0 and p and p != ":memory:":
-            # Preserve the file-lock backend's fail-closed path validation even
-            # though the Windows named mutex itself is a kernel object.
+            # Preserve fail-closed path validation even though the Windows
+            # named mutex itself is a kernel object.
             lock_parent = os.path.dirname(os.path.abspath(p))
             if not os.path.isdir(lock_parent):
                 raise OSError(f"Database lock parent directory does not exist: {lock_parent}")
@@ -495,42 +508,44 @@ def interprocess_db_lock(db_path=None):
             else:
                 lock_handle = None
             _IPC_STATE["fd"] = lock_handle
+
         _IPC_STATE["depth"] += 1
         depth_incremented = True
         yield
     finally:
-        if depth_incremented:
-            _IPC_STATE["depth"] -= 1
-        if _IPC_STATE["depth"] == 0 and _IPC_STATE["fd"] is not None:
-            lock_handle = _IPC_STATE["fd"]
-            _IPC_STATE["fd"] = None
+        if ipc_acquired:
             try:
-                if fcntl is not None:
-                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                    lock_handle.close()
-                elif (isinstance(lock_handle, tuple) and len(lock_handle) == 3
-                      and lock_handle[0] == "windows_mutex"):
-                    _release_windows_db_mutex(lock_handle)
-                elif msvcrt is not None:
-                    lock_handle.seek(0)
-                    msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
-                    lock_handle.close()
-                else:
-                    close = getattr(lock_handle, "close", None)
-                    if callable(close):
-                        close()
-            except Exception:
-                try:
-                    close = getattr(lock_handle, "close", None)
-                    if callable(close):
-                        close()
-                except Exception:
-                    pass
-        if t_lock is not None:
+                if depth_incremented:
+                    _IPC_STATE["depth"] -= 1
+                if _IPC_STATE["depth"] == 0 and _IPC_STATE["fd"] is not None:
+                    lock_handle = _IPC_STATE["fd"]
+                    _IPC_STATE["fd"] = None
+                    try:
+                        if fcntl is not None:
+                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                            lock_handle.close()
+                        elif (isinstance(lock_handle, tuple) and len(lock_handle) == 3
+                              and lock_handle[0] == "windows_mutex"):
+                            _release_windows_db_mutex(lock_handle)
+                        elif msvcrt is not None:
+                            lock_handle.seek(0)
+                            msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
+                            lock_handle.close()
+                        else:
+                            close = getattr(lock_handle, "close", None)
+                            if callable(close):
+                                close()
+                    except Exception:
+                        try:
+                            close = getattr(lock_handle, "close", None)
+                            if callable(close):
+                                close()
+                        except Exception:
+                            pass
+            finally:
+                _IPC_RLOCK.release()
+        if t_lock_acquired:
             t_lock.release()
-        _IPC_RLOCK.release()
-
-
 def run_atomic_tx(db, lock, fn, db_path=None, retries=20):
     """Execute fn(db) inside BEGIN IMMEDIATE with re-entrant OS file lock and bounded retry on SQLite lock contention (P0-E)."""
     last_err = None

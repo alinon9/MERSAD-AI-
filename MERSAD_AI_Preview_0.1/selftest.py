@@ -688,6 +688,32 @@ def run_security_lan_and_multiprocess_tests():
     else:
         skip_check("P1-J", "LAN IP binding check", "No non-loopback LAN interface IP available in container")
 
+    # Regression: all code paths must acquire the local DB RLock before the
+    # process-state/OS-lock bookkeeping lock, preventing cross-thread inversion.
+    _lock_order = []
+    class _LockOrderProbe:
+        def __init__(self, name, wrapped):
+            self.name = name
+            self.wrapped = wrapped
+        def acquire(self, *args, **kwargs):
+            _lock_order.append(self.name)
+            return self.wrapped.acquire(*args, **kwargs)
+        def release(self):
+            return self.wrapped.release()
+
+    _old_db_lock = reg_mod.D.get("lock")
+    _old_ipc_lock = reg_mod._IPC_RLOCK
+    try:
+        reg_mod.D["lock"] = _LockOrderProbe("local-db", _old_db_lock)
+        reg_mod._IPC_RLOCK = _LockOrderProbe("process-state", _old_ipc_lock)
+        with reg_mod.interprocess_db_lock(":memory:"):
+            pass
+    finally:
+        reg_mod.D["lock"] = _old_db_lock
+        reg_mod._IPC_RLOCK = _old_ipc_lock
+    check("P0-E", "SQLite lock order is local DB RLock before process-state lock",
+          _lock_order[:2] == ["local-db", "process-state"], _lock_order)
+
     # P0-E & P2-6: Real 2-process CONCURRENT stress test (2 OS processes x 50 alerts = 100 alerts simultaneously + listener lock + cross-process sync)
     mp_dir = tempfile.mkdtemp(prefix="mersad_mp_")
     try:
