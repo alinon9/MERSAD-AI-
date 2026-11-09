@@ -761,7 +761,7 @@ def run_security_lan_and_multiprocess_tests():
             "        except Exception as e:\n"
             "            errs += 1\n"
             "            last_err = f'{type(e).__name__}: {e}'[:160]\n"
-            "    if (i + 1) % 10 == 0: _mark_progress(f'alerts={i + 1};errs={errs};last={last_err}')\n"
+            "        if (i + 1) % 10 == 0: _mark_progress(f'alerts={i + 1};errs={errs};last={last_err}')\n"
             "finally:\n"
             "    m._sync_alerts_from_db = _original_sync_alerts\n"
             "_mark_progress('alert_burst_complete')\n"
