@@ -2365,9 +2365,19 @@ def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, ex
 
     tmp_path = f"{target}.part.{os.getpid()}.{uuid.uuid4().hex[:6]}"
     last_err = None
-    for attempt in range(1, max(1, int(retries)) + 1):
+    max_attempts = max(1, int(retries))
+    transient_http_codes = {408, 425, 429, 500, 502, 503, 504}
+    for attempt in range(1, max_attempts + 1):
+        retry_after = None
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "MERSAD-AI-ModelFetcher/3.5"})
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "MERSAD-AI-ModelFetcher/3.6",
+                    "Accept": "application/octet-stream",
+                    "Connection": "close",
+                },
+            )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 cl_hdr = resp.headers.get("Content-Length")
                 exp_len = int(cl_hdr) if (cl_hdr and cl_hdr.isdigit()) else None
@@ -2390,16 +2400,34 @@ def safe_download_model(filename, url, target_dir="models", min_bytes=50_000, ex
 
             os.replace(tmp_path, target)
             return True, f"downloaded_and_verified:{reason_dl}", target
+        except urllib.error.HTTPError as e:
+            last_err = e
+            retryable = e.code in transient_http_codes
+            try:
+                retry_after = float(e.headers.get("Retry-After", "").strip())
+            except (TypeError, ValueError, AttributeError):
+                retry_after = None
+            if not retryable:
+                break
+        except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError) as e:
+            last_err = e
+            retryable = True
         except Exception as e:
             last_err = e
-            if os.path.exists(tmp_path):
-                try: os.remove(tmp_path)
-                except OSError: pass
-            if attempt < retries:
-                time.sleep(min(2.0, 0.25 * attempt))
-            else:
-                break
-    raise RuntimeError(f"Failed to download and verify '{filename}' from {url} after {retries} attempts: {last_err}") from last_err
+            retryable = False
+
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        if not retryable or attempt >= max_attempts:
+            break
+        backoff = min(30.0, 2.0 * (2 ** (attempt - 1)))
+        delay = max(backoff, min(retry_after, 120.0)) if retry_after is not None else backoff
+        print(f"[Model download retry] {filename}: transient error ({last_err}); retry {attempt + 1}/{max_attempts} in {delay:.0f}s")
+        time.sleep(delay)
+    raise RuntimeError(f"Failed to download and verify '{filename}' from {url} after {max_attempts} attempts: {last_err}") from last_err
 
 
 def fetch_models(verify_hash=True, timeout=30.0, retries=3):
