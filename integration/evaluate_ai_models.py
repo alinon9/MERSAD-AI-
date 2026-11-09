@@ -766,47 +766,30 @@ def evaluate_four_models_on_frames(
             eocr_load = "LOADED_AFTER_SHA256_VERIFY"
             lats = []
             sample_rows = []
-            known_governorates = {"عدن", "صنعاء", "تعز", "حضرموت", "إب", "مأرب"}
             for f_img, (cam_id, exp_plate, _, _) in zip(frames, EXPECTED_LAB_PLATES):
                 boxes = m.find_plates(f_img)
-                row_candidates = []
+                candidates = []
                 t0 = time.perf_counter()
                 for x, y, bw, bh in boxes:
                     crop = f_img[y:y + bh, x:x + bw]
-                    norm_txt, conf_val = m.read_plate(reader, crop)
-                    # Always re-normalize the reader output; this also repairs known I/1 OCR confusions.
-                    norm_txt = reg.norm_plate(norm_txt) if norm_txt else ""
-                    # Retry borderline confidence reads and empty reads using larger, higher-contrast crops.
-                    # No expected label is supplied to OCR and no ground-truth text is substituted.
-                    if not norm_txt or conf_val < 0.60:
-                        enlarged = cv2.resize(crop, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-                        variants = (enlarged, cv2.resize(crop, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC),
-                                    cv2.convertScaleAbs(enlarged, alpha=1.25, beta=8))
-                        for variant in variants:
-                            try:
-                                with m._OCR_INFER_LOCK:
-                                    rows = reader.readtext(variant, detail=1, paragraph=False)
-                                raw = " ".join(str(row[1]) for row in rows if len(row) >= 3 and float(row[2]) >= 0.20).strip()
-                                retry_conf = float(np.mean([float(row[2]) for row in rows if len(row) >= 3])) if rows else 0.0
-                                normalized = reg.norm_plate(raw)
-                                if normalized:
-                                    row_candidates.append((normalized, retry_conf))
-                            except Exception:
-                                continue
+                    # Use the production multi-pass OCR pipeline, but record low-confidence text too.
+                    norm_txt, conf_val = m.read_plate(reader, crop, min_conf=0.20)
                     if norm_txt:
-                        row_candidates.append((norm_txt, conf_val))
-                if row_candidates:
-                    def _candidate_rank(item):
-                        candidate_text, candidate_conf = item
-                        candidate_digits, candidate_letters = reg.split_plate(candidate_text)
-                        return (1 if candidate_letters in known_governorates else 0,
-                                1 if len(candidate_digits) == 5 else 0, float(candidate_conf))
-                    norm_txt, conf_val = max(row_candidates, key=_candidate_rank)
+                        candidates.append((norm_txt, conf_val))
+                if candidates:
+                    # Prefer repeated normalized predictions, then confidence; never compare to the expected label here.
+                    votes = {}
+                    for candidate_text, candidate_conf in candidates:
+                        item = votes.setdefault(candidate_text, {"count": 0, "confidence": 0.0})
+                        item["count"] += 1
+                        item["confidence"] = max(item["confidence"], float(candidate_conf))
+                    norm_txt, vote = max(votes.items(), key=lambda item: (item[1]["count"], item[1]["confidence"]))
+                    conf_val = vote["confidence"]
                 else:
                     norm_txt, conf_val = "", 0.0
                 lats.append((time.perf_counter() - t0) * 1000.0)
-                sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "", "conf": round(conf_val, 3),
-                                    "plate_candidates": len(boxes)})
+                sample_rows.append({"cam": cam_id, "expected": exp_plate, "predicted": norm_txt or "",
+                                    "conf": round(conf_val, 3), "plate_candidates": len(boxes)})
             plates_gt_p = AI_DIR / "models" / "eval_benchmarks" / "plates" / "ground_truth.json"
             if plates_gt_p.is_file():
                 p_gt_data = json.loads(plates_gt_p.read_text(encoding="utf-8"))

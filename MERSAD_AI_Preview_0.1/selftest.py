@@ -238,11 +238,12 @@ def run_unit_tests():
     p_ibb = reg_mod.norm_plate("18891406")
     p_ibb_i = reg_mod.norm_plate("I8891406")
     p_har = reg_mod.norm_plate("HAR-55120")
+    p_aen = reg_mod.norm_plate("AEN-012345")
     check("OCR", "known Yemeni governorate OCR signatures normalize while numeric-only plates stay unchanged",
           p_taz == "تعز-73901" and p_mar == "مأرب-30827" and p_ibb == "إب-91406"
-          and p_ibb_i == "إب-91406" and p_har == "حضرموت-55120"
+          and p_ibb_i == "إب-91406" and p_har == "حضرموت-55120" and p_aen == "عدن-012345"
           and reg_mod.norm_plate("123456") == "123456",
-          (p_taz, p_mar, p_ibb, p_ibb_i, p_har, reg_mod.norm_plate("123456")))
+          (p_taz, p_mar, p_ibb, p_ibb_i, p_har, p_aen, reg_mod.norm_plate("123456")))
 
     # P0-1: Realistic Yemeni OCR lookup with governorate/letters against digits-only registry record
     reg_mod.save_vehicle({"plate": "91234", "status": "wanted", "model": "Hilux"}, "unit")

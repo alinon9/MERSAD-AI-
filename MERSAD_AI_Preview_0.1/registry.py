@@ -474,6 +474,7 @@ def _fix_ocr_numeric_tokens(raw_str):
 
 _LATIN_GOV_TO_AR = {
     "ADEN": "عدن",
+    "AEN": "عدن",
     "SANAA": "صنعاء",
     "SANA": "صنعاء",
     "TAIZ": "تعز",

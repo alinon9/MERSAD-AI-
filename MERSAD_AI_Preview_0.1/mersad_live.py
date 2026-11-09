@@ -2730,29 +2730,111 @@ def preprocess_plate(crop):
     return img
 
 
+def _plate_ocr_result(reader, image, min_conf, kwargs=None):
+    """Run one OCR attempt and return a normalized candidate plus its measured confidence."""
+    call_kwargs = dict(kwargs or {})
+    try:
+        with _OCR_INFER_LOCK:
+            rows = reader.readtext(image, **call_kwargs)
+    except TypeError:
+        # Lightweight test readers and older wrappers may expose only readtext(image).
+        try:
+            with _OCR_INFER_LOCK:
+                rows = reader.readtext(image)
+        except Exception as exc:
+            logger.debug("OCR retry readtext error: %s", exc)
+            return None
+    except Exception as exc:
+        logger.debug("OCR retry readtext error: %s", exc)
+        return None
+    valid_rows = []
+    for row in rows or []:
+        try:
+            if len(row) >= 3 and float(row[2]) >= max(0.10, min_conf * 0.45):
+                valid_rows.append(row)
+        except (TypeError, ValueError):
+            continue
+    if not valid_rows:
+        return None
+    raw_text = " ".join(str(row[1]) for row in valid_rows).strip()
+    normalized = R.norm_plate(raw_text)
+    digits, _ = R.split_plate(normalized)
+    if not normalized or not (3 <= len(digits) <= 8):
+        return None
+    confidence = float(np.mean([float(row[2]) for row in valid_rows]))
+    return normalized, confidence
+
+
 def read_plate(reader, crop, min_conf=MIN_OCR_CONF):
-    """Read Arabic/English plate text, normalize without merging distinct lettered plates, and validate confidence."""
+    """Read and normalize a plate using bounded image-enhancement retries when the first pass is uncertain.
+
+    Retries use only pixels from the detected crop (upscale, CLAHE, Otsu and adaptive threshold).
+    No registry entries or expected benchmark labels are consulted during recognition.
+    """
     proc = preprocess_plate(crop)
     if proc is None or reader is None:
         return None, 0.0
-    try:
-        if getattr(reader, "engine_name", "") == "Tesseract-5-LSTM-Real-Pixel-OCR":
-            res = reader.readtext(proc)
-        else:
-            with _OCR_INFER_LOCK:
-                res = reader.readtext(proc)
-    except Exception as e:
-        logger.debug("OCR readtext error: %s", e)
+
+    # Tesseract is an independent fallback engine; retain its own native read path.
+    if getattr(reader, "engine_name", "") == "Tesseract-5-LSTM-Real-Pixel-OCR":
+        try:
+            rows = reader.readtext(proc)
+            raw = " ".join(str(row[1]) for row in rows if len(row) >= 3 and float(row[2]) >= min_conf * 0.45).strip()
+            normalized = R.norm_plate(raw)
+            digits, _ = R.split_plate(normalized)
+            confidence = float(np.mean([float(row[2]) for row in rows if len(row) >= 3])) if rows else 0.0
+            return (normalized, confidence) if normalized and 3 <= len(digits) <= 8 and confidence >= min_conf else (None, 0.0)
+        except Exception as exc:
+            logger.debug("Tesseract OCR readtext error: %s", exc)
+            return None, 0.0
+
+    first = _plate_ocr_result(reader, proc, min_conf)
+    candidates = [first] if first else []
+    retry_threshold = max(0.55, min_conf + 0.20)
+    if first is None or first[1] < retry_threshold:
+        gray = cv2.cvtColor(proc, cv2.COLOR_BGR2GRAY) if proc.ndim == 3 else proc
+        enlarged = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(enlarged)
+        blurred = cv2.GaussianBlur(clahe, (0, 0), 1.0)
+        sharpened = cv2.addWeighted(clahe, 1.45, blurred, -0.45, 0)
+        _, otsu = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adaptive = cv2.adaptiveThreshold(
+            sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
+        )
+        latin_allowlist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        retry_attempts = (
+            (enlarged, {"detail": 1, "paragraph": False, "contrast_ths": 0.05, "adjust_contrast": 0.7}),
+            (clahe, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
+                     "decoder": "beamsearch", "beamWidth": 5, "contrast_ths": 0.05, "adjust_contrast": 0.7}),
+            (sharpened, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
+                         "decoder": "beamsearch", "beamWidth": 5}),
+            (otsu, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
+                    "decoder": "beamsearch", "beamWidth": 5}),
+            (adaptive, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
+                        "decoder": "beamsearch", "beamWidth": 5}),
+        )
+        for image_variant, options in retry_attempts:
+            result = _plate_ocr_result(reader, image_variant, min_conf, options)
+            if result:
+                candidates.append(result)
+
+    if not candidates:
         return None, 0.0
-    if not res:
+
+    # Vote across independent pixel variants before confidence tie-breaks.
+    counts = {}
+    for normalized, confidence in candidates:
+        entry = counts.setdefault(normalized, {"votes": 0, "confidence": 0.0, "best": 0.0})
+        entry["votes"] += 1
+        entry["confidence"] += confidence
+        entry["best"] = max(entry["best"], confidence)
+    winner, stats = max(
+        counts.items(),
+        key=lambda item: (item[1]["votes"], item[1]["best"], item[1]["confidence"])
+    )
+    if stats["best"] < min_conf:
         return None, 0.0
-    raw_txt = " ".join(str(r[1]) for r in res if len(r) >= 3 and float(r[2]) >= min_conf * 0.7).strip()
-    norm = R.norm_plate(raw_txt)
-    digits_only, _ = R.split_plate(norm)
-    conf = float(np.mean([float(r[2]) for r in res if len(r) >= 3])) if res else 0.0
-    if 3 <= len(digits_only) <= 8 and conf >= min_conf:
-        return norm, conf
-    return None, 0.0
+    return winner, stats["best"]
 
 
 def infer_direction(pts):
