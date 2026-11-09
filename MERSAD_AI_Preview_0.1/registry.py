@@ -470,6 +470,11 @@ def interprocess_db_lock(db_path=None):
     depth_incremented = False
     try:
         if _IPC_STATE["depth"] == 0 and p and p != ":memory:":
+            # Preserve the file-lock backend's fail-closed path validation even
+            # though the Windows named mutex itself is a kernel object.
+            lock_parent = os.path.dirname(os.path.abspath(p))
+            if not os.path.isdir(lock_parent):
+                raise OSError(f"Database lock parent directory does not exist: {lock_parent}")
             if fcntl is not None:
                 lock_handle = open(f"{p}.ipclock", "a+b")
                 try:
