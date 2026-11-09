@@ -148,8 +148,8 @@ def prefetch_all_models(models_dir="models", timeout=30.0, retries=3):
         YOLO_MODEL_URL,
         min_bytes=EXPECTED_MIN_BYTES.get("yolov8n.pt", 6_000_000),
         expected_sha256=yolo_expected_sha,
-        retries=retries,
-        timeout=timeout,
+        retries=max(retries, 6),
+        timeout=max(timeout, 120.0),
         target_dir=models_dir,
     )
     if os.path.isfile(yolo_target):
