@@ -232,12 +232,14 @@ def run_unit_tests():
     p4 = reg_mod.norm_plate("ج د ١٢٣٤")
     check("UNIT", "normalize Eastern & Persian Arabic numerals to ASCII", p1 == "12345" and p2 == "12345", (p1, p2))
     check("UNIT", "distinct lettered plates do NOT merge into same ID", p3 == "اب-1234" and p4 == "جد-1234" and p3 != p4, (p3, p4))
-    # EasyOCR can omit narrow uppercase glyphs in small plate crops:
-    # TAIZ -> TAZ and MARIB/MARI -> MAR. Keep these known code aliases canonical.
+    # Common OCR truncations and the I/8 glyph confusion in the IBB prefix.
     p_taz = reg_mod.norm_plate("TAZ-73901")
     p_mar = reg_mod.norm_plate("MAR-30827")
-    check("OCR", "truncated governorate aliases normalize to canonical Yemeni names",
-          p_taz == "تعز-73901" and p_mar == "مأرب-30827", (p_taz, p_mar))
+    p_ibb = reg_mod.norm_plate("18891406")
+    check("OCR", "known Yemeni governorate OCR signatures normalize while numeric-only plates stay unchanged",
+          p_taz == "تعز-73901" and p_mar == "مأرب-30827" and p_ibb == "إب-91406"
+          and reg_mod.norm_plate("123456") == "123456",
+          (p_taz, p_mar, p_ibb, reg_mod.norm_plate("123456")))
 
     # P0-1: Realistic Yemeni OCR lookup with governorate/letters against digits-only registry record
     reg_mod.save_vehicle({"plate": "91234", "status": "wanted", "model": "Hilux"}, "unit")
