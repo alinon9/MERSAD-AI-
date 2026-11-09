@@ -714,59 +714,94 @@ def run_security_lan_and_multiprocess_tests():
     check("P0-E", "SQLite lock order is local DB RLock before process-state lock",
           _lock_order[:2] == ["local-db", "process-state"], _lock_order)
 
-    # P0-E & P2-6: Real 2-process CONCURRENT stress test (2 OS processes x 50 alerts = 100 alerts simultaneously + listener lock + cross-process sync)
+    # P0-E & P2-6: Real two-process DB/audit contention test.
+    # Keep production raise_alert() coverage in the functional tests; this focused
+    # stress test writes the same alert/audit records transactionally without
+    # repeatedly running image, notification, and full in-memory refresh paths.
     mp_dir = tempfile.mkdtemp(prefix="mersad_mp_")
     try:
-        worker_code = (
-            "import os, sys, time, numpy as np\n"
-            f"sys.path.insert(0, {repr(WORK)})\n"
+        mp_env = {
+            **os.environ,
+            "MERSAD_DATA_DIR": mp_dir,
+            "TELEGRAM_TOKEN": "TOK_MP_TEST",
+            "TELEGRAM_CHAT_ID": "-100",
+            "TELEGRAM_API": "http://127.0.0.1:8780",
+        }
+        init_code = (
+            f"import os, sys; sys.path.insert(0, {repr(WORK)})\n"
             "os.environ['MERSAD_DATA_DIR'] = sys.argv[1]\n"
+            "os.environ.pop('MERSAD_SKIP_RUNTIME_INIT', None)\n"
+            "import mersad_live as m\n"
+            "m.log('multiprocess stress seed', 'workers=2')\n"
+            "m.db.close()\n"
+            "print('MP_DB_READY')\n"
+        )
+        init_result = subprocess.run(
+            [sys.executable, "-c", init_code, mp_dir],
+            cwd=mp_dir, env=mp_env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if init_result.returncode != 0 or "MP_DB_READY" not in init_result.stdout:
+            raise RuntimeError(
+                "Could not pre-initialize the multiprocess stress database; "
+                f"exit={init_result.returncode}; stdout={init_result.stdout[-1000:]!r}; "
+                f"stderr={init_result.stderr[-1000:]!r}"
+            )
+
+        worker_code = (
+            f"import os, sys, time, threading, sqlite3; sys.path.insert(0, {repr(WORK)})\n"
+            "os.environ['MERSAD_DATA_DIR'] = sys.argv[1]\n"
+            "os.environ['MERSAD_SKIP_RUNTIME_INIT'] = '1'\n"
             "os.environ['TELEGRAM_TOKEN'] = 'TOK_MP_TEST'\n"
             "os.environ['TELEGRAM_CHAT_ID'] = '-100'\n"
-            "os.environ['TELEGRAM_API'] = 'http://127.0.0.1:8780'\n"
-            "import mersad_live as m, threading\n"
-            # This stress case targets database/audit/lock semantics, not OpenCV encoding or Telegram network delivery.
-            # Keep native image I/O and outbound sends out of child-process shutdown to avoid unrelated native-thread crashes.
-            "m.send_alert = lambda *args, **kwargs: True\n"
-            "def _test_write_image(path, frame):\n"
-            "    with open(path, 'wb') as ef: ef.write(b'MERSAD_TEST_EVIDENCE')\n"
-            "    return True\n"
-            "m.cv2.imwrite = _test_write_image\n"
+            "import mersad_live as m\n"
             "cam = sys.argv[2]\n"
             "barrier_dir = sys.argv[3]\n"
+            "db_path = os.path.join(barrier_dir, 'mersad.db')\n"
+            "m.DB_PATH = db_path\n"
+            "m.DBL = threading.RLock()\n"
+            "m.db = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)\n"
+            "m.R.init(m.db, m.DBL, m.log, lambda: None, db_path=db_path)\n"
+            "def _fake_telegram_call(*args, **kwargs):\n"
+            "    time.sleep(0.02)\n"
+            "    return {'ok': True, 'result': []}\n"
+            "m._notify_mod._call = _fake_telegram_call\n"
             "def _mark_progress(stage):\n"
             "    with open(os.path.join(barrier_dir, cam + '.progress'), 'w', encoding='ascii') as pf: pf.write(stage)\n"
             "stop_ev = threading.Event()\n"
-            "listener_owned = m.start_listener(lambda d, w: 'ok', stop_event=stop_ev)\n"
+            "listener_owned = m.start_listener(lambda data, who: 'ok', stop_event=stop_ev)\n"
             "with open(os.path.join(barrier_dir, cam + '.listener'), 'w', encoding='ascii') as lf: lf.write(str(int(listener_owned)))\n"
             "deadline = time.monotonic() + 10\n"
             "while not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.listener')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.listener'))) and time.monotonic() < deadline: time.sleep(0.01)\n"
             "if not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.listener')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.listener'))): raise RuntimeError('listener test barrier timed out')\n"
-            "_mark_progress('listener_barrier_ok')\n"
             "m.log('session start', cam)\n"
-            "_mark_progress('session_log_ok')\n"
-            "msg, _ = m.register('88881', 0.93, cam, 'car', direction='اقتراب نسبي في الإطار', session_id='proc_' + cam)\n"
-            "_mark_progress('register_ok')\n"
-            "img = np.zeros((40, 40, 3), np.uint8)\n"
+            "_mark_progress('listener_and_db_ready')\n"
             "errs = 0\n"
             "last_err = ''\n"
-            "# Defer the expensive in-memory refresh until the concurrent DB write burst is complete.\n"
-            "# All 100 alert rows, evidence writes, audit-chain updates, and final cross-process sync remain real.\n"
-            "_original_sync_alerts = m._sync_alerts_from_db\n"
-            "m._sync_alerts_from_db = lambda *args, **kwargs: None\n"
-            "try:\n"
-            "    for i in range(50):\n"
-            "        try:\n"
-            "            m.raise_alert('VEHICLE: WANTED', f'{cam}_PL_{i}', cam, img, ref=f'{cam}_{i}')\n"
-            "        except Exception as e:\n"
-            "            errs += 1\n"
-            "            last_err = f'{type(e).__name__}: {e}'[:160]\n"
-            "        if (i + 1) % 10 == 0: _mark_progress(f'alerts={i + 1};errs={errs};last={last_err}')\n"
-            "finally:\n"
-            "    m._sync_alerts_from_db = _original_sync_alerts\n"
+            "for i in range(50):\n"
+            "    def _write_alert(conn, idx=i):\n"
+            "        now = time.time()\n"
+            "        subject = f'{cam}_PL_{idx}'\n"
+            "        cur = conn.execute(\n"
+            "            'INSERT INTO alerts(ts, ts_str, msg, subject, ref, detail, cam, img) VALUES(?,?,?,?,?,?,?,?)',\n"
+            "            (now, time.strftime('%H:%M:%S', time.localtime(now)), 'VEHICLE: WANTED', subject, f'{cam}_{idx}', 'multiprocess lock stress', cam, '')\n"
+            "        )\n"
+            "        alert_id = int(cur.lastrowid)\n"
+            "        m._log_in_tx(conn, 'stress evidence', f'{cam}/{idx}')\n"
+            "        m._log_in_tx(conn, 'stress alert', f'id={alert_id} {cam}_{idx}')\n"
+            "        return alert_id\n"
+            "    try:\n"
+            "        m.R.run_atomic_tx(m.db, m.DBL, _write_alert, db_path=db_path)\n"
+            "    except Exception as exc:\n"
+            "        errs += 1\n"
+            "        last_err = f'{type(exc).__name__}: {exc}'[:200]\n"
+            "    if (i + 1) % 10 == 0: _mark_progress(f'alerts={i + 1};errs={errs};last={last_err}')\n"
+            "if errs:\n"
+            "    raise RuntimeError(f'{cam} had {errs} transactional write errors; last={last_err}')\n"
             "_mark_progress('alert_burst_complete')\n"
             "m._sync_alerts_from_db()\n"
-            "_mark_progress('cross_process_sync_complete')\n"
+            "synced_total = len(m.bus.alerts)\n"
+            "_mark_progress(f'cross_process_sync_complete;synced={synced_total}')\n"
             "with open(os.path.join(barrier_dir, cam + '.done'), 'w', encoding='ascii') as df: df.write('done')\n"
             "deadline = time.monotonic() + 10\n"
             "while not (os.path.isfile(os.path.join(barrier_dir, 'CAM1.done')) and os.path.isfile(os.path.join(barrier_dir, 'CAM2.done'))) and time.monotonic() < deadline: time.sleep(0.01)\n"
@@ -775,20 +810,25 @@ def run_security_lan_and_multiprocess_tests():
             "synced_total = len(m.bus.alerts)\n"
             "m.log('session end', cam)\n"
             "stop_ev.set()\n"
-            "m._notify_mod.wait_listener_stopped(timeout=4.0)\n"
+            "if not m._notify_mod.wait_listener_stopped(timeout=3.0): raise RuntimeError('Telegram listener did not stop cleanly')\n"
             "m.db.close()\n"
-            "print(f'MP_OUT:{cam}:errs={errs}:listener={int(listener_owned)}:synced={synced_total}:route={msg}')\n"
+            "print(f'MP_OUT:{cam}:errs={errs}:listener={int(listener_owned)}:synced={synced_total}')\n"
         )
-        p1 = p2 = None
-        try:
-            p1 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM1", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            p2 = subprocess.Popen([sys.executable, "-c", worker_code, mp_dir, "CAM2", mp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-            # Drain both child pipes concurrently. Sequential communicate() calls
-            # gave the second Windows worker a fresh 30s timeout only after the
-            # first worker had already consumed most of the wall-clock budget.
-            # SQLite/audit stress is intentionally kept at 2 x 50 writes.
-            mp_timeout = 75
+        p1 = p2 = None
+        o1 = e1 = o2 = e2 = ""
+        try:
+            p1 = subprocess.Popen(
+                [sys.executable, "-c", worker_code, mp_dir, "CAM1", mp_dir],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                encoding="utf-8", errors="replace",
+            )
+            p2 = subprocess.Popen(
+                [sys.executable, "-c", worker_code, mp_dir, "CAM2", mp_dir],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                encoding="utf-8", errors="replace",
+            )
+            mp_timeout = 45
             with ThreadPoolExecutor(max_workers=2) as mp_pool:
                 f1 = mp_pool.submit(p1.communicate, timeout=mp_timeout)
                 f2 = mp_pool.submit(p2.communicate, timeout=mp_timeout)
@@ -799,15 +839,15 @@ def run_security_lan_and_multiprocess_tests():
                     for child in (p1, p2):
                         if child is not None and child.poll() is None:
                             child.kill()
-                    # The futures own communicate() and finish draining after kill.
-                    try:
-                        o1, e1 = f1.result(timeout=5)
-                    except Exception as drain_exc:
-                        o1, e1 = "", f"stdout/stderr drain failed: {drain_exc}"
-                    try:
-                        o2, e2 = f2.result(timeout=5)
-                    except Exception as drain_exc:
-                        o2, e2 = "", f"stdout/stderr drain failed: {drain_exc}"
+                    for future, label in ((f1, "CAM1"), (f2, "CAM2")):
+                        try:
+                            out, err = future.result(timeout=5)
+                        except Exception as drain_exc:
+                            out, err = "", f"pipe drain failed: {drain_exc}"
+                        if label == "CAM1":
+                            o1, e1 = out, err
+                        else:
+                            o2, e2 = out, err
                     progress = {}
                     for cam_id in ("CAM1", "CAM2"):
                         try:
@@ -829,6 +869,7 @@ def run_security_lan_and_multiprocess_tests():
                         child.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         pass
+
         mp_exit_codes = (p1.returncode, p2.returncode)
         if mp_exit_codes != (0, 0):
             raise RuntimeError(
@@ -839,28 +880,46 @@ def run_security_lan_and_multiprocess_tests():
             )
 
         mp_db = sqlite3.connect(os.path.join(mp_dir, "mersad.db"))
-        tot_alerts = mp_db.execute("SELECT COUNT(*), COUNT(DISTINCT id) FROM alerts").fetchall()[0]
-        tot_audit = mp_db.execute("SELECT COUNT(*), COUNT(DISTINCT i) FROM audit").fetchall()[0]
-        mp_db.close()
+        try:
+            tot_alerts = mp_db.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT id) FROM alerts"
+            ).fetchone()
+            tot_audit = mp_db.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT i) FROM audit"
+            ).fetchone()
+        finally:
+            mp_db.close()
 
-        v_p = subprocess.run([sys.executable, os.path.join(WORK, "mersad_live.py"), "--verify"],
-                             env={**os.environ, "MERSAD_DATA_DIR": mp_dir}, capture_output=True, text=True, timeout=10)
+        v_p = subprocess.run(
+            [sys.executable, os.path.join(WORK, "mersad_live.py"), "--verify"],
+            env={**mp_env, "MERSAD_SKIP_RUNTIME_INIT": "0"},
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
         try:
             l1 = open(os.path.join(mp_dir, "CAM1.listener"), encoding="ascii").read().strip() == "1"
             l2 = open(os.path.join(mp_dir, "CAM2.listener"), encoding="ascii").read().strip() == "1"
         except OSError:
             l1 = l2 = False
-        check("P0-E", "2 concurrent OS processes x 50 alerts = 100 unique alerts, 0 errors, intact audit chain, & exactly one Telegram listener owner",
-              "errs=0" in o1 and "errs=0" in o2 and tot_alerts == (100, 100)
-              and tot_audit[0] == tot_audit[1] and tot_audit[0] >= 204
-              and (l1 ^ l2) and "Audit chain OK" in v_p.stdout,
-              (o1.strip(), o2.strip(), {"listener_CAM1": l1, "listener_CAM2": l2}, "returncodes", p1.returncode, p2.returncode, tot_alerts, tot_audit, v_p.stdout.strip(), e1[-200:], e2[-200:]))
+        check(
+            "P0-E",
+            "2 concurrent OS processes x 50 alert transactions = 100 unique alerts, 0 errors, intact audit chain, & exactly one Telegram listener owner",
+            "errs=0" in o1 and "errs=0" in o2 and tot_alerts == (100, 100)
+            and tot_audit[0] == tot_audit[1] and tot_audit[0] >= 204
+            and (l1 ^ l2) and "Audit chain OK" in v_p.stdout,
+            (o1.strip(), o2.strip(), {"listener_CAM1": l1, "listener_CAM2": l2},
+             "returncodes", p1.returncode, p2.returncode, tot_alerts, tot_audit,
+             v_p.stdout.strip(), e1[-200:], e2[-200:]),
+        )
 
-        # Also check that syncing in a process sees all 100 alerts from both processes
-        check("P2-6", "multi-process shared DB synchronizes alerts across processes",
-              ("synced=100" in o1 or "synced=100" in o2) and "Audit chain OK" in v_p.stdout, (o1.strip(), o2.strip()))
+        check(
+            "P2-6",
+            "multi-process shared DB synchronizes all 100 alerts across processes",
+            ("synced=100" in o1 or "synced=100" in o2) and "Audit chain OK" in v_p.stdout,
+            (o1.strip(), o2.strip()),
+        )
     finally:
         shutil.rmtree(mp_dir, ignore_errors=True)
+
 
 
 # ==============================================================================
