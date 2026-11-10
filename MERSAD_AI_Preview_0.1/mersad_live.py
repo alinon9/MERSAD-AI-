@@ -6288,7 +6288,7 @@ def _run_tk_file_dialog_cli(mode="folder"):
             "headless": True,
             "error": "نافذة اختيار المسار المحلية غير متاحة في وضع الخادم/بدون واجهة سطح مكتب؛ يمكنك كتابة المسار مباشرة أو رفع صور التقييم وملف ground_truth.csv من المتصفح.",
         }
-        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\\n")
+        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
         sys.stdout.flush()
         return 0
 
