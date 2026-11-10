@@ -83,17 +83,22 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig 2>$null
+          # Fetch the immutable historical commit directly; its old branch may have been deleted.
+          # The commit contains the base64 source chunks consumed by compare_original_vs_cleanroom_lab.py.
+          $targetSha = "ed7b8f727243da4878e547f08489af581c83291c"
+          git fetch --no-tags --depth=1 origin $targetSha 2>$null
           if ($LASTEXITCODE -eq 0) {
-            $actualSha = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
-            if ($actualSha -eq "ed7b8f727243da4878e547f08489af581c83291c") {
-              if (Test-Path "MERSAD_LAB_Original_ed7b8f72") { Remove-Item -Recurse -Force "MERSAD_LAB_Original_ed7b8f72" }
-              New-Item -ItemType Directory -Force -Path "MERSAD_LAB_Original_ed7b8f72" | Out-Null
-              git archive refs/remotes/origin/mersad-lab-orig | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
-              Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $actualSha -Encoding ASCII
+            $actualSha = (git rev-parse FETCH_HEAD).Trim().ToLower()
+            if ($actualSha -ne $targetSha) {
+              throw "Fetched Original LAB commit mismatch: expected $targetSha, got $actualSha"
             }
+            if (Test-Path "MERSAD_LAB_Original_ed7b8f72") { Remove-Item -Recurse -Force "MERSAD_LAB_Original_ed7b8f72" }
+            New-Item -ItemType Directory -Force -Path "MERSAD_LAB_Original_ed7b8f72" | Out-Null
+            git archive $actualSha | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to extract Original LAB commit $actualSha" }
+            Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $actualSha -Encoding ASCII
           } else {
-            Write-Host "[WARN] Branch build/mersad-lab-exe-20261031 not present on origin; recording Original LAB comparison as BLOCKED/NOT_TESTED."
+            Write-Host "[WARN] Historical Original LAB commit $targetSha could not be fetched; Original LAB comparison remains BLOCKED/NOT_TESTED."
           }
           $ErrorActionPreference = "Stop"
           python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
