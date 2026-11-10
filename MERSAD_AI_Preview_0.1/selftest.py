@@ -1539,6 +1539,9 @@ def run_round4_tests():
         p_first = reg_mod.pseud("12345")
         key_file = os.path.join(d_tmp, ".mersad_hmac.key")
         key_mode = stat_mod.S_IMODE(os.stat(key_file).st_mode)
+        key_permissions_ok = (
+            reg_mod._windows_acl_is_private(key_file) if os.name == "nt" else key_mode == 0o600
+        )
         acl_calls_after_first = len(acl_calls)
         p_cached = reg_mod.pseud("12345")
         cache_avoids_repeated_acl = (os.name != "nt" or len(acl_calls) == acl_calls_after_first)
@@ -1571,9 +1574,9 @@ def run_round4_tests():
         except RuntimeError:
             unwritable_raised = True
 
-        check("P1-D", "HMAC key created with 0600, persists across restart, refuses corrupt key overwrite, and fails closed without static fallback",
-              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_mode == 0o600 and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
-              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, acl_calls_after_first, oct(key_mode), corrupt_raised, still_corrupt_len, unwritable_raised))
+        check("P1-D", "HMAC key is owner-only (POSIX 0600 / verified Windows ACL), persists across restart, refuses corrupt overwrite, and fails closed",
+              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_permissions_ok and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
+              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, acl_calls_after_first, oct(key_mode), key_permissions_ok, corrupt_raised, still_corrupt_len, unwritable_raised))
     finally:
         if orig_data_dir is not None:
             os.environ["MERSAD_DATA_DIR"] = orig_data_dir
@@ -1585,6 +1588,9 @@ def run_round4_tests():
     # Test interrupted atomic write on .mersad_secrets.json preserves previous file and leaves 0 temp files
     m._save_secrets_file({"telegram_token": "VALID_SAVED_TOK_1"})
     sec_mode_before = stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode)
+    sec_private_before = (
+        reg_mod._windows_acl_is_private(m._SECRETS_FILE) if os.name == "nt" else sec_mode_before == 0o600
+    )
     orig_replace = os.replace
     def _fail_replace(src, dst):
         raise OSError("Simulated crash right before atomic os.replace")
@@ -1599,10 +1605,13 @@ def run_round4_tests():
     sec_after_crash = m._load_secrets_file()
     leftover_tmps = [fn for fn in os.listdir(WORK) if ".mersad_secrets.json.tmp" in fn]
     sec_mode_after = stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode)
-    check("P1-D", "interrupted secrets save preserves previous .mersad_secrets.json (0600) and cleans up temporary file",
+    sec_private_after = (
+        reg_mod._windows_acl_is_private(m._SECRETS_FILE) if os.name == "nt" else sec_mode_after == 0o600
+    )
+    check("P1-D", "interrupted secrets save preserves previous secret file with private permissions/ACL and cleans temporary files",
           interrupted_raised and sec_after_crash.get("telegram_token") == "VALID_SAVED_TOK_1"
-          and not leftover_tmps and sec_mode_before == 0o600 and sec_mode_after == 0o600,
-          (interrupted_raised, sec_after_crash, leftover_tmps, oct(sec_mode_before), oct(sec_mode_after)))
+          and not leftover_tmps and sec_private_before and sec_private_after,
+          (interrupted_raised, sec_after_crash, leftover_tmps, oct(sec_mode_before), oct(sec_mode_after), sec_private_before, sec_private_after))
 
     # ---------- P1-E: Archive recovery & active evidence protection ----------
     # 1. Pending alert with matching copy in evidence_archive/ -> must NOT delete original!
@@ -1885,8 +1894,38 @@ def run_round5_tests():
             src_f = os.path.join(WORK, fn)
             if os.path.isfile(src_f) and fn.endswith((".py", ".html", ".txt", ".md")):
                 shutil.copy2(src_f, os.path.join(ro_install, fn))
-        os.chmod(ro_install, 0o555)
+        ro_acl_sid = None
         try:
+            if os.name == "nt":
+                # chmod(0555) does not make a Windows directory read-only. Deny
+                # the runner's own SID write access so this tests a real NTFS ACL.
+                who_proc = subprocess.run(
+                    ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                )
+                sid_match = re.search(r"\bS-1-(?:\d+-)+\d+\b", who_proc.stdout or "")
+                if who_proc.returncode != 0 or not sid_match:
+                    raise RuntimeError(f"Cannot resolve current Windows SID for read-only path test: {(who_proc.stderr or who_proc.stdout)[-300:]}")
+                ro_acl_sid = sid_match.group(0)
+                deny_proc = subprocess.run(
+                    ["icacls", ro_install, "/deny", f"*{ro_acl_sid}:(OI)(CI)(W)"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+                )
+                if deny_proc.returncode != 0:
+                    raise RuntimeError(f"Cannot apply read-only Windows ACL for R5-PATHS: {(deny_proc.stderr or deny_proc.stdout)[-300:]}")
+                # Verify the ACL actually blocks file creation before starting the app.
+                probe_path = os.path.join(ro_install, ".mersad_readonly_acl_probe")
+                try:
+                    with open(probe_path, "xb"):
+                        pass
+                except OSError:
+                    pass
+                else:
+                    os.remove(probe_path)
+                    raise RuntimeError("Windows deny-write ACL did not block file creation in the test install directory")
+            else:
+                os.chmod(ro_install, 0o555)
+
             env_sub = {k: v for k, v in os.environ.items() if k != "MERSAD_DATA_DIR"}
             env_sub["XDG_DATA_HOME"] = user_data
             env_sub["LOCALAPPDATA"] = user_data
@@ -1908,7 +1947,16 @@ def run_round5_tests():
                   and "Audit chain OK" in res2.stdout and db_persisted and key_persisted and no_db_in_ro,
                   (res1.stdout.strip(), res2.stdout.strip(), db_persisted, key_persisted, no_db_in_ro, res1.stderr[-200:]))
         finally:
-            os.chmod(ro_install, 0o755)
+            if ro_acl_sid:
+                subprocess.run(
+                    ["icacls", ro_install, "/remove:d", f"*{ro_acl_sid}", "/T", "/C"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=False,
+                )
+            else:
+                try:
+                    os.chmod(ro_install, 0o755)
+                except OSError:
+                    pass
     finally:
         shutil.rmtree(base_sp_ar, ignore_errors=True)
 
@@ -3688,12 +3736,25 @@ def run_stage9_complete_polish_tests():
             st_ln = ln_txt.strip()
             if st_ln.startswith("#") or st_ln.startswith("-") or st_ln.startswith('"""'):
                 continue
-            if "open(" in st_ln and "with " not in st_ln and "os.open(" not in st_ln and "webbrowser.open(" not in st_ln and "lock_file" not in st_ln and "lock_path" not in st_ln:
+            # registry.interprocess_db_lock intentionally retains this handle
+            # for the duration of the OS lock and closes it in its finally path.
+            managed_ipc_lock_open = (
+                pf == "registry.py"
+                and st_ln.startswith("lock_handle = open(")
+                and "lock_handle.close()" in src_txt
+                and '_IPC_STATE["fd"] = lock_handle' in src_txt
+            )
+            if "open(" in st_ln and "with " not in st_ln and "os.open(" not in st_ln and "webbrowser.open(" not in st_ln and "lock_file" not in st_ln and "lock_path" not in st_ln and not managed_ipc_lock_open:
                 bare_opens.append((pf, ln_no, st_ln))
 
     reg_txt_03 = open(os.path.join(WORK, "registry.py"), encoding="utf-8").read()
     tpl_part = reg_txt_03.partition("def template(kind):")[2]
     has_tpl_wb_close = ("finally:" in tpl_part and "wb.close()" in tpl_part)
+    has_lock_handle_cleanup = (
+        "lock_handle.close()" in reg_txt_03
+        and '_IPC_STATE["fd"] = lock_handle' in reg_txt_03
+        and '_IPC_STATE["fd"] = None' in reg_txt_03
+    )
 
     srv_03 = srv_mod.ThreadingHTTPServer(("127.0.0.1", 0), srv_mod.H)
     port_03 = srv_03.server_address[1]
@@ -3714,10 +3775,10 @@ def run_stage9_complete_polish_tests():
         srv_03.shutdown()
 
     check("STAGE9-OBS03", "zero unclosed bare open() calls across all 9 production modules, wb.close() in registry.template(), and JSON 404 on unknown /api/* routes",
-          len(bare_opens) == 0 and has_tpl_wb_close
+          len(bare_opens) == 0 and has_tpl_wb_close and has_lock_handle_cleanup
           and r_get404.status == 404 and b_get404.get("ok") is False
           and r_post404.status == 404 and b_post404.get("ok") is False,
-          (bare_opens, has_tpl_wb_close, r_get404.status, b_get404, r_post404.status, b_post404))
+          (bare_opens, has_tpl_wb_close, has_lock_handle_cleanup, r_get404.status, b_get404, r_post404.status, b_post404))
 
     # 4. STAGE9-OBS04: Verify _CURRENT is protected by with _LOCK: in camera_history.py and prune_history is wired in mersad_live.py
     ch_src_04 = open(os.path.join(WORK, "camera_history.py"), encoding="utf-8").read()
@@ -4449,10 +4510,11 @@ def run_stage12_security_and_eval_integrity_tests():
         m._BROWSE_DIALOG_LOCK.release()
 
     # Test subprocess --internal-browse-dialog CLI flag directly
+    dlg_env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    dlg_env["MERSAD_HEADLESS"] = "1"  # CI must exercise the JSON CLI path without opening a modal desktop window.
     sub_dlg = subprocess.run(
         [sys.executable, os.path.join(WORK, "mersad_live.py"), "--internal-browse-dialog", "folder"],
-        capture_output=True, text=True, timeout=10,
-        env={k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")},
+        capture_output=True, text=True, timeout=10, env=dlg_env,
     )
     sub_dlg_json = json.loads(sub_dlg.stdout.strip().splitlines()[-1]) if sub_dlg.stdout.strip() else {}
 
