@@ -3990,6 +3990,10 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
             STATUS["cameras"][cam_name]["detections"] = det_runs_now
 
     new_vboxes = detect_vehicles(inf_frame, vyolo)
+    # A native detector call cannot be force-cancelled safely. Once it returns,
+    # honour camera removal before starting any downstream OCR or registry work.
+    if ((st.get("stop_ev") is not None and st["stop_ev"].is_set()) or STOP_MAIN_EVENT.is_set()):
+        return
     new_boxes = []
     skip_empty_vyolo = bool(
         vyolo is not None
@@ -4029,6 +4033,11 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
                 break
             x, y = x + vx, y + oy
             d, c = read_plate(reader, inf_frame[y:y + bh, x:x + bw])
+            # EasyOCR/Tesseract may finish after the camera is removed. Do not
+            # publish sightings, mutate the registry, or raise alerts for a
+            # camera whose stop event was set while OCR was in flight.
+            if ((st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set()):
+                return
             new_boxes.append((x, y, bw, bh, d))
             if not d:
                 continue

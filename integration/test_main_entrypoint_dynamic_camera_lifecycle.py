@@ -168,6 +168,19 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             method="POST",
         )
         resp_rem1 = json.loads(urllib.request.urlopen(req_rem1, timeout=6.0).read().decode("utf-8"))
+
+        # Removal signals the stop event and performs a bounded join. A YOLO or
+        # OCR native call already in progress cannot be force-cancelled safely;
+        # allow it to return, then verify the worker observes stop and exits.
+        worker_shutdown_started = time.monotonic()
+        worker_shutdown_deadline = worker_shutdown_started + 10.0
+        while time.monotonic() < worker_shutdown_deadline:
+            reader_alive = bool(rt_cam2 and rt_cam2.is_alive())
+            infer_alive = bool(it_cam2 and it_cam2.is_alive())
+            if not reader_alive and not infer_alive:
+                break
+            time.sleep(0.02)
+        worker_shutdown_wait_seconds = time.monotonic() - worker_shutdown_started
         rt_stopped = not (rt_cam2 and rt_cam2.is_alive())
         it_stopped = not (it_cam2 and it_cam2.is_alive())
         with st_cam2["lock"]:
@@ -178,6 +191,8 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
         add_step(9, "Verify reader/infer threads stopped and VideoCapture released without SIGSEGV", rt_stopped and it_stopped and cap_released and removed_from_status, {
             "reader_thread_stopped": rt_stopped,
             "infer_thread_stopped": it_stopped,
+            "worker_shutdown_wait_seconds": round(worker_shutdown_wait_seconds, 2),
+            "infer_thread_alive_after_timeout": bool(it_cam2 and it_cam2.is_alive()),
             "videocapture_released_none": cap_released,
             "removed_from_status_dict": removed_from_status,
         })
