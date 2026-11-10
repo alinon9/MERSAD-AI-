@@ -1990,18 +1990,22 @@ def run_round5_tests():
             src_f = os.path.join(WORK, fn)
             if os.path.isfile(src_f) and fn.endswith((".py", ".html", ".txt", ".md")):
                 shutil.copy2(src_f, os.path.join(ro_install, fn))
+        ro_icacls_bin = None
         if os.name == "nt":
-            sid_proc = subprocess.run(
-                ["whoami.exe", "/user", "/fo", "csv", "/nh"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=10, check=False,
-            )
-            sid_match = re.search(r"\bS-1-(?:\d+-){1,}\d+\b", sid_proc.stdout or "")
-            if sid_proc.returncode != 0 or not sid_match:
-                raise RuntimeError("Cannot determine current Windows SID for read-only install test")
-            ro_acl_sid = sid_match.group(0)
+            try:
+                # Reuse the production SID resolver: it falls back to the
+                # System32 path when CI has a scrubbed PATH.
+                ro_acl_sid = reg_mod._windows_current_user_sid()
+            except Exception as exc:
+                raise RuntimeError(
+                    "Cannot determine current Windows SID for read-only install test"
+                ) from exc
+            sys_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\\Windows"
+            ro_icacls_bin = shutil.which("icacls.exe") or os.path.join(sys_root, "System32", "icacls.exe")
+            if not os.path.isfile(ro_icacls_bin):
+                ro_icacls_bin = "icacls.exe"
             deny_proc = subprocess.run(
-                ["icacls.exe", ro_install, "/deny", f"*{ro_acl_sid}:(WD,AD)"],
+                [ro_icacls_bin, ro_install, "/deny", f"*{ro_acl_sid}:(WD,AD)"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=10, check=False,
             )
@@ -2036,7 +2040,7 @@ def run_round5_tests():
         finally:
             if os.name == "nt" and ro_acl_sid:
                 subprocess.run(
-                    ["icacls.exe", ro_install, "/remove:d", f"*{ro_acl_sid}"],
+                    [ro_icacls_bin or "icacls.exe", ro_install, "/remove:d", f"*{ro_acl_sid}"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=10, check=False,
                 )
@@ -4916,18 +4920,22 @@ def run_stage14_100pct_readiness_tests():
                 shutil.copy2(src_f, os.path.join(s14_ro_dir, fn))
 
         usable_tmp = m._is_sqlite_usable_dir(s14_ro_dir)
+        s14_icacls_bin = None
         if os.name == "nt":
-            sid_proc_14 = subprocess.run(
-                ["whoami.exe", "/user", "/fo", "csv", "/nh"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=10, check=False,
-            )
-            sid_match_14 = re.search(r"\\bS-1-(?:\\d+-){1,}\\d+\\b", sid_proc_14.stdout or "")
-            if sid_proc_14.returncode != 0 or not sid_match_14:
-                raise RuntimeError("Cannot determine current Windows SID for STAGE14-01 read-only mount test")
-            s14_acl_sid = sid_match_14.group(0)
+            try:
+                # Use the same tested resolver as the production Windows ACL
+                # implementation; do not depend on whoami.exe being in PATH.
+                s14_acl_sid = reg_mod._windows_current_user_sid()
+            except Exception as exc:
+                raise RuntimeError(
+                    "Cannot determine current Windows SID for STAGE14-01 read-only mount test"
+                ) from exc
+            sys_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\\Windows"
+            s14_icacls_bin = shutil.which("icacls.exe") or os.path.join(sys_root, "System32", "icacls.exe")
+            if not os.path.isfile(s14_icacls_bin):
+                s14_icacls_bin = "icacls.exe"
             deny_proc_14 = subprocess.run(
-                ["icacls.exe", s14_ro_dir, "/deny", f"*{s14_acl_sid}:(WD,AD)"],
+                [s14_icacls_bin, s14_ro_dir, "/deny", f"*{s14_acl_sid}:(WD,AD)"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=10, check=False,
             )
@@ -4984,7 +4992,7 @@ def run_stage14_100pct_readiness_tests():
         finally:
             if os.name == "nt" and s14_acl_sid:
                 subprocess.run(
-                    ["icacls.exe", s14_ro_dir, "/remove:d", f"*{s14_acl_sid}"],
+                    [s14_icacls_bin or "icacls.exe", s14_ro_dir, "/remove:d", f"*{s14_acl_sid}"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=10, check=False,
                 )
