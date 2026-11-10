@@ -17,15 +17,19 @@ Strict Phase 2 Rules Enforced:
 """
 import argparse
 import ast
+import base64
 import hashlib
+import io
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 TARGET_ORIGINAL_COMMIT = "ed7b8f727243da4878e547f08489af581c83291c"
 TARGET_ORIGINAL_BRANCH = "build/mersad-lab-exe-20261031"
@@ -78,8 +82,114 @@ def collect_tree(root: Path) -> dict:
     return out
 
 
+def _original_lab_root(pres_dir: Path):
+    """Return the actual Original LAB source root, not helper scripts under ci/."""
+    nested = pres_dir / "MERSAD_LAB"
+    if nested.is_dir() and any(p.is_file() for p in nested.glob("*.py")):
+        return nested
+    if pres_dir.is_dir() and any(p.is_file() for p in pres_dir.glob("*.py")):
+        return pres_dir
+    return None
+
+
+def restore_embedded_source_archive(pres_dir: Path) -> dict:
+    """Reassemble and safely extract the historical LAB ZIP stored as base64 CI chunks."""
+    ci_dir = pres_dir / "ci"
+    if not ci_dir.is_dir():
+        existing = _original_lab_root(pres_dir)
+        return {
+            "restored": bool(existing),
+            "parts": 0,
+            "python_files": len(list(existing.glob("*.py"))) if existing else 0,
+            "reason": "Source folder already present." if existing else "No ci/ source chunks or restored MERSAD_LAB folder found.",
+        }
+
+    part_paths = sorted(ci_dir.glob("mersad_lab_source_part_*.txt"))
+    if not part_paths:
+        existing = _original_lab_root(pres_dir)
+        return {
+            "restored": bool(existing),
+            "parts": 0,
+            "python_files": len(list(existing.glob("*.py"))) if existing else 0,
+            "reason": "Source folder already present." if existing else "No embedded source archive chunks found.",
+        }
+
+    indexed_parts = []
+    for part_path in part_paths:
+        match = re.fullmatch(r"mersad_lab_source_part_(\d+)\.txt", part_path.name)
+        if not match:
+            raise ValueError(f"Unexpected embedded LAB source chunk name: {part_path.name}")
+        indexed_parts.append((int(match.group(1)), part_path))
+    indexed_parts.sort(key=lambda item: item[0])
+    expected_indexes = list(range(1, len(indexed_parts) + 1))
+    actual_indexes = [item[0] for item in indexed_parts]
+    if actual_indexes != expected_indexes:
+        raise ValueError(f"Embedded LAB source chunks are incomplete or duplicated: {actual_indexes}")
+
+    encoded = "".join(p.read_text(encoding="ascii").strip() for _, p in indexed_parts)
+    payload = base64.b64decode(encoded, validate=True)
+    if len(payload) > 64 * 1024 * 1024 or not payload.startswith(b"PK\x03\x04"):
+        raise ValueError("Embedded LAB source archive is oversized or not a valid ZIP payload.")
+
+    target = pres_dir / "MERSAD_LAB"
+    with tempfile.TemporaryDirectory(prefix="mersad_original_lab_restore_") as tmp:
+        temp_root = Path(tmp).resolve()
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            bad_member = archive.testzip()
+            if bad_member:
+                raise ValueError(f"Embedded LAB ZIP CRC check failed for {bad_member}")
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
+            if total_uncompressed > 64 * 1024 * 1024:
+                raise ValueError("Embedded LAB source archive exceeds the 64 MiB extraction limit.")
+
+            for info in archive.infolist():
+                raw_name = info.filename
+                if not raw_name or "\\" in raw_name:
+                    raise ValueError(f"Unsafe embedded LAB archive member: {raw_name!r}")
+                rel = PurePosixPath(raw_name)
+                if rel.is_absolute() or any(part in ("", ".", "..") for part in rel.parts):
+                    if info.is_dir() and raw_name.endswith("/") and all(part not in ("", ".", "..") for part in rel.parts):
+                        pass
+                    else:
+                        raise ValueError(f"Unsafe embedded LAB archive path: {raw_name!r}")
+                if re.match(r"^[A-Za-z]:", raw_name):
+                    raise ValueError(f"Absolute Windows path in embedded LAB archive: {raw_name!r}")
+                mode = (info.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(mode):
+                    raise ValueError(f"Symlink is not permitted in embedded LAB archive: {raw_name!r}")
+
+                out_path = temp_root.joinpath(*rel.parts)
+                try:
+                    out_path.resolve().relative_to(temp_root)
+                except ValueError as exc:
+                    raise ValueError(f"Embedded LAB archive path escapes extraction root: {raw_name!r}") from exc
+
+                if info.is_dir():
+                    out_path.mkdir(parents=True, exist_ok=True)
+                else:
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(info, "r") as src, out_path.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+
+        extracted_root = temp_root / "MERSAD_LAB"
+        if not extracted_root.is_dir():
+            raise ValueError("Embedded ZIP does not contain the expected MERSAD_LAB/ root.")
+        py_files = [p for p in extracted_root.glob("*.py") if p.is_file()]
+        if not py_files:
+            raise ValueError("Embedded ZIP was extracted but contains no top-level LAB Python implementation.")
+        shutil.copytree(extracted_root, target, dirs_exist_ok=True)
+
+    restored_files = [p for p in target.glob("*.py") if p.is_file()]
+    return {
+        "restored": bool(restored_files),
+        "parts": len(indexed_parts),
+        "python_files": len(restored_files),
+        "reason": f"Reconstructed original LAB source from {len(indexed_parts)} base64 chunks ({len(restored_files)} Python files).",
+    }
+
+
 def verify_original_commit(pres_dir: Path) -> dict:
-    """Verify whether pres_dir contains the authentic Original LAB from commit ed7b8f727243da4878e547f08489af581c83291c."""
+    """Verify the recorded historical commit and the restored LAB implementation root."""
     if not pres_dir.is_dir():
         return {
             "verified": False,
@@ -102,16 +212,18 @@ def verify_original_commit(pres_dir: Path) -> dict:
             pass
     commit_file = pres_dir / "COMMIT_SHA.txt"
     if not detected_sha and commit_file.is_file():
-        detected_sha = commit_file.read_text(encoding="utf-8", errors="ignore").strip().split()[0].lower()
+        tokens = commit_file.read_text(encoding="utf-8", errors="ignore").strip().split()
+        detected_sha = tokens[0].lower() if tokens else None
 
-    py_files = [p.name for p in pres_dir.rglob("*.py") if "__pycache__" not in str(p)]
+    lab_root = _original_lab_root(pres_dir)
+    py_files = [p for p in lab_root.glob("*.py") if p.is_file()] if lab_root else []
     if not py_files:
         return {
             "verified": False,
             "detected_commit": detected_sha,
             "reason": (
-                f"Commit {TARGET_ORIGINAL_COMMIT} ({TARGET_ORIGINAL_BRANCH}) has not been restored yet "
-                "(0 Python source files present in MERSAD_LAB_Original_ed7b8f72)."
+                f"Commit {TARGET_ORIGINAL_COMMIT} ({TARGET_ORIGINAL_BRANCH}) was identified, "
+                "but the embedded MERSAD_LAB implementation could not be restored."
             ),
         }
     if detected_sha != TARGET_ORIGINAL_COMMIT.lower():
@@ -126,7 +238,7 @@ def verify_original_commit(pres_dir: Path) -> dict:
     return {
         "verified": True,
         "detected_commit": detected_sha,
-        "reason": f"Verified exact commit {TARGET_ORIGINAL_COMMIT} with {len(py_files)} Python files.",
+        "reason": f"Verified exact commit {TARGET_ORIGINAL_COMMIT} with {len(py_files)} top-level LAB Python files.",
     }
 
 
@@ -304,10 +416,13 @@ def main():
         elif orig_in.is_dir() and orig_in.resolve() != pres_dir.resolve():
             shutil.copytree(orig_in, pres_dir, dirs_exist_ok=True)
 
+    source_archive_restore = restore_embedded_source_archive(pres_dir)
     commit_verification = verify_original_commit(pres_dir)
+    commit_verification["source_archive_restore"] = source_archive_restore
     orig_verified = bool(commit_verification["verified"])
+    original_lab_root = _original_lab_root(pres_dir)
 
-    orig_tree = collect_tree(pres_dir) if orig_verified else {}
+    orig_tree = collect_tree(original_lab_root) if orig_verified and original_lab_root else {}
     clean_tree = collect_tree(clean_dir)
     all_keys = sorted(set(orig_tree.keys()) | set(clean_tree.keys()))
 
@@ -336,8 +451,8 @@ def main():
 
     # Run independent functional & security suites on both
     orig_suite = (
-        run_independent_lab_functional_and_security_suite(pres_dir, "Original_LAB_ed7b8f72")
-        if orig_verified
+        run_independent_lab_functional_and_security_suite(original_lab_root, "Original_LAB_ed7b8f72")
+        if orig_verified and original_lab_root
         else {
             "label": "Original_LAB_ed7b8f72",
             "executed": False,
@@ -388,7 +503,7 @@ def main():
         f"- **سبب الحالة:** {commit_verification['reason']}",
         f"- **الحالة الكلية للمرحلة الثانية (Phase 2 Overall Status):** **`{overall_phase2_status}`**",
         "",
-        "> **قاعدة صارمة:** نظراً لعدم توفر أرشيف الالتزام `ed7b8f727243da4878e547f08489af581c83291c` في بيئة الفحص الحالية دون اتصال بـ GitHub، فإن حالة المقارنة تُصنف رسمياً **`BLOCKED`** ولا يُسمح باعتبار المقارنة ناجحة (`PASS`) حتى استعادة الالتزام المحدد وتشغيل هذه الأداة عليه.",
+        f"> **حالة استعادة المصدر:** {source_archive_restore.get('reason', 'No source archive restoration details available.')}",
         "",
         "## 2. نتائج الاختبارات الوظيفية والأمنية المستقلة (Independent Functional & Security Suites)",
         "",
