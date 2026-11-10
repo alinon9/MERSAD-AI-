@@ -1467,21 +1467,98 @@ def run_round4_tests():
             "m.db.close()\n"
             "print(f'P2_DISP:{int(ok2)}')\n"
         )
-        pr1 = subprocess.Popen([sys.executable, "-c", p1_script, mp_disp_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        flag_p = os.path.join(mp_disp_dir, "ready.flag")
-        wait(lambda: os.path.isfile(flag_p) and os.path.getsize(flag_p) > 0, t=5.0)
-        time.sleep(0.15)
-        aid_shared = open(flag_p).read().strip()
-        pr2 = subprocess.Popen([sys.executable, "-c", p2_script, mp_disp_dir, aid_shared], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        out1, err1 = pr1.communicate(timeout=15)
-        out2, err2 = pr2.communicate(timeout=15)
-        c_mp = sqlite3.connect(os.path.join(mp_disp_dir, "mersad.db"))
-        row_mp = c_mp.execute("SELECT dispatched, dispatch_status, dispatch_attempts FROM alerts WHERE id=?", (int(aid_shared),)).fetchone()
-        sent_logs = c_mp.execute("SELECT COUNT(*) FROM audit WHERE action='dispatch sent'").fetchone()[0]
-        c_mp.close()
-        check("P0-B", "2 OS processes: Process 2 startup does NOT reset or duplicate Process 1 active in_flight dispatch",
-              "P1_DISP:1" in out1 and "P2_DISP:0" in out2 and row_mp == (1, "sent", 1) and sent_logs == 1,
-              (out1.strip(), out2.strip(), row_mp, sent_logs, err1[-200:], err2[-200:]))
+        pr1 = None
+        pr2 = None
+        try:
+            pr1 = subprocess.Popen(
+                [sys.executable, "-c", p1_script, mp_disp_dir],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            flag_p = os.path.join(mp_disp_dir, "ready.flag")
+            ready_ok = wait(
+                lambda: os.path.isfile(flag_p) and os.path.getsize(flag_p) > 0,
+                t=30.0,
+            )
+            if not ready_ok:
+                if pr1.poll() is not None:
+                    out1, err1 = pr1.communicate(timeout=5)
+                    raise RuntimeError(
+                        "P0-B Process 1 exited before writing ready.flag "
+                        f"(exit={pr1.returncode}); stdout={out1[-1200:]!r}; stderr={err1[-2400:]!r}"
+                    )
+                pr1.terminate()
+                out1, err1 = pr1.communicate(timeout=5)
+                raise RuntimeError(
+                    "P0-B Process 1 did not become ready within 30 seconds; "
+                    f"stdout={out1[-1200:]!r}; stderr={err1[-2400:]!r}"
+                )
+
+            with open(flag_p, "r", encoding="utf-8") as flag_file:
+                aid_shared = flag_file.read().strip()
+            if not aid_shared.isdigit():
+                raise RuntimeError(f"P0-B Process 1 wrote an invalid alert ID: {aid_shared!r}")
+
+            # Do not rely on a fixed sleep: start Process 2 only after Process 1's
+            # dispatch lease is visible in the shared SQLite database.
+            db_mp_path = os.path.join(mp_disp_dir, "mersad.db")
+            def _p1_lease_is_active():
+                try:
+                    with sqlite3.connect(db_mp_path, timeout=1.0) as c_mp_probe:
+                        row = c_mp_probe.execute(
+                            "SELECT dispatch_status FROM alerts WHERE id=?", (int(aid_shared),)
+                        ).fetchone()
+                    return bool(row and row[0] == "in_flight")
+                except sqlite3.Error:
+                    return False
+
+            lease_ok = wait(_p1_lease_is_active, t=10.0)
+            if not lease_ok:
+                if pr1.poll() is not None:
+                    out1, err1 = pr1.communicate(timeout=5)
+                    raise RuntimeError(
+                        "P0-B Process 1 exited before its in_flight lease became visible "
+                        f"(exit={pr1.returncode}); stdout={out1[-1200:]!r}; stderr={err1[-2400:]!r}"
+                    )
+                raise RuntimeError(
+                    "P0-B Process 1 did not publish an in_flight lease within 10 seconds "
+                    f"(alert_id={aid_shared})"
+                )
+
+            pr2 = subprocess.Popen(
+                [sys.executable, "-c", p2_script, mp_disp_dir, aid_shared],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            out1, err1 = pr1.communicate(timeout=30)
+            out2, err2 = pr2.communicate(timeout=30)
+
+            with sqlite3.connect(db_mp_path, timeout=5.0) as c_mp:
+                row_mp = c_mp.execute(
+                    "SELECT dispatched, dispatch_status, dispatch_attempts FROM alerts WHERE id=?",
+                    (int(aid_shared),),
+                ).fetchone()
+                sent_logs = c_mp.execute(
+                    "SELECT COUNT(*) FROM audit WHERE action='dispatch sent'"
+                ).fetchone()[0]
+            check(
+                "P0-B",
+                "2 OS processes: Process 2 startup does NOT reset or duplicate Process 1 active in_flight dispatch",
+                "P1_DISP:1" in out1 and "P2_DISP:0" in out2
+                and row_mp == (1, "sent", 1) and sent_logs == 1,
+                (out1.strip(), out2.strip(), row_mp, sent_logs, err1[-400:], err2[-400:]),
+            )
+        except subprocess.TimeoutExpired as timeout_exc:
+            raise RuntimeError(
+                "P0-B multiprocessing dispatch test timed out while waiting for child processes"
+            ) from timeout_exc
+        finally:
+            for child in (pr2, pr1):
+                if child is not None and child.poll() is None:
+                    child.terminate()
+                    try:
+                        child.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.communicate(timeout=5)
     finally:
         shutil.rmtree(mp_disp_dir, ignore_errors=True)
 
