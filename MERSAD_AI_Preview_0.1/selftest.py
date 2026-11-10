@@ -1892,6 +1892,7 @@ def run_round5_tests():
         shutil.rmtree(dl_dir, ignore_errors=True)
 
     # 4. Stage 5 & 6: Test path separation (read-only install dir vs writable user data dir) + spaces & Arabic characters in paths
+    # On Windows this fixture uses whoami SID parsing plus an explicit NTFS deny ACE; re is imported above.
     base_sp_ar = tempfile.mkdtemp(prefix="mersad_r5_مسار عربي مع مسافات_")
     ro_acl_sid = None
     try:
