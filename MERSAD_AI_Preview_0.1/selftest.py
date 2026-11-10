@@ -1942,7 +1942,7 @@ def run_round5_tests():
             db_persisted = os.path.isfile(os.path.join(expected_appdir, "mersad.db"))
             key_persisted = os.path.isfile(os.path.join(expected_appdir, ".mersad_hmac.key"))
             no_db_in_ro = not os.path.exists(os.path.join(ro_install, "mersad.db"))
-            check("R5-PATHS", "read-only install dir with Arabic & spaces automatically falls back to writable user data dir and persists DB & keys across restarts",
+            check("R5-PATHS", "POSIX read-only mode / Windows deny-ACL install dir with Arabic & spaces falls back to persistent user data storage",
                   res1.returncode == 0 and res2.returncode == 0 and "Audit chain OK" in res1.stdout
                   and "Audit chain OK" in res2.stdout and db_persisted and key_persisted and no_db_in_ro
                   and ro_readonly_enforced,
