@@ -83,23 +83,33 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          # Fetch the immutable historical commit directly; its old branch may have been deleted.
-          # The commit contains the base64 source chunks consumed by compare_original_vs_cleanroom_lab.py.
+          $ErrorActionPreference = "Continue"
+          # The historical commit is currently orphaned (no common ancestor with this branch).
+          # Try Git transport first, then use GitHub's commit-addressed archive endpoint.
           $targetSha = "ed7b8f727243da4878e547f08489af581c83291c"
+          $originalRoot = "MERSAD_LAB_Original_ed7b8f72"
+          if (Test-Path $originalRoot) { Remove-Item -Recurse -Force $originalRoot }
+          New-Item -ItemType Directory -Force -Path $originalRoot | Out-Null
           git fetch --no-tags --depth=1 origin $targetSha 2>$null
           if ($LASTEXITCODE -eq 0) {
             $actualSha = (git rev-parse FETCH_HEAD).Trim().ToLower()
             if ($actualSha -ne $targetSha) {
               throw "Fetched Original LAB commit mismatch: expected $targetSha, got $actualSha"
             }
-            if (Test-Path "MERSAD_LAB_Original_ed7b8f72") { Remove-Item -Recurse -Force "MERSAD_LAB_Original_ed7b8f72" }
-            New-Item -ItemType Directory -Force -Path "MERSAD_LAB_Original_ed7b8f72" | Out-Null
-            git archive $actualSha | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
+            git archive $actualSha | tar -x -C $originalRoot
             if ($LASTEXITCODE -ne 0) { throw "Failed to extract Original LAB commit $actualSha" }
-            Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $actualSha -Encoding ASCII
           } else {
-            Write-Host "[WARN] Historical Original LAB commit $targetSha could not be fetched; Original LAB comparison remains BLOCKED/NOT_TESTED."
+            Write-Host "[INFO] Git transport cannot fetch the orphaned historical commit; downloading its immutable GitHub archive."
+            $archivePath = Join-Path $env:RUNNER_TEMP "mersad-original-lab-$targetSha.tar.gz"
+            $archiveUrl = "https://api.github.com/repos/alinon9/MERSAD-AI-/tarball/$targetSha"
+            Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath -MaximumRedirection 10 -ErrorAction Stop
+            if (-not (Test-Path $archivePath) -or (Get-Item $archivePath).Length -lt 1000) {
+              throw "GitHub returned an empty or invalid Original LAB archive for $targetSha"
+            }
+            tar -xzf $archivePath -C $originalRoot --strip-components=1
+            if ($LASTEXITCODE -ne 0) { throw "Failed to extract GitHub archive for Original LAB commit $targetSha" }
           }
+          Set-Content -Path "$originalRoot\COMMIT_SHA.txt" -Value $targetSha -Encoding ASCII
           $ErrorActionPreference = "Stop"
           python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
           if ($LASTEXITCODE -ne 0) { throw "Clean-Room LAB verification failed in Phase 2 ($LASTEXITCODE)" }
