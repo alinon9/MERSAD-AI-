@@ -36,12 +36,11 @@ _IPC_STATE = {"depth": 0, "fd": None}
 
 # MERSAD_WINDOWS_PRIVATE_ACL_HELPERS
 def _ensure_lock_byte(fd):
-    """Windows CRT byte-range locks require a real byte in the file on some builds."""
-    fd.seek(0, os.SEEK_END)
-    if fd.tell() == 0:
-        fd.write(b"\0")
-        fd.flush()
-    fd.seek(0)
+    """Ensure a lock file has one byte, using a raw OS file descriptor."""
+    if os.lseek(fd, 0, os.SEEK_END) == 0:
+        os.write(fd, b"\0")
+        os.fsync(fd)
+    os.lseek(fd, 0, os.SEEK_SET)
 
 
 def _ensure_windows_lock_byte(fd):
@@ -70,9 +69,9 @@ def _acquire_windows_byte_lock(fd, timeout_sec=60.0, poll_interval=0.025):
     while True:
         # msvcrt.locking operates on the byte range beginning at the current
         # file position. Reset it before every attempt.
-        fd.seek(0)
+        os.lseek(fd, 0, os.SEEK_SET)
         try:
-            msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             return
         except OSError as exc:
             if exc.errno not in contention_errnos and getattr(exc, "winerror", None) not in contention_winerrors:
@@ -383,16 +382,12 @@ def atomic_write_secret_bytes(target_path, data_bytes):
 
         os.replace(tmp_path, target_path)
         if os.name == "nt":
-            try:
-                import subprocess as _sp
-                user = os.environ.get("USERNAME", "")
-                if user:
-                    _sp.run(
-                        ["icacls", os.path.abspath(target_path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
-                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, timeout=5, check=False
-                    )
-            except Exception:
-                pass
+            # os.replace preserves the protected ACL on the temporary file.
+            # Re-apply and verify it on the final path rather than relying on
+            # a best-effort icacls command after the atomic rename.
+            _set_windows_private_acl(target_path, is_dir=False)
+            if not _windows_acl_is_private(target_path):
+                raise OSError(f"Failed to verify private Windows ACL on {target_path}")
     finally:
         if fd is not None:
             try: os.close(fd)
@@ -557,21 +552,23 @@ def interprocess_db_lock(db_path=None):
             if not os.path.isdir(lock_parent):
                 raise OSError(f"Database lock parent directory does not exist: {lock_parent}")
             if fcntl is not None:
-                lock_handle = open(f"{p}.ipclock", "a+b")
+                lock_flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
+                lock_handle = os.open(f"{p}.ipclock", lock_flags, 0o600)
                 try:
-                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                    fcntl.flock(lock_handle, fcntl.LOCK_EX)
                 except Exception:
-                    lock_handle.close()
+                    os.close(lock_handle)
                     raise
             elif os.name == "nt":
                 lock_handle = _acquire_windows_db_mutex(p)
             elif msvcrt is not None:
-                lock_handle = open(f"{p}.ipclock", "a+b")
+                lock_flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
+                lock_handle = os.open(f"{p}.ipclock", lock_flags, 0o600)
                 try:
                     _ensure_windows_lock_byte(lock_handle)
                     _acquire_windows_byte_lock(lock_handle)
                 except Exception:
-                    lock_handle.close()
+                    os.close(lock_handle)
                     raise
             else:
                 lock_handle = None
@@ -589,27 +586,34 @@ def interprocess_db_lock(db_path=None):
                     lock_handle = _IPC_STATE["fd"]
                     _IPC_STATE["fd"] = None
                     try:
-                        if fcntl is not None:
-                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                            lock_handle.close()
+                        if isinstance(lock_handle, int):
+                            try:
+                                if fcntl is not None:
+                                    fcntl.flock(lock_handle, fcntl.LOCK_UN)
+                                elif msvcrt is not None:
+                                    os.lseek(lock_handle, 0, os.SEEK_SET)
+                                    msvcrt.locking(lock_handle, msvcrt.LK_UNLCK, 1)
+                            except Exception:
+                                pass
+                            finally:
+                                try:
+                                    os.close(lock_handle)
+                                except OSError:
+                                    pass
                         elif (isinstance(lock_handle, tuple) and len(lock_handle) == 3
                               and lock_handle[0] == "windows_mutex"):
                             _release_windows_db_mutex(lock_handle)
-                        elif msvcrt is not None:
-                            lock_handle.seek(0)
-                            msvcrt.locking(lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
-                            lock_handle.close()
                         else:
                             close = getattr(lock_handle, "close", None)
                             if callable(close):
                                 close()
                     except Exception:
-                        try:
-                            close = getattr(lock_handle, "close", None)
-                            if callable(close):
+                        close = getattr(lock_handle, "close", None)
+                        if callable(close):
+                            try:
                                 close()
-                        except Exception:
-                            pass
+                            except Exception:
+                                pass
             finally:
                 _IPC_RLOCK.release()
         if t_lock_acquired:
