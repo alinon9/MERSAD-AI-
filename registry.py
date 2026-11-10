@@ -225,8 +225,13 @@ def _windows_current_user_sid():
     if os.name != "nt":
         return None
     try:
+        whoami_bin = shutil.which("whoami.exe")
+        if not whoami_bin:
+            sys_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+            cand_w = os.path.join(sys_root, "System32", "whoami.exe")
+            whoami_bin = cand_w if os.path.isfile(cand_w) else "whoami.exe"
         proc = subprocess.run(
-            ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+            [whoami_bin, "/user", "/fo", "csv", "/nh"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=10, check=False,
         )
@@ -291,6 +296,15 @@ def _windows_acl_call(path, script):
     env = dict(os.environ)
     env["MERSAD_ACL_PATH"] = os.path.abspath(path)
     powershell = shutil.which("pwsh.exe") or shutil.which("powershell.exe")
+    if not powershell:
+        sys_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+        for cand_ps in (
+            os.path.join(sys_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "PowerShell", "7", "pwsh.exe"),
+        ):
+            if os.path.isfile(cand_ps):
+                powershell = cand_ps
+                break
     if not powershell:
         raise OSError("PowerShell is required to secure Windows secret-file ACLs")
     proc = subprocess.run(

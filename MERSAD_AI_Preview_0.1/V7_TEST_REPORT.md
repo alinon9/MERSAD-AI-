@@ -31,3 +31,5 @@ Date: 2026-10-26
 5. The exact V6 source archive was not supplied. This package is based on the available V5 source archive and the provided V6 release notes/report, so unprovided source changes from an independent V6 tree cannot be preserved or compared.
 
 - V7.1 Stages 1–14 coverage (`193 PASS, 0 SKIP, 0 FAIL`): includes `--evaluate-plates` benchmark pipeline (`STAGE5-GAP17`, `STAGE7-GAP06`), non-blocking inference (`STAGE4-GAP08`), scheduled face cache (`STAGE6-GAP01`), and unified Windows build checks (`STAGE5-GAP18`, `STAGE7-GAP07`).
+
+> **توحيد عداد الاختبارات المعتمد (PREVIEW 0.1 — Build #65):** إجمالي حزمة `selftest.py` الكاملة هو **`237 PASS, 0 SKIP, 0 FAIL`** (منها **`196 PASS`** عبر المراحل 1–14 و`195` اختباراً قبل `STAGE14-06-DOC-AND-UI-PARITY` بعد إضافة 3 اختبارات انحدار على خط الأساس التاريخي `193 PASS`، بالإضافة إلى `8` اختبارات للمرحلة 15 = **`204 PASS`**، و`33` اختباراً لإصدار `Preview 0.1` = **`237 PASS`**، مع **`20/20 PASS`** في `Clean-Room LAB`).

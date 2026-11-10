@@ -1,6 +1,6 @@
 {
   "release_version": "MERSAD AI & MERSAD LAB — Preview 0.1 (Final Synchronized Source-of-Truth)",
-  "active_branch": "fix/preview-0.1-postbuild-42273598736",
+  "active_branch": "fix/preview-0.1-ci-windows-final-20261110",
   "release_baseline_branch": "release/mersad-preview-0.1",
   "commits": {
     "mersad_ai_fix_branch_head_commit": "New verified HEAD directly above 62b409e2327b86ad0720a526cb3ba8573821b09b",
@@ -2030,7 +2030,7 @@
         "passed": true,
         "detail": {
           "status": "online",
-          "fps": 0.0,
+          "fps": 0,
           "frames": 7,
           "detections": 1,
           "errors": 0,
@@ -2083,7 +2083,7 @@
           "mjpeg_ok": true,
           "camera_status": {
             "status": "online",
-            "fps": 0.0,
+            "fps": 0,
             "frames": 7,
             "detections": 1,
             "errors": 0,
@@ -2347,14 +2347,14 @@
     ]
   },
   "production_readiness_status": "NOT ESTABLISHED",
-  "source_and_ci_preflight_preparation_percent": 100.0,
+  "source_and_ci_preflight_preparation_percent": 100,
   "separated_readiness_indicators_bug39": {
-    "source_and_ci_preflight_preparation_percent": 100.0,
+    "source_and_ci_preflight_preparation_percent": 100,
     "api_readiness_field_mapping": {
-      "overall_engineering_readiness_pct": 100.0,
+      "overall_engineering_readiness_pct": 100,
       "meaning": "SOURCE_AND_CI_PREFLIGHT_PREPARATION_PERCENT (measures source code, security controls, Windows build specs, and evaluation/calibration software tooling only; never implies runtime model, hardware, or production readiness)",
-      "runtime_models_and_deps_readiness_pct_in_sandbox": 0.0,
-      "field_data_calibration_readiness_pct_in_sandbox": 0.0,
+      "runtime_models_and_deps_readiness_pct_in_sandbox": 0,
+      "field_data_calibration_readiness_pct_in_sandbox": 0,
       "deployment_classification_in_sandbox": "READY_FOR_LAPTOP_SETUP_AND_DEMO"
     },
     "indicators": [
@@ -2433,7 +2433,7 @@
       "status": "PASS"
     },
     "bug39_readiness_indicators_separated": {
-      "source_and_ci_preflight_preparation_percent": 100.0,
+      "source_and_ci_preflight_preparation_percent": 100,
       "production_readiness": "NOT ESTABLISHED",
       "status": "PASS"
     }
@@ -2458,7 +2458,7 @@
     "bug42_delayed_duplicate_run_settling_window": {
       "settling_window_enabled": true,
       "default_settling_polls": 3,
-      "default_settling_interval_s": 5.0,
+      "default_settling_interval_s": 5,
       "delayed_duplicate_caught_in_regression_test": true,
       "legacy_zero_settling_proven_to_miss_delayed_duplicate": true,
       "status": "PASS"
@@ -2584,5 +2584,16 @@
     ],
     "deployment_self_tests_passed": "56/56 PASS",
     "status": "PASS"
+  },
+  "build_65_ci_verification": {
+    "status": "PENDING",
+    "expected_total_selftest_checks": 237,
+    "based_on_failed_run": 64,
+    "known_failed_test_ids": [
+      "V7.1-WIN-ACL",
+      "STAGE14-01-SQLITE-MOUNT-FALLBACK",
+      "STAGE14-06-DOC-AND-UI-PARITY"
+    ],
+    "note": "Do not treat 237/237 as passed until GitHub Actions Build #65 completes successfully."
   }
 }

@@ -2,11 +2,18 @@
 Runs without real camera, GPU, or internet, and passes both WITH and WITHOUT scikit-learn (including child subprocesses).
 Separates PASS, SKIP, and FAIL explicitly.
    python selftest.py"""
-import hashlib, json, os, re, shutil, socket, sqlite3, subprocess, sys, tempfile, threading, time, types, urllib.error, urllib.request
+import hashlib, json, os, re, shutil, socket, sqlite3, stat, stat as stat_mod, subprocess, sys, tempfile, threading, time, types, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from email import message_from_bytes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
+
+EXPECTED_STAGE13_PRIOR_CHECKS = 189
+EXPECTED_STAGE13_TOTAL_CHECKS = 190
+EXPECTED_STAGE14_PRIOR_CHECKS = 195
+EXPECTED_STAGE14_TOTAL_CHECKS = 196
+EXPECTED_STAGE15_TOTAL_CHECKS = 204
+EXPECTED_TOTAL_SELFTEST_CHECKS = 237
 
 if sys.modules.get("sklearn") is None and "sklearn" in sys.modules:
     os.environ["MERSAD_BLOCK_SKLEARN"] = "1"
@@ -2103,10 +2110,74 @@ def run_v7_1_audit_regression_tests():
     check("V7.1-PACKAGING-HARDENING", "PyInstaller spec, BUILD_EXE.bat, CI workflow & runtime enforce offline mode and exclude unused optional submodules",
           pkg_ok)
 
-    # 4. V7.1-WIN-ACL: Verify registry.py includes Windows icacls ACL hardening in atomic_write_secret_bytes
+    # 4. V7.1-WIN-ACL: Verify registry.py PowerShell ACL hardening (_windows_acl_script, _set_windows_private_acl,
+    #    _windows_acl_is_private, Get-Acl, Set-Acl, SetAccessRuleProtection) AND live secret creation via atomic_write_secret_bytes
     reg_txt = open(os.path.join(WORK, "registry.py"), encoding="utf-8").read()
-    check("V7.1-WIN-ACL", "atomic_write_secret_bytes restricts Windows file ACLs via icacls /inheritance:r",
-          "icacls" in reg_txt and "/inheritance:r" in reg_txt)
+    ps_set_file = reg_mod._windows_acl_script(check_only=False, is_dir=False) if hasattr(reg_mod, "_windows_acl_script") else ""
+    ps_set_dir = reg_mod._windows_acl_script(check_only=False, is_dir=True) if hasattr(reg_mod, "_windows_acl_script") else ""
+    ps_chk_acl = reg_mod._windows_acl_script(check_only=True) if hasattr(reg_mod, "_windows_acl_script") else ""
+    acl_mech_ok = (
+        callable(getattr(reg_mod, "_windows_acl_script", None))
+        and callable(getattr(reg_mod, "_set_windows_private_acl", None))
+        and callable(getattr(reg_mod, "_windows_acl_is_private", None))
+        and "_set_windows_private_acl" in reg_txt
+        and "_windows_acl_is_private" in reg_txt
+        and "Get-Acl" in ps_set_file and "Set-Acl" in ps_set_file
+        and "SetAccessRuleProtection($true, $false)" in ps_set_file
+        and "ContainerInherit" in ps_set_dir and "ObjectInherit" in ps_set_dir
+        and "AreAccessRulesProtected" in ps_chk_acl
+        and "S-1-5-18" in ps_set_file and "S-1-5-32-544" in ps_set_file
+        and "S-1-5-18" in ps_chk_acl and "S-1-5-32-544" in ps_chk_acl
+    )
+    win_acl_dir = tempfile.mkdtemp(prefix="mersad_v71_win_acl_")
+    try:
+        win_acl_file = os.path.join(win_acl_dir, ".mersad_secret_acl_test.json")
+        secret_payload = b'{"secret":"mersad_acl_verified_2026"}'
+        reg_mod.atomic_write_secret_bytes(win_acl_file, secret_payload)
+        file_written_ok = (
+            os.path.isfile(win_acl_file)
+            and not os.path.islink(win_acl_file)
+            and open(win_acl_file, "rb").read() == secret_payload
+        )
+        if os.name == "nt":
+            dir_priv_ok = reg_mod._windows_acl_is_private(win_acl_dir)
+            file_priv_ok = reg_mod._windows_acl_is_private(win_acl_file)
+            cur_sid = reg_mod._windows_current_user_sid()
+            deep_verify_ps = (
+                "$ErrorActionPreference = 'Stop'\\n"
+                "Import-Module Microsoft.PowerShell.Security -ErrorAction Stop\\n"
+                "$p = $env:MERSAD_ACL_PATH\\n"
+                "$acl = Get-Acl -LiteralPath $p\\n"
+                "if (-not $acl.AreAccessRulesProtected) { exit 31 }\\n"
+                "$cur = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value\\n"
+                "$expected = @($cur, 'S-1-5-18', 'S-1-5-32-544')\\n"
+                "$rules = $acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier])\\n"
+                "$inherited = @($rules | Where-Object { $_.IsInherited })\\n"
+                "if ($inherited.Count -gt 0) { exit 32 }\\n"
+                "$allowedSids = @()\\n"
+                "foreach ($r in $rules) {\\n"
+                "    $sid = $r.IdentityReference.Value\\n"
+                "    if ($r.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) {\\n"
+                "        if ($sid -notin $expected) { exit 33 }\\n"
+                "        $allowedSids += $sid\\n"
+                "    }\\n"
+                "}\\n"
+                "foreach ($reqSid in $expected) {\\n"
+                "    if ($reqSid -notin $allowedSids) { exit 34 }\\n"
+                "}\\n"
+                "exit 0\\n"
+            )
+            deep_dir_ok = reg_mod._windows_acl_call(win_acl_dir, deep_verify_ps)
+            deep_file_ok = reg_mod._windows_acl_call(win_acl_file, deep_verify_ps)
+            live_acl_ok = bool(dir_priv_ok and file_priv_ok and deep_dir_ok and deep_file_ok and cur_sid)
+        else:
+            f_mode = stat_mod.S_IMODE(os.stat(win_acl_file).st_mode)
+            live_acl_ok = (f_mode == 0o600 and (f_mode & 0o077) == 0)
+    finally:
+        shutil.rmtree(win_acl_dir, ignore_errors=True)
+    check("V7.1-WIN-ACL", "atomic_write_secret_bytes enforces PowerShell private ACLs (Get-Acl/Set-Acl/SetAccessRuleProtection for user, SYSTEM & Administrators) and 0600 permissions",
+          acl_mech_ok and file_written_ok and live_acl_ok,
+          (acl_mech_ok, file_written_ok, live_acl_ok))
 
 run_v7_1_audit_regression_tests()
 
@@ -4733,14 +4804,14 @@ def run_stage13_complete_audit_closure_tests():
         bld_info_13,
     )
 
-    # 6. STAGE13-AUDIT010-UNIQUE-TEST-IDS: Verify 100% of test IDs in RESULTS are unique and docs are unified on 193 PASS
+    # 6. STAGE13-AUDIT010-UNIQUE-TEST-IDS: Verify 100% of test IDs in RESULTS are unique and docs are unified
     # Include this test's own ID in the uniqueness verification
     existing_ids = [r[0] for r in RESULTS]
     all_unique_so_far = (len(set(existing_ids)) == len(existing_ids)) and ("STAGE13-AUDIT010-UNIQUE-TEST-IDS" not in existing_ids)
     check(
         "STAGE13-AUDIT010-UNIQUE-TEST-IDS",
-        "100% of test identifiers recorded in RESULTS are unique (zero duplicate [ID] codes across all 187 tests)",
-        all_unique_so_far and len(existing_ids) >= 186,
+        f"100% of test identifiers recorded in RESULTS are unique (zero duplicate [ID] codes across all {EXPECTED_STAGE13_TOTAL_CHECKS} Stage 1-13 tests)",
+        all_unique_so_far and len(existing_ids) == EXPECTED_STAGE13_PRIOR_CHECKS,
         (len(existing_ids), len(set(existing_ids))),
     )
 
@@ -4752,32 +4823,98 @@ def run_stage14_100pct_readiness_tests():
     import http.client, pickle, re, zipfile
     import server as srv_mod
 
-    # 1. STAGE14-01-SQLITE-MOUNT-FALLBACK: Verify _is_sqlite_usable_dir() and direct execution of mersad_live.py --verify from repo root without MERSAD_DATA_DIR
-    s14_ro_dir = tempfile.mkdtemp(prefix="mersad_s14_01_")
+    # 1. STAGE14-01-SQLITE-MOUNT-FALLBACK: Verify _is_sqlite_usable_dir(), platform-aware read-only dir enforcement
+    #    (Windows NTFS deny-ACL vs POSIX chmod 0555), non-locking mount rejection, automatic fallback to user data dir,
+    #    and DB + audit chain persistence across restarts.
+    s14_base_dir = tempfile.mkdtemp(prefix="mersad_s14_01_")
+    s14_ro_dir = os.path.join(s14_base_dir, "ro_mount")
+    s14_user_data = os.path.join(s14_base_dir, "user_data")
+    s14_acl_sid = None
     try:
-        usable_tmp = m._is_sqlite_usable_dir(s14_ro_dir)
-        os.chmod(s14_ro_dir, 0o555)
-        unusable_ro = not m._is_sqlite_usable_dir(s14_ro_dir)
-        os.chmod(s14_ro_dir, 0o755)
+        os.makedirs(s14_ro_dir, exist_ok=True)
+        os.makedirs(s14_user_data, exist_ok=True)
+        for fn in os.listdir(WORK):
+            src_f = os.path.join(WORK, fn)
+            if os.path.isfile(src_f) and fn.endswith((".py", ".html", ".txt", ".md")):
+                shutil.copy2(src_f, os.path.join(s14_ro_dir, fn))
 
-        # Run mersad_live.py --verify directly from SRC without setting MERSAD_DATA_DIR (tests automatic fallback when SRC is on 9p/network mount)
-        env_clean = {k: v for k, v in os.environ.items() if k != "MERSAD_DATA_DIR"}
-        proc_v = subprocess.run(
-            [sys.executable, os.path.join(WORK, "mersad_live.py"), "--verify"],
-            cwd=SRC,
-            env=env_clean,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        check(
-            "STAGE14-01-SQLITE-MOUNT-FALLBACK",
-            "_is_sqlite_usable_dir detects non-SQLite/read-only mounts and mersad_live.py --verify succeeds directly from any mount without manual MERSAD_DATA_DIR",
-            usable_tmp is True and unusable_ro is True and proc_v.returncode == 0 and "Audit chain OK" in proc_v.stdout,
-            (usable_tmp, unusable_ro, proc_v.returncode, proc_v.stdout.strip(), proc_v.stderr[-200:]),
-        )
+        usable_tmp = m._is_sqlite_usable_dir(s14_ro_dir)
+        if os.name == "nt":
+            sid_proc_14 = subprocess.run(
+                ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10, check=False,
+            )
+            sid_match_14 = re.search(r"\\bS-1-(?:\\d+-){1,}\\d+\\b", sid_proc_14.stdout or "")
+            if sid_proc_14.returncode != 0 or not sid_match_14:
+                raise RuntimeError("Cannot determine current Windows SID for STAGE14-01 read-only mount test")
+            s14_acl_sid = sid_match_14.group(0)
+            deny_proc_14 = subprocess.run(
+                ["icacls.exe", s14_ro_dir, "/deny", f"*{s14_acl_sid}:(WD,AD)"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10, check=False,
+            )
+            if deny_proc_14.returncode != 0:
+                raise RuntimeError("Cannot enforce STAGE14-01 read-only ACL: " + (deny_proc_14.stderr or deny_proc_14.stdout)[-300:])
+        else:
+            os.chmod(s14_ro_dir, 0o555)
+
+        try:
+            ro_not_writable = not m._is_dir_writable(s14_ro_dir)
+            unusable_ro = not m._is_sqlite_usable_dir(s14_ro_dir)
+
+            # Verify non-SQLite-locking mount detection (writable flat files, but SQLite transaction locking fails)
+            s14_nonlock_dir = os.path.join(s14_base_dir, "non_locking_mount")
+            os.makedirs(s14_nonlock_dir, exist_ok=True)
+            orig_sql_conn = sqlite3.connect
+            try:
+                def _fail_sqlite_lock(*a, **kw):
+                    raise sqlite3.OperationalError("database is locked on network mount")
+                sqlite3.connect = _fail_sqlite_lock
+                nonlock_rejected = (m._is_dir_writable(s14_nonlock_dir) is True) and (m._is_sqlite_usable_dir(s14_nonlock_dir) is False)
+            finally:
+                sqlite3.connect = orig_sql_conn
+
+            # Verify automatic transition to user data directory and DB + audit chain persistence across restarts
+            env_clean = {k: v for k, v in os.environ.items() if k != "MERSAD_DATA_DIR"}
+            env_clean["XDG_DATA_HOME"] = s14_user_data
+            env_clean["LOCALAPPDATA"] = s14_user_data
+            cmd_s14_init = [
+                sys.executable, "-c",
+                f"import sys; sys.path.insert(0, {repr(s14_ro_dir)}); import mersad_live as m; "
+                "m.log('s14_01_mount_test', m.pseud('persist_ok')); print('APPDIR=' + m.APPDIR); print(m.verify())"
+            ]
+            proc_v1 = subprocess.run(cmd_s14_init, cwd=s14_ro_dir, env=env_clean, capture_output=True, text=True, timeout=20)
+            proc_v2 = subprocess.run(
+                [sys.executable, os.path.join(s14_ro_dir, "mersad_live.py"), "--verify"],
+                cwd=SRC, env=env_clean, capture_output=True, text=True, timeout=20,
+            )
+            expected_s14_appdir = os.path.join(s14_user_data, "MERSAD_AI" if os.name == "nt" else "mersad_ai")
+            s14_db_persisted = os.path.isfile(os.path.join(expected_s14_appdir, "mersad.db"))
+            s14_key_persisted = os.path.isfile(os.path.join(expected_s14_appdir, ".mersad_hmac.key"))
+            s14_no_ro_db = not os.path.exists(os.path.join(s14_ro_dir, "mersad.db"))
+
+            check(
+                "STAGE14-01-SQLITE-MOUNT-FALLBACK",
+                "_is_sqlite_usable_dir detects POSIX/NTFS read-only & non-locking mounts, falls back to user data dir, and persists DB & audit chain across restarts",
+                usable_tmp is True and ro_not_writable is True and unusable_ro is True and nonlock_rejected is True
+                and proc_v1.returncode == 0 and "Audit chain OK" in proc_v1.stdout
+                and proc_v2.returncode == 0 and "Audit chain OK" in proc_v2.stdout
+                and s14_db_persisted and s14_key_persisted and s14_no_ro_db,
+                (usable_tmp, ro_not_writable, unusable_ro, nonlock_rejected, proc_v1.returncode, proc_v2.returncode,
+                 s14_db_persisted, s14_key_persisted, s14_no_ro_db, proc_v1.stderr[-200:], proc_v2.stderr[-200:]),
+            )
+        finally:
+            if os.name == "nt" and s14_acl_sid:
+                subprocess.run(
+                    ["icacls.exe", s14_ro_dir, "/remove:d", f"*{s14_acl_sid}"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=10, check=False,
+                )
+            else:
+                os.chmod(s14_ro_dir, 0o755)
     finally:
-        shutil.rmtree(s14_ro_dir, ignore_errors=True)
+        shutil.rmtree(s14_base_dir, ignore_errors=True)
 
     # 2. STAGE14-02-PORTABLE-TRUSTED-MODELS: Verify bootstrap_bundled_trusted_models across HMAC key rotation & /api/plate_eval/register_model
     s14_m_dir = tempfile.mkdtemp(prefix="mersad_s14_02_")
@@ -4951,12 +5088,22 @@ def run_stage14_100pct_readiness_tests():
             except OSError: pass
 
     ids_before_last = [r[0] for r in RESULTS]
-    all_192_unique = (len(ids_before_last) == 192 and len(set(ids_before_last)) == 192)
+    all_s14_unique = (
+        len(ids_before_last) == EXPECTED_STAGE14_PRIOR_CHECKS
+        and len(set(ids_before_last)) == EXPECTED_STAGE14_PRIOR_CHECKS
+    )
+    doc_files_14 = ("README_AR.md", "BUILD_REPORT.md", "AUDIT_REPORT.md", "TEST_REPORT.md", "V7_TEST_REPORT.md", "V7_RELEASE_NOTES.md", "CHANGELOG.md")
+    docs_14_aligned = all(
+        os.path.isfile(os.path.join(WORK, dfn))
+        and ("237" in open(os.path.join(WORK, dfn), encoding="utf-8").read())
+        and ("196" in open(os.path.join(WORK, dfn), encoding="utf-8").read())
+        for dfn in doc_files_14
+    )
     check(
         "STAGE14-06-DOC-AND-UI-PARITY",
-        "dashboard.html includes Stage 14 readiness scorecard & auto-calibration controls, passes node --check, and all 193 test IDs are 100% unique",
-        has_s14_ui and js_14_ok and all_192_unique,
-        (has_s14_ui, js_14_ok, len(ids_before_last), len(set(ids_before_last))),
+        f"dashboard.html includes Stage 14 readiness scorecard & auto-calibration controls, passes node --check, all 7 docs are aligned on {EXPECTED_STAGE14_TOTAL_CHECKS}/{EXPECTED_TOTAL_SELFTEST_CHECKS} PASS, and all {EXPECTED_STAGE14_PRIOR_CHECKS} prior test IDs are 100% unique",
+        has_s14_ui and js_14_ok and all_s14_unique and docs_14_aligned,
+        (has_s14_ui, js_14_ok, len(ids_before_last), len(set(ids_before_last)), docs_14_aligned),
     )
 
 

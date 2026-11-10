@@ -109,3 +109,5 @@ python mersad_live.py --gpu
 # فحص صلاحية فتح الكاميرا المضبوطة في mersad_config.json وتحريرها فوراً
 python check_install.py --camera
 ```
+
+> **توحيد عداد الاختبارات المعتمد (PREVIEW 0.1 — Build #65):** إجمالي حزمة `selftest.py` الكاملة هو **`237 PASS, 0 SKIP, 0 FAIL`** (منها **`196 PASS`** عبر المراحل 1–14 و`195` اختباراً قبل `STAGE14-06-DOC-AND-UI-PARITY` بعد إضافة 3 اختبارات انحدار على خط الأساس التاريخي `193 PASS`، بالإضافة إلى `8` اختبارات للمرحلة 15 = **`204 PASS`**، و`33` اختباراً لإصدار `Preview 0.1` = **`237 PASS`**، مع **`20/20 PASS`** في `Clean-Room LAB`).

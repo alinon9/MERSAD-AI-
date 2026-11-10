@@ -660,7 +660,7 @@ def main():
     REPORT["summary"] = {"passed": PASS, "failed": FAIL, "not_tested": NOT_TESTED, "total": PASS + FAIL + NOT_TESTED}
     (ROOT_DIR / "reports_and_logs" / "ai_lab_integration_results.json").write_text(json.dumps(REPORT, ensure_ascii=False, indent=2), encoding="utf-8")
     (ROOT_DIR / "reports_and_logs" / "logs" / "11_preview01_ai_lab_integration_report.json").write_text(json.dumps(REPORT, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path("/tmp/test_ai_lab_integration_report.json").write_text(json.dumps(REPORT, ensure_ascii=False, indent=2), encoding="utf-8")
+    (Path(tempfile.gettempdir()) / "test_ai_lab_integration_report.json").write_text(json.dumps(REPORT, ensure_ascii=False, indent=2), encoding="utf-8")
     print("========================================================================================")
     print(f"  SUMMARY: {PASS} PASS, {FAIL} FAIL, {NOT_TESTED} NOT_TESTED (Total: {PASS + FAIL + NOT_TESTED})")
     print("========================================================================================")
