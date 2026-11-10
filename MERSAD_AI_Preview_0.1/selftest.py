@@ -2,7 +2,7 @@
 Runs without real camera, GPU, or internet, and passes both WITH and WITHOUT scikit-learn (including child subprocesses).
 Separates PASS, SKIP, and FAIL explicitly.
    python selftest.py"""
-import hashlib, json, os, shutil, socket, sqlite3, subprocess, sys, tempfile, threading, time, types, urllib.error, urllib.request
+import hashlib, json, os, re, shutil, socket, sqlite3, subprocess, sys, tempfile, threading, time, types, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from email import message_from_bytes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

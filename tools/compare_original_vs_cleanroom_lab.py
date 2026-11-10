@@ -143,7 +143,7 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
             "reason": "Directory missing",
             "checks": [],
         }
-    py_files = list(lab_dir.glob("*.py"))
+    py_files = [p for p in lab_dir.rglob("*.py") if "__pycache__" not in p.parts]
     if not py_files:
         return {
             "label": label,
@@ -152,25 +152,42 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
             "passed": 0,
             "failed": 0,
             "total": 0,
-            "reason": f"No Python implementation files present in {lab_dir.name} (awaiting commit {TARGET_ORIGINAL_COMMIT})",
+            "reason": f"No Python implementation files present anywhere under {lab_dir.name}.",
             "checks": [],
         }
 
-    test_script = lab_dir / "test_lab.py"
-    if not test_script.is_file():
-        # If Original LAB doesn't bundle test_lab.py, run Clean-Room's test_lab.py pointed at lab_dir via PYTHONPATH
-        fallback_test = Path(__file__).resolve().parent.parent / "MERSAD_LAB_Preview_0.1" / "test_lab.py"
-        cmd = [sys.executable, str(fallback_test)]
-    else:
-        cmd = [sys.executable, str(test_script)]
+    # Only run a test harness that belongs to the source tree being evaluated.
+    # Running the Clean-Room test file as a fallback places its own directory
+    # before PYTHONPATH and can silently test the wrong implementation.
+    test_candidates = sorted(
+        (p for p in lab_dir.rglob("test_lab.py") if "__pycache__" not in p.parts),
+        key=lambda p: (len(p.parts), str(p)),
+    )
+    if not test_candidates:
+        return {
+            "label": label,
+            "executed": False,
+            "status": "BLOCKED",
+            "passed": 0,
+            "failed": 0,
+            "total": 20,
+            "reason": (
+                f"Found {len(py_files)} Python source file(s) under {lab_dir.name}, "
+                "but no independent test_lab.py is included in that source tree."
+            ),
+            "checks": [],
+        }
+
+    test_script = test_candidates[0]
+    cmd = [sys.executable, str(test_script)]
 
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(lab_dir)
+    env["PYTHONPATH"] = os.pathsep.join((str(test_script.parent), str(lab_dir)))
     env["PYTHONIOENCODING"] = "utf-8:backslashreplace"
     try:
         proc = subprocess.run(
             cmd,
-            cwd=str(lab_dir),
+            cwd=str(test_script.parent),
             env=env,
             capture_output=True,
             text=True,
@@ -353,7 +370,7 @@ def main():
 
     dimensions = build_dimension_comparison(orig_verified, orig_suite, clean_suite)
 
-    if not orig_verified:
+    if not orig_verified or orig_suite.get("status") == "BLOCKED":
         overall_phase2_status = "BLOCKED"
     elif orig_suite.get("status") == "PASS" and clean_suite.get("status") == "PASS":
         overall_phase2_status = "PASS"
