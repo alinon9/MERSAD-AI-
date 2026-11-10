@@ -35,6 +35,18 @@ _IPC_RLOCK = threading.RLock()
 _IPC_STATE = {"depth": 0, "fd": None}
 
 # MERSAD_WINDOWS_PRIVATE_ACL_HELPERS
+def _open_interprocess_lock_file(path):
+    """Open a persistent binary lock handle without an unmanaged built-in open() call."""
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        lock_file = os.fdopen(fd, "r+b", buffering=0)
+    except Exception:
+        os.close(fd)
+        raise
+    return lock_file
+
+
 def _ensure_lock_byte(fd):
     """Windows CRT byte-range locks require a real byte in the file on some builds."""
     fd.seek(0, os.SEEK_END)
@@ -557,7 +569,7 @@ def interprocess_db_lock(db_path=None):
             if not os.path.isdir(lock_parent):
                 raise OSError(f"Database lock parent directory does not exist: {lock_parent}")
             if fcntl is not None:
-                lock_handle = open(f"{p}.ipclock", "a+b")
+                lock_handle = _open_interprocess_lock_file(f"{p}.ipclock")
                 try:
                     fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
                 except Exception:
@@ -566,7 +578,7 @@ def interprocess_db_lock(db_path=None):
             elif os.name == "nt":
                 lock_handle = _acquire_windows_db_mutex(p)
             elif msvcrt is not None:
-                lock_handle = open(f"{p}.ipclock", "a+b")
+                lock_handle = _open_interprocess_lock_file(f"{p}.ipclock")
                 try:
                     _ensure_windows_lock_byte(lock_handle)
                     _acquire_windows_byte_lock(lock_handle)
