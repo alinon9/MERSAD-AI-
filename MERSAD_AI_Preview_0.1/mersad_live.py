@@ -6277,6 +6277,19 @@ def stage_uploaded_eval_files(data, who="operator"):
 
 def _run_tk_file_dialog_cli(mode="folder"):
     """Run native OS file/folder dialog inside the main thread of an isolated child process and emit JSON to stdout (AUDIT-005)."""
+    # Explicit test-only path: exercise the real CLI dispatch and JSON protocol
+    # without opening a modal Tk dialog on non-interactive CI workers.
+    if os.environ.get("MERSAD_TEST_HEADLESS_DIALOG") == "1":
+        res = {
+            "ok": False,
+            "cancelled": True,
+            "headless": True,
+            "test_mode": True,
+        }
+        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+        return 0
+
     try:
         import tkinter as tk
         from tkinter import filedialog
