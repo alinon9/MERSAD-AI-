@@ -1911,7 +1911,7 @@ def run_round5_tests():
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=10, check=False,
             )
-            sid_match = re.search(r"\\bS-1-(?:\\d+-){1,}\\d+\\b", sid_proc.stdout or "")
+            sid_match = re.search(r"\bS-1-(?:\d+-){1,}\d+\b", sid_proc.stdout or "")
             if sid_proc.returncode != 0 or not sid_match:
                 raise RuntimeError("Cannot determine current Windows SID for read-only install test")
             ro_acl_sid = sid_match.group(0)
