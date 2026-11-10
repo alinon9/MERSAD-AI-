@@ -305,16 +305,29 @@ def main():
         )
 
         # Scenario 5 & Scenario 6 (INT-E2E-02): Feed video stream into CV engine, detect plates/vehicles & human-review face governance
+        pipeline_diag = {}
         def _check_pipeline_completed():
             _, stats = _http_json(f"{ai_base}/api/stats", headers=ai_headers)
             with m.DBL:
                 sights = m.db.execute("SELECT cam, plate, conf, raw_text FROM sightings ORDER BY rowid").fetchall()
             plates_seen = {r[1] for r in sights}
+            camera_stats = stats.get("cameras", {}) if isinstance(stats, dict) else {}
+            pipeline_diag.update({
+                "plates_seen": sorted(str(p) for p in plates_seen),
+                "alerts": int(stats.get("alerts", 0) or 0) if isinstance(stats, dict) else 0,
+                "LAB_CAM1_frames": camera_stats.get("LAB_CAM1", {}).get("frames", 0),
+                "LAB_CAM2_frames": camera_stats.get("LAB_CAM2", {}).get("frames", 0),
+            })
             if "عدن-12345" in plates_seen and "صنعاء-48210" in plates_seen and stats.get("alerts", 0) >= 1:
                 return stats, sights
             return None
 
-        pipeline_res = _wait_until(_check_pipeline_completed, timeout_sec=20.0, poll_sec=0.15)
+        # Both camera workers share serialized YOLO/OCR inference locks. On the
+        # Windows CPU runner, real EasyOCR may need substantially longer than a
+        # short smoke-test deadline to collect the three reads required to confirm
+        # each plate. Keep the strict real-model assertions; only remove the
+        # premature timeout and report observed pipeline progress if it expires.
+        pipeline_res = _wait_until(_check_pipeline_completed, timeout_sec=90.0, poll_sec=0.15)
         _, cams_info = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
         c1_meta = cams_info.get("cameras", {}).get("LAB_CAM1", {})
         record(
@@ -337,7 +350,10 @@ def main():
             )
         else:
             ok_e2e_02 = False
-            detail_02 = "Timed out waiting for autonomous worker sightings"
+            detail_02 = (
+                "Timed out after 90s waiting for autonomous worker sightings; "
+                f"last_pipeline_state={json.dumps(pipeline_diag, ensure_ascii=False, sort_keys=True)}"
+            )
 
         record(
             "INT-SCEN-06",
