@@ -165,7 +165,8 @@ def main():
     m.init_runtime_env(appdir=INTEGRATION_HOME, force=True)
     reg.init(m.db, m.DBL, m.log, lambda: None, m.DB_PATH)
     ch.init(m.db, m.DBL)
-    ins.init(m.db, m.DBL, m.log, m.DB_PATH)
+    # insights.init(db, lock, db_path=None, topology=None) — it does not accept a log callback.
+    ins.init(m.db, m.DBL, db_path=m.DB_PATH)
 
     reg.save_vehicle(
         {
