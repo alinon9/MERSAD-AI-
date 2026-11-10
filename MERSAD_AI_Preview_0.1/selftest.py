@@ -1539,6 +1539,14 @@ def run_round4_tests():
         p_first = reg_mod.pseud("12345")
         key_file = os.path.join(d_tmp, ".mersad_hmac.key")
         key_mode = stat_mod.S_IMODE(os.stat(key_file).st_mode)
+        # Windows ACLs, not POSIX st_mode bits, are the authoritative protection.
+        if os.name == "nt":
+            key_permissions_ok = (
+                reg_mod._windows_acl_is_private(d_tmp)
+                and reg_mod._windows_acl_is_private(key_file)
+            )
+        else:
+            key_permissions_ok = key_mode == 0o600
         acl_calls_after_first = len(acl_calls)
         p_cached = reg_mod.pseud("12345")
         cache_avoids_repeated_acl = (os.name != "nt" or len(acl_calls) == acl_calls_after_first)
@@ -1572,8 +1580,8 @@ def run_round4_tests():
             unwritable_raised = True
 
         check("P1-D", "HMAC key created with 0600, persists across restart, refuses corrupt key overwrite, and fails closed without static fallback",
-              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_mode == 0o600 and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
-              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, acl_calls_after_first, oct(key_mode), corrupt_raised, still_corrupt_len, unwritable_raised))
+              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_permissions_ok and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
+              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, key_permissions_ok, acl_calls_after_first, oct(key_mode), corrupt_raised, still_corrupt_len, unwritable_raised))
     finally:
         if orig_data_dir is not None:
             os.environ["MERSAD_DATA_DIR"] = orig_data_dir
@@ -1583,8 +1591,18 @@ def run_round4_tests():
         shutil.rmtree(d_tmp, ignore_errors=True)
 
     # Test interrupted atomic write on .mersad_secrets.json preserves previous file and leaves 0 temp files
+    def _secret_permissions_ok():
+        if os.name == "nt":
+            secret_abs = os.path.abspath(m._SECRETS_FILE)
+            return (
+                reg_mod._windows_acl_is_private(secret_abs)
+                and reg_mod._windows_acl_is_private(os.path.dirname(secret_abs))
+            )
+        return stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode) == 0o600
+
     m._save_secrets_file({"telegram_token": "VALID_SAVED_TOK_1"})
     sec_mode_before = stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode)
+    sec_permissions_before = _secret_permissions_ok()
     orig_replace = os.replace
     def _fail_replace(src, dst):
         raise OSError("Simulated crash right before atomic os.replace")
@@ -1599,10 +1617,11 @@ def run_round4_tests():
     sec_after_crash = m._load_secrets_file()
     leftover_tmps = [fn for fn in os.listdir(WORK) if ".mersad_secrets.json.tmp" in fn]
     sec_mode_after = stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode)
-    check("P1-D", "interrupted secrets save preserves previous .mersad_secrets.json (0600) and cleans up temporary file",
+    sec_permissions_after = _secret_permissions_ok()
+    check("P1-D", "interrupted secrets save preserves previous .mersad_secrets.json with private permissions/ACL and cleans up temporary file",
           interrupted_raised and sec_after_crash.get("telegram_token") == "VALID_SAVED_TOK_1"
-          and not leftover_tmps and sec_mode_before == 0o600 and sec_mode_after == 0o600,
-          (interrupted_raised, sec_after_crash, leftover_tmps, oct(sec_mode_before), oct(sec_mode_after)))
+          and not leftover_tmps and sec_permissions_before and sec_permissions_after,
+          (interrupted_raised, sec_after_crash, leftover_tmps, sec_permissions_before, sec_permissions_after, oct(sec_mode_before), oct(sec_mode_after)))
 
     # ---------- P1-E: Archive recovery & active evidence protection ----------
     # 1. Pending alert with matching copy in evidence_archive/ -> must NOT delete original!
@@ -1874,6 +1893,7 @@ def run_round5_tests():
 
     # 4. Stage 5 & 6: Test path separation (read-only install dir vs writable user data dir) + spaces & Arabic characters in paths
     base_sp_ar = tempfile.mkdtemp(prefix="mersad_r5_مسار عربي مع مسافات_")
+    ro_acl_sid = None
     try:
         ro_install = os.path.join(base_sp_ar, "مجلد التثبيت ReadOnly")
         user_data = os.path.join(base_sp_ar, "بيانات المستخدم Writable")
@@ -1885,7 +1905,26 @@ def run_round5_tests():
             src_f = os.path.join(WORK, fn)
             if os.path.isfile(src_f) and fn.endswith((".py", ".html", ".txt", ".md")):
                 shutil.copy2(src_f, os.path.join(ro_install, fn))
-        os.chmod(ro_install, 0o555)
+        if os.name == "nt":
+            sid_proc = subprocess.run(
+                ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10, check=False,
+            )
+            sid_match = re.search(r"\\bS-1-(?:\\d+-){1,}\\d+\\b", sid_proc.stdout or "")
+            if sid_proc.returncode != 0 or not sid_match:
+                raise RuntimeError("Cannot determine current Windows SID for read-only install test")
+            ro_acl_sid = sid_match.group(0)
+            deny_proc = subprocess.run(
+                ["icacls.exe", ro_install, "/deny", f"*{ro_acl_sid}:(WD,AD)"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10, check=False,
+            )
+            if deny_proc.returncode != 0:
+                raise RuntimeError("Cannot enforce read-only install ACL: " + (deny_proc.stderr or deny_proc.stdout)[-300:])
+        else:
+            os.chmod(ro_install, 0o555)
+        ro_readonly_enforced = not m._is_dir_writable(ro_install)
         try:
             env_sub = {k: v for k, v in os.environ.items() if k != "MERSAD_DATA_DIR"}
             env_sub["XDG_DATA_HOME"] = user_data
@@ -1905,10 +1944,19 @@ def run_round5_tests():
             no_db_in_ro = not os.path.exists(os.path.join(ro_install, "mersad.db"))
             check("R5-PATHS", "read-only install dir with Arabic & spaces automatically falls back to writable user data dir and persists DB & keys across restarts",
                   res1.returncode == 0 and res2.returncode == 0 and "Audit chain OK" in res1.stdout
-                  and "Audit chain OK" in res2.stdout and db_persisted and key_persisted and no_db_in_ro,
-                  (res1.stdout.strip(), res2.stdout.strip(), db_persisted, key_persisted, no_db_in_ro, res1.stderr[-200:]))
+                  and "Audit chain OK" in res2.stdout and db_persisted and key_persisted and no_db_in_ro
+                  and ro_readonly_enforced,
+                  (res1.stdout.strip(), res2.stdout.strip(), db_persisted, key_persisted, no_db_in_ro,
+                   ro_readonly_enforced, res1.stderr[-200:]))
         finally:
-            os.chmod(ro_install, 0o755)
+            if os.name == "nt" and ro_acl_sid:
+                subprocess.run(
+                    ["icacls.exe", ro_install, "/remove:d", f"*{ro_acl_sid}"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=10, check=False,
+                )
+            else:
+                os.chmod(ro_install, 0o755)
     finally:
         shutil.rmtree(base_sp_ar, ignore_errors=True)
 
@@ -4448,20 +4496,22 @@ def run_stage12_security_and_eval_integrity_tests():
             os.environ["DISPLAY"] = old_disp
         m._BROWSE_DIALOG_LOCK.release()
 
-    # Test subprocess --internal-browse-dialog CLI flag directly
+    # Test the child-process CLI contract without opening a modal GUI in headless CI.
+    dialog_env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    dialog_env["MERSAD_TEST_HEADLESS_DIALOG"] = "1"
     sub_dlg = subprocess.run(
         [sys.executable, os.path.join(WORK, "mersad_live.py"), "--internal-browse-dialog", "folder"],
-        capture_output=True, text=True, timeout=10,
-        env={k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")},
+        capture_output=True, text=True, timeout=30, env=dialog_env,
     )
     sub_dlg_json = json.loads(sub_dlg.stdout.strip().splitlines()[-1]) if sub_dlg.stdout.strip() else {}
 
     check(
         "STAGE12-AUDIT005-SUBPROCESS-BROWSE-DIALOG",
-        "browse_local_path never imports tkinter in the HTTP server thread, enforces non-blocking _BROWSE_DIALOG_LOCK, and runs --internal-browse-dialog in a child process",
+        "browse_local_path never imports tkinter in the HTTP server thread, enforces non-blocking _BROWSE_DIALOG_LOCK, and emits CLI JSON safely in headless CI",
         not browse_fn_imports_tk
         and busy_res.get("ok") is False and busy_res.get("busy") is True
-        and sub_dlg.returncode == 0 and isinstance(sub_dlg_json, dict) and "ok" in sub_dlg_json,
+        and sub_dlg.returncode == 0 and isinstance(sub_dlg_json, dict)
+        and sub_dlg_json.get("test_mode") is True and sub_dlg_json.get("cancelled") is True,
         (browse_fn_imports_tk, busy_res, sub_dlg.returncode, sub_dlg_json),
     )
 
