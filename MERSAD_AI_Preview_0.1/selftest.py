@@ -248,14 +248,16 @@ def run_unit_tests():
     p_har = reg_mod.norm_plate("HAR-55120")
     p_aen = reg_mod.norm_plate("AEN-012345")
     p_a05n = reg_mod.norm_plate("A05N 12345")
+    p_an0 = reg_mod.norm_plate("AN 012345")
     p_sana_joined = reg_mod.norm_plate("SANA48210")
     p_t4z = reg_mod.norm_plate("T4Z73901")
     check("OCR", "known Yemeni governorate OCR signatures normalize while numeric-only plates stay unchanged",
           p_taz == "تعز-73901" and p_mar == "مأرب-30827" and p_ibb == "إب-91406"
           and p_ibb_i == "إب-91406" and p_har == "حضرموت-55120" and p_aen == "عدن-012345"
-          and p_a05n == "عدن-12345" and p_sana_joined == "صنعاء-48210" and p_t4z == "تعز-73901"
+          and p_a05n == "عدن-12345" and p_an0 == "عدن-12345"
+          and p_sana_joined == "صنعاء-48210" and p_t4z == "تعز-73901"
           and reg_mod.norm_plate("123456") == "123456",
-          (p_taz, p_mar, p_ibb, p_ibb_i, p_har, p_aen, p_a05n, p_sana_joined, p_t4z, reg_mod.norm_plate("123456")))
+          (p_taz, p_mar, p_ibb, p_ibb_i, p_har, p_aen, p_a05n, p_an0, p_sana_joined, p_t4z, reg_mod.norm_plate("123456")))
 
     # P0-1: Realistic Yemeni OCR lookup with governorate/letters against digits-only registry record
     reg_mod.save_vehicle({"plate": "91234", "status": "wanted", "model": "Hilux"}, "unit")
