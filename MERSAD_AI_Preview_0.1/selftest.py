@@ -1539,6 +1539,9 @@ def run_round4_tests():
         p_first = reg_mod.pseud("12345")
         key_file = os.path.join(d_tmp, ".mersad_hmac.key")
         key_mode = stat_mod.S_IMODE(os.stat(key_file).st_mode)
+        key_permissions_ok = (
+            reg_mod._windows_acl_is_private(key_file) if os.name == "nt" else key_mode == 0o600
+        )
         acl_calls_after_first = len(acl_calls)
         p_cached = reg_mod.pseud("12345")
         cache_avoids_repeated_acl = (os.name != "nt" or len(acl_calls) == acl_calls_after_first)
@@ -1571,9 +1574,9 @@ def run_round4_tests():
         except RuntimeError:
             unwritable_raised = True
 
-        check("P1-D", "HMAC key created with 0600, persists across restart, refuses corrupt key overwrite, and fails closed without static fallback",
-              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_mode == 0o600 and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
-              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, acl_calls_after_first, oct(key_mode), corrupt_raised, still_corrupt_len, unwritable_raised))
+        check("P1-D", "HMAC key is private (POSIX 0600 / verified Windows ACL), persists across restart, refuses corrupt overwrite, and fails closed without static fallback",
+              p_first == p_cached == p_after_restart and cache_avoids_repeated_acl and key_permissions_ok and corrupt_raised and still_corrupt_len == 11 and unwritable_raised,
+              (p_first, p_cached, p_after_restart, cache_avoids_repeated_acl, acl_calls_after_first, oct(key_mode), key_permissions_ok, corrupt_raised, still_corrupt_len, unwritable_raised))
     finally:
         if orig_data_dir is not None:
             os.environ["MERSAD_DATA_DIR"] = orig_data_dir
@@ -1585,6 +1588,10 @@ def run_round4_tests():
     # Test interrupted atomic write on .mersad_secrets.json preserves previous file and leaves 0 temp files
     m._save_secrets_file({"telegram_token": "VALID_SAVED_TOK_1"})
     sec_mode_before = stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode)
+    sec_private_before = (
+        reg_mod._windows_acl_is_private(m._SECRETS_FILE)
+        if os.name == "nt" else sec_mode_before == 0o600
+    )
     orig_replace = os.replace
     def _fail_replace(src, dst):
         raise OSError("Simulated crash right before atomic os.replace")
@@ -1599,10 +1606,14 @@ def run_round4_tests():
     sec_after_crash = m._load_secrets_file()
     leftover_tmps = [fn for fn in os.listdir(WORK) if ".mersad_secrets.json.tmp" in fn]
     sec_mode_after = stat_mod.S_IMODE(os.stat(m._SECRETS_FILE).st_mode)
-    check("P1-D", "interrupted secrets save preserves previous .mersad_secrets.json (0600) and cleans up temporary file",
+    sec_private_after = (
+        reg_mod._windows_acl_is_private(m._SECRETS_FILE)
+        if os.name == "nt" else sec_mode_after == 0o600
+    )
+    check("P1-D#2", "interrupted secrets save preserves previous .mersad_secrets.json with private permissions/ACL and cleans up temporary file",
           interrupted_raised and sec_after_crash.get("telegram_token") == "VALID_SAVED_TOK_1"
-          and not leftover_tmps and sec_mode_before == 0o600 and sec_mode_after == 0o600,
-          (interrupted_raised, sec_after_crash, leftover_tmps, oct(sec_mode_before), oct(sec_mode_after)))
+          and not leftover_tmps and sec_private_before and sec_private_after,
+          (interrupted_raised, sec_after_crash, leftover_tmps, oct(sec_mode_before), oct(sec_mode_after), sec_private_before, sec_private_after))
 
     # ---------- P1-E: Archive recovery & active evidence protection ----------
     # 1. Pending alert with matching copy in evidence_archive/ -> must NOT delete original!
@@ -1893,7 +1904,7 @@ def run_round5_tests():
             # Run #1: initialize DB, audit chain, and HMAC key in fallback user_data dir while launched from run_cwd
             cmd_init = [
                 sys.executable, "-c",
-                f"import sys; sys.path.insert(0, {repr(ro_install)}); import mersad_live as m; m.log('r5_path_test', m.pseud('arabic_space_ok')); print('APPDIR=' + m.APPDIR); print(m.verify())"
+                f"import sys; sys.path.insert(0, {repr(ro_install)}); import mersad_live as m; m.init_runtime_env(); m.log('r5_path_test', m.pseud('arabic_space_ok')); print('APPDIR=' + m.APPDIR); print(m.verify())"
             ]
             res1 = subprocess.run(cmd_init, cwd=run_cwd, env=env_sub, capture_output=True, text=True, timeout=15)
             # Run #2: restart process and run --verify to prove data & HMAC key persisted across restarts
@@ -4448,11 +4459,12 @@ def run_stage12_security_and_eval_integrity_tests():
             os.environ["DISPLAY"] = old_disp
         m._BROWSE_DIALOG_LOCK.release()
 
-    # Test subprocess --internal-browse-dialog CLI flag directly
+    # Test the headless CLI contract without opening a modal desktop dialog on CI runners.
+    dlg_env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    dlg_env["MERSAD_HEADLESS"] = "1"
     sub_dlg = subprocess.run(
         [sys.executable, os.path.join(WORK, "mersad_live.py"), "--internal-browse-dialog", "folder"],
-        capture_output=True, text=True, timeout=10,
-        env={k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")},
+        capture_output=True, text=True, timeout=30, env=dlg_env,
     )
     sub_dlg_json = json.loads(sub_dlg.stdout.strip().splitlines()[-1]) if sub_dlg.stdout.strip() else {}
 
