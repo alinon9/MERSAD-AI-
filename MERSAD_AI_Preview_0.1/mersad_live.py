@@ -6276,7 +6276,22 @@ def stage_uploaded_eval_files(data, who="operator"):
 
 
 def _run_tk_file_dialog_cli(mode="folder"):
-    """Run native OS file/folder dialog inside the main thread of an isolated child process and emit JSON to stdout (AUDIT-005)."""
+    """Run native OS file/folder dialog inside the main thread of an isolated child process and emit JSON to stdout (AUDIT-005).
+
+    MERSAD_HEADLESS=1 is an explicit no-desktop mode for services and CI. It
+    returns the same structured JSON contract without creating a modal Tk
+    window that cannot be dismissed in a non-interactive Windows session.
+    """
+    if str(os.environ.get("MERSAD_HEADLESS", "")).strip().lower() in ("1", "true", "yes", "on"):
+        res = {
+            "ok": False,
+            "headless": True,
+            "error": "نافذة اختيار المسار المحلية غير متاحة في وضع الخادم/بدون واجهة سطح مكتب؛ يمكنك كتابة المسار مباشرة أو رفع صور التقييم وملف ground_truth.csv من المتصفح.",
+        }
+        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\\n")
+        sys.stdout.flush()
+        return 0
+
     try:
         import tkinter as tk
         from tkinter import filedialog
