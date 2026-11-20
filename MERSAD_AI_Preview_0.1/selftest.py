@@ -28,6 +28,9 @@ if os.path.isdir(os.path.join(SRC, ".github")):
 os.chdir(WORK)
 sys.path.insert(0, WORK)
 os.environ["MERSAD_DATA_DIR"] = WORK
+# Legacy query-token access is enabled only for existing loopback self-test scenarios.
+os.environ["MERSAD_TEST_ALLOW_QUERY_TOKEN"] = "1"
+os.environ["MERSAD_TELEGRAM_TEST_MODE"] = "1"
 
 import cv2
 for k, v in {
