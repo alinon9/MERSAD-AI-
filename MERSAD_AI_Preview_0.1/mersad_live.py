@@ -2133,10 +2133,16 @@ def register_plate_model_api(data, who="operator", allow_outside_copy=True):
     When called from HTTP endpoint (allow_outside_copy=False), enforces that the model file resides inside models/."""
     if not isinstance(data, dict):
         return {"ok": False, "error": "بيانات الطلب غير صالحة"}
+    if not isinstance(allow_outside_copy, bool):
+        return {"ok": False, "error": "سياسة صلاحية نسخ النموذج غير صالحة"}
     p_str = str(data.get("plate_model") or "").strip()
     if not p_str:
         return {"ok": False, "error": "يرجى تحديد مسار ملف النموذج (.pt) لاعتماده"}
-    eff_allow_copy = bool(data.get("allow_outside_copy", allow_outside_copy))
+    raw_allow_copy = data.get("allow_outside_copy", allow_outside_copy)
+    if not isinstance(raw_allow_copy, bool):
+        return {"ok": False, "error": "قيمة allow_outside_copy يجب أن تكون Boolean حقيقية"}
+    # The server-side policy is authoritative; request JSON can never elevate it.
+    eff_allow_copy = allow_outside_copy and raw_allow_copy
     return register_trusted_model(p_str, who=f"ui:{who}", min_bytes=512, allow_outside_copy=eff_allow_copy)
 
 
@@ -4444,21 +4450,20 @@ def main():
         if a.plate_model:
             yolo = load_verified_yolo_model(a.plate_model, role="plate", min_bytes=1024, enforce_trusted=True)
         if not a.no_vehicles:
-            import ultralytics as _ul_mod
+            # AUD-003: no implicit Ultralytics download/fallback is allowed.
+            # Every checkpoint must pass the centralized trusted-model gate.
             yolo_p = resolve_resource_path(os.path.join("models", "yolov8n.pt"))
-            if os.path.exists(yolo_p) or getattr(_ul_mod, "__file__", None) is not None:
-                vyolo = load_verified_yolo_model(
-                    yolo_p,
-                    role="vehicle",
-                    min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
-                    enforce_trusted=True,
-                )
-            else:
-                from ultralytics import YOLO
-                vyolo = YOLO("yolov8n.pt")
+            vyolo = load_verified_yolo_model(
+                yolo_p,
+                role="vehicle",
+                min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
+                enforce_trusted=True,
+            )
     except Exception as e:
-        logger.warning("Vehicle/truck detection off: %s", e)
-        print("Vehicle/truck detection off:", e)
+        vyolo = None
+        logger.error("Verified vehicle model unavailable; vehicle detection disabled (%s)", type(e).__name__)
+        if os.environ.get("MERSAD_STRICT_MODEL_VERIFICATION", "0").strip() == "1":
+            raise
     register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")
     trucks_only = a.trucks_only and vyolo is not None
     yunet_p = resolve_resource_path(os.path.join("models", "yunet.onnx"))
