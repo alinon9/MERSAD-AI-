@@ -392,11 +392,26 @@ class LabState:
             return cam
 
 
+def _is_loopback_bind_address(host: str) -> bool:
+    """Return True only for an explicitly loopback bind address."""
+    value = str(host or "").strip().lower()
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
 class LabHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, server_address, RequestHandlerClass, lab_state: LabState):
+    def __init__(self, server_address, RequestHandlerClass, lab_state: LabState, allow_lan: bool = False):
+        bind_host = str(server_address[0] or "")
+        if not _is_loopback_bind_address(bind_host) and not allow_lan:
+            # Fail before ThreadingHTTPServer creates or binds a listening socket.
+            raise ValueError("LAN binding is disabled; explicit allow_lan=True is required")
         super().__init__(server_address, RequestHandlerClass)
         self.lab_state = lab_state
 
@@ -843,9 +858,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
 class LabServerController:
     """Clean start/stop wrapper around LabHTTPServer with zero hanging threads."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False):
-        self.state = LabState(token=token, require_auth=require_auth)
-        self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
+    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False, allow_lan: bool = False):
+        # Enforce LAN policy at the controller boundary as well as the CLI boundary.
+        # This prevents programmatic callers from bypassing --allow-lan before socket creation.
+        is_lan = not _is_loopback_bind_address(host)
+        if is_lan and not allow_lan:
+            raise ValueError("LAN binding is disabled; pass allow_lan=True explicitly")
+        self.state = LabState(token=token, require_auth=(require_auth or allow_lan))
+        self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state, allow_lan=allow_lan)
         self.host, self.port = self.httpd.server_address
         self._thread = None
 
@@ -889,6 +909,7 @@ def main():
         port=args.port,
         token=args.token,
         require_auth=(args.require_auth or args.allow_lan),
+        allow_lan=args.allow_lan,
     )
     if args.self_check:
         ctrl.start()
