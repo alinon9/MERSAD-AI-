@@ -735,9 +735,9 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         return raw_body
 
     def do_POST(self):
-        if not self._validate_host_and_origin(is_post=True):
-            return
         if not self._check_auth(require_for_mutation=True):
+            return
+        if not self._validate_host_and_origin(is_post=True):
             return
 
         parsed = urllib.parse.urlparse(self.path)
