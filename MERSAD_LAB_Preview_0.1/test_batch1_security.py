@@ -46,6 +46,11 @@ def dns_record(family, address, port=8765):
 
 
 class Batch1LabSecurityTests(unittest.TestCase):
+    def test_default_local_ai_server_port_8000_is_allowed(self):
+        target = lab_server._validate_ai_connect_url("http://127.0.0.1:8000")
+        self.assertEqual(target["port"], 8000)
+        self.assertEqual(target["pinned_ip"], "127.0.0.1")
+
     def test_loopback_ipv4_http_is_allowed_without_dns(self):
         with mock.patch("lab_server.socket.getaddrinfo") as getaddrinfo:
             target = lab_server._validate_ai_connect_url("http://127.0.0.1:8765")
@@ -173,6 +178,55 @@ class Batch1LabSecurityTests(unittest.TestCase):
                 "ai.internal.local", 8443, "10.20.30.40",
                 context=DummyTLSContext(verify_mode=ssl.CERT_NONE),
             )
+
+    def test_send_pinned_ai_request_rejects_redirect_without_following_it(self):
+        class RedirectResponse:
+            status = 302
+
+            def read(self, *_args, **_kwargs):
+                return b""
+
+        class RecordingConnection:
+            instances = []
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.requests = []
+                self.closed = False
+                self.__class__.instances.append(self)
+
+            def request(self, method, path, body=None, headers=None):
+                self.requests.append({
+                    "method": method, "path": path, "body": body, "headers": dict(headers or {})
+                })
+
+            def getresponse(self):
+                return RedirectResponse()
+
+            def close(self):
+                self.closed = True
+
+        RecordingConnection.instances.clear()
+        target = {
+            "scheme": "https",
+            "host": "ai.internal.local",
+            "port": 8443,
+            "pinned_ip": "10.20.30.40",
+            "path": "/api/cameras/add",
+        }
+        secret = "mersad-ai-test-secret"
+        with mock.patch.object(lab_server, "_PinnedIPHTTPSConnection", RecordingConnection):
+            with self.assertRaisesRegex(OSError, "redirects are not permitted"):
+                lab_server._send_pinned_ai_request(target, b"{}", secret)
+
+        self.assertEqual(len(RecordingConnection.instances), 1)
+        conn = RecordingConnection.instances[0]
+        self.assertEqual(len(conn.requests), 1)
+        self.assertEqual(conn.requests[0]["headers"].get("X-Mersad-Token"), secret)
+        self.assertTrue(conn.closed)
+        # A 302 target is never opened and no second request receives the secret.
+        self.assertEqual(conn.kwargs["host"], "ai.internal.local")
+        self.assertNotIn("attacker.example", repr(conn.requests))
 
     def test_certificate_error_stops_before_http_request(self):
         dummy = DummySocket()
