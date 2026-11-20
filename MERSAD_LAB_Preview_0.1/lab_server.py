@@ -842,6 +842,7 @@ def main():
         print("[SECURITY ERROR] MERSAD LAB binds to 127.0.0.1 by default. Pass --allow-lan explicitly if LAN binding is required.", file=sys.stderr)
         sys.exit(2)
 
+    generated_token = not args.token and not os.environ.get("MERSAD_LAB_TOKEN")
     ctrl = LabServerController(host=args.host, port=args.port, token=args.token, require_auth=args.require_auth)
     if args.self_check:
         ctrl.start()
@@ -866,6 +867,11 @@ def main():
     print(f"  {VERSION}")
     print(f"  Local URL   : http://{ctrl.host}:{ctrl.port}/")
     print(f"  Stream CAM1 : http://{ctrl.host}:{ctrl.port}/stream/cam1.mjpg")
+    if generated_token:
+        # Show the auto-generated credential only to the local operator console.
+        # It is never returned by HTTP and is not stored in browser cookies.
+        print(f"  LAB API Token: {ctrl.state.token}", flush=True)
+        print("  Enter this token in the LAB page; keep it private.")
     print("  Security    : Localhost-only (127.0.0.1) + Host/Origin/CSRF Guard")
     print("======================================================================")
     try:
