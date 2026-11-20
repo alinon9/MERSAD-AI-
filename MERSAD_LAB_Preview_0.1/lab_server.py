@@ -97,7 +97,7 @@ def _ip_for_policy(value: str):
     if "%" in str(value):
         raise ValueError("scoped IP addresses are not allowed")
     ip_obj = ipaddress.ip_address(value)
-    return ip_obj.ipv4_mapped or ip_obj
+    return getattr(ip_obj, "ipv4_mapped", None) or ip_obj
 
 
 def _is_disallowed_remote_ip(ip_obj) -> bool:
@@ -129,7 +129,7 @@ def _validate_ai_connect_url(ai_url: str) -> dict:
 
         try:
             host_ip = ipaddress.ip_address(host)
-            is_loopback_host = bool((host_ip.ipv4_mapped or host_ip).is_loopback)
+            is_loopback_host = bool((getattr(host_ip, "ipv4_mapped", None) or host_ip).is_loopback)
         except ValueError:
             is_loopback_host = host == "localhost"
 
@@ -479,7 +479,7 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         """Check token authentication when require_auth is enabled or when invalid token is explicitly supplied."""
         parsed = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(parsed.query)
-        q_tok = (qs.get("token") or qs.get("k") or [""])[0].strip()
+        q_tok = "" if require_for_mutation else (qs.get("token") or qs.get("k") or [""])[0].strip()
         h_tok = (self.headers.get("X-Lab-Token") or "").strip()
         auth_hdr = (self.headers.get("Authorization") or "").strip()
         if auth_hdr.lower().startswith("bearer "):
