@@ -56,6 +56,14 @@ jobs:
           python -X utf8 -u MERSAD_LAB_Preview_0.1\test_batch2_server_security.py -v 2>&1 | Tee-Object artifacts\batch2-logs\batch2-lab-security.log
           if ($LASTEXITCODE -ne 0) { throw "Batch 2 LAB security tests failed ($LASTEXITCODE)" }
 
+      - name: Batch 2 AUD-010 Telegram API transport security
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_AI_Preview_0.1\\test_batch2_notify_security.py -v 2>&1 | Tee-Object artifacts\\batch2-logs\\batch2-notify-security.log
+          if ($LASTEXITCODE -ne 0) { throw "Batch 2 Telegram security tests failed ($LASTEXITCODE)" }
+
       - name: MERSAD LAB functional and security suite
         shell: pwsh
         run: |
