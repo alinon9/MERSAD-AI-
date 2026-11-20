@@ -528,7 +528,7 @@ def get_lan_ip():
 
 def _write_operator_token_file():
     """Persist the operator credential outside the repository; never print the secret."""
-    root = os.environ.get("MERSAD_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".mersad")
+    root = os.path.join(os.path.expanduser("~"), ".mersad")
     os.makedirs(root, exist_ok=True)
     path = os.environ.get("MERSAD_TOKEN_FILE") or os.path.join(root, "session.token")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
