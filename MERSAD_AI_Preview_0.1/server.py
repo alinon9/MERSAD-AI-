@@ -376,23 +376,23 @@ class H(BaseHTTPRequestHandler):
         self.send_error(404, "Evidence not found")
 
     def do_GET(self):
-        p = self._auth()
-        if p is None: return
-        try:
-            if p == "/":
-                if self.arg("k") and self.arg("noredir") != "1":
-                    cookie_val = f"mersad_k={bus.token}; HttpOnly; SameSite=Strict; Path=/"
-                    self.send_response(302)
-                    self.send_header("Set-Cookie", cookie_val)
-                    self.send_header("Location", "/")
-                    self.send_header("Referrer-Policy", "no-referrer")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
+        if not self._validate_host():
+            return
+        request_path = urlparse(self.path).path
+        # The dashboard shell is public but contains no private data.
+        # Every API, event stream, image, and export route remains authenticated.
+        if request_path in ("/", "/index.html"):
+            try:
                 with open(resolve_dashboard_path("dashboard.html"), "rb") as f:
                     self._send(f.read())
-            elif p == "/stream.mjpg": self.stream(self.arg("cam"))
+            except FileNotFoundError:
+                self._json({"ok": False, "error": "Dashboard file not found"}, code=404)
+            return
+        p = self._auth()
+        if p is None:
+            return
+        try:
+            if p == "/stream.mjpg": self.stream(self.arg("cam"))            if p == "/stream.mjpg": self.stream(self.arg("cam"))
             elif p == "/events": self.events()
             elif p == "/api/ping": self._json({"ok": True, "ts": time.time()})
             elif p == "/api/verify": self._json({"result": bus.verify() if bus.verify else "OK"})
@@ -472,19 +472,17 @@ class H(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "حدث خطأ داخلي في الخادم"}, code=500)
 
     def do_POST(self):
+        if not self._validate_host():
+            return
+        if not self._validate_origin(is_post=True):
+            return
+        request_path = urlparse(self.path).path
+        if request_path == "/api/session":
+            return self._create_session()
         p = self._auth()
-        if p is None: return
+        if p is None:
+            return
         try:
-            origin_hdr = self.headers.get("Origin", "").strip()
-            host_hdr = self.headers.get("Host", "").strip()
-            if origin_hdr:
-                if origin_hdr.lower() == "null":
-                    return self._json({"ok": False, "error": "رفض الطلب بسبب مصدر غير موثوق (Origin: null CSRF Blocked)"}, code=403)
-                if host_hdr:
-                    orig_netloc = urlparse(origin_hdr).netloc.strip().lower()
-                    if not orig_netloc or orig_netloc != host_hdr.lower():
-                        return self._json({"ok": False, "error": "رفض الطلب بسبب تعارض المصدر (CSRF Origin Mismatch)"}, code=403)
-            try:
                 n = int(self.headers.get("Content-Length", 0))
             except ValueError:
                 return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
@@ -496,7 +494,7 @@ class H(BaseHTTPRequestHandler):
             try:
                 with bus._lock:
                     post_fn = bus.post.get(p)
-                has_import_guard = bool(self.arg("k") or self.headers.get("X-Mersad-Token") or self.headers.get("X-Filename"))
+                has_import_guard = bool(self.headers.get("X-Mersad-Token") or self.headers.get("Authorization") or self.headers.get("X-Filename"))
                 ctype_low = (self.headers.get("Content-Type") or "").strip().lower()
                 if p in ("/api/import", "/api/camera_links/import", "/api/field_calibrations/import") and (not has_import_guard or ctype_low.startswith("text/plain")):
                     return self._json({"ok": False, "error": "رفض طلب الاستيراد لحماية الجلسة (يتطلب ترويسة X-Filename أو رمز X-Mersad-Token)"}, code=403)
@@ -508,7 +506,7 @@ class H(BaseHTTPRequestHandler):
                     res = bus.on_field_calibrations_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
                 elif post_fn is not None:
                     ctype_hdr = (self.headers.get("Content-Type") or "").strip().lower()
-                    has_explicit_tok = bool(self.arg("k") or self.headers.get("X-Mersad-Token"))
+                    has_explicit_tok = bool(self.headers.get("X-Mersad-Token") or self.headers.get("Authorization"))
                     if not has_explicit_tok and not ctype_hdr.startswith("application/json"):
                         return self._json(
                             {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو رمز X-Mersad-Token)"},
