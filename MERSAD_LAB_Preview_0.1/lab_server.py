@@ -432,10 +432,16 @@ def _validate_lab_bind_policy(host: str, allow_lan: bool) -> None:
         return
     if not allow_lan:
         raise ValueError("Non-loopback LAB binding requires --allow-lan")
-    if not _configured_lab_allowed_hosts() and str(host).strip() in ("0.0.0.0", "::"):
-        raise ValueError("Wildcard LAN binding requires MERSAD_LAB_ALLOWED_HOSTS with explicit client-facing host names/IPs")
-    if str(host).strip() in ("0.0.0.0", "::") and not os.environ.get("MERSAD_LAB_TOKEN", "").strip():
-        raise ValueError("Wildcard LAN binding requires an explicitly configured MERSAD_LAB_TOKEN")
+    allowed_hosts = _configured_lab_allowed_hosts()
+    if not allowed_hosts:
+        raise ValueError("LAN binding requires MERSAD_LAB_ALLOWED_HOSTS with explicit client-facing host names/IPs")
+    bind_value = str(host).strip()
+    if bind_value not in ("0.0.0.0", "::"):
+        normalized_bind = _normalize_allowed_host(bind_value)
+        if normalized_bind not in allowed_hosts:
+            raise ValueError("MERSAD_LAB_ALLOWED_HOSTS must include the configured bind address")
+    if not os.environ.get("MERSAD_LAB_TOKEN", "").strip():
+        raise ValueError("LAN binding requires an explicitly configured MERSAD_LAB_TOKEN")
 
 
 class LabHTTPServer(ThreadingHTTPServer):
