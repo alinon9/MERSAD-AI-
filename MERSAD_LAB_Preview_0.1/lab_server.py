@@ -842,6 +842,12 @@ class LabServerController:
     """Clean start/stop wrapper around LabHTTPServer with zero hanging threads."""
 
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False):
+        try:
+            bind_is_loopback = ipaddress.ip_address(str(host)).is_loopback
+        except ValueError:
+            bind_is_loopback = str(host).lower() == "localhost"
+        if not bind_is_loopback and not require_auth:
+            raise ValueError("LAN binding requires require_auth=True (fail-closed policy)")
         self.state = LabState(token=token, require_auth=require_auth)
         self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
         self.host, self.port = self.httpd.server_address
@@ -876,8 +882,15 @@ def main():
     ap.add_argument("--self-check", action="store_true", help="Run startup self-check and exit 0")
     args = ap.parse_args()
 
-    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.allow_lan:
+    try:
+        bind_is_loopback = ipaddress.ip_address(str(args.host)).is_loopback
+    except ValueError:
+        bind_is_loopback = str(args.host).lower() == "localhost"
+    if not bind_is_loopback and not args.allow_lan:
         print("[SECURITY ERROR] MERSAD LAB binds to 127.0.0.1 by default. Pass --allow-lan explicitly if LAN binding is required.", file=sys.stderr)
+        sys.exit(2)
+    if not bind_is_loopback and not args.require_auth:
+        print("[SECURITY ERROR] LAN binding also requires --require-auth; unauthenticated LAN mode is disabled.", file=sys.stderr)
         sys.exit(2)
 
     generated_token = not args.token and not os.environ.get("MERSAD_LAB_TOKEN")
