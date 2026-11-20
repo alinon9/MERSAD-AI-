@@ -392,7 +392,7 @@ class H(BaseHTTPRequestHandler):
         if p is None:
             return
         try:
-            if p == "/stream.mjpg": self.stream(self.arg("cam"))            if p == "/stream.mjpg": self.stream(self.arg("cam"))
+            if p == "/stream.mjpg": self.stream(self.arg("cam"))
             elif p == "/events": self.events()
             elif p == "/api/ping": self._json({"ok": True, "ts": time.time()})
             elif p == "/api/verify": self._json({"result": bus.verify() if bus.verify else "OK"})
@@ -483,52 +483,63 @@ class H(BaseHTTPRequestHandler):
         if p is None:
             return
         try:
-                n = int(self.headers.get("Content-Length", 0))
-            except ValueError:
-                return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
-            if n < 0:
-                return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
-            if n > MAX_UPLOAD:
-                return self._json({"ok": False, "error": "حجم الملف يتجاوز الحد الأقصى المسموح (5 ميجابايت)"}, code=413)
-            raw, ip = self.rfile.read(n), self.client_address[0]
-            try:
-                with bus._lock:
-                    post_fn = bus.post.get(p)
-                has_import_guard = bool(self.headers.get("X-Mersad-Token") or self.headers.get("Authorization") or self.headers.get("X-Filename"))
-                ctype_low = (self.headers.get("Content-Type") or "").strip().lower()
-                if p in ("/api/import", "/api/camera_links/import", "/api/field_calibrations/import") and (not has_import_guard or ctype_low.startswith("text/plain")):
-                    return self._json({"ok": False, "error": "رفض طلب الاستيراد لحماية الجلسة (يتطلب ترويسة X-Filename أو رمز X-Mersad-Token)"}, code=403)
-                if p == "/api/import" and self.arg("kind") in ("vehicles", "persons"):
-                    res = bus.on_import(self.arg("kind"), unquote(self.headers.get("X-Filename", "")), raw, ip)
-                elif p == "/api/camera_links/import" and bus.on_camera_links_import:
-                    res = bus.on_camera_links_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
-                elif p == "/api/field_calibrations/import" and bus.on_field_calibrations_import:
-                    res = bus.on_field_calibrations_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
-                elif post_fn is not None:
-                    ctype_hdr = (self.headers.get("Content-Type") or "").strip().lower()
-                    has_explicit_tok = bool(self.headers.get("X-Mersad-Token") or self.headers.get("Authorization"))
-                    if not has_explicit_tok and not ctype_hdr.startswith("application/json"):
-                        return self._json(
-                            {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو رمز X-Mersad-Token)"},
-                            code=403,
-                        )
-                    payload = json.loads(raw.decode("utf-8") if raw else "{}")
-                    if not isinstance(payload, dict):
-                        res = {"ok": False, "error": "بيانات الطلب غير صالحة"}
-                    else:
-                        res = post_fn(payload, ip)
-                elif p.startswith("/api/"):
-                    return self._json({"ok": False, "error": "المسار غير موجود"}, code=404)
+            n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
+        if n < 0:
+            return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
+        if n > MAX_UPLOAD:
+            return self._json({"ok": False, "error": "حجم الملف يتجاوز الحد الأقصى المسموح (5 ميجابايت)"}, code=413)
+        raw, ip = self.rfile.read(n), self.client_address[0]
+        try:
+            with bus._lock:
+                post_fn = bus.post.get(p)
+            has_import_guard = bool(
+                self.headers.get("X-Mersad-Token")
+                or self.headers.get("Authorization")
+                or self.headers.get("X-Filename")
+            )
+            ctype_low = (self.headers.get("Content-Type") or "").strip().lower()
+            if p in ("/api/import", "/api/camera_links/import", "/api/field_calibrations/import") and (
+                not has_import_guard or ctype_low.startswith("text/plain")
+            ):
+                return self._json(
+                    {"ok": False, "error": "رفض طلب الاستيراد لحماية الجلسة (يتطلب ترويسة X-Filename أو رمز X-Mersad-Token)"},
+                    code=403,
+                )
+            if p == "/api/import" and self.arg("kind") in ("vehicles", "persons"):
+                res = bus.on_import(self.arg("kind"), unquote(self.headers.get("X-Filename", "")), raw, ip)
+            elif p == "/api/camera_links/import" and bus.on_camera_links_import:
+                res = bus.on_camera_links_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
+            elif p == "/api/field_calibrations/import" and bus.on_field_calibrations_import:
+                res = bus.on_field_calibrations_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
+            elif post_fn is not None:
+                ctype_hdr = (self.headers.get("Content-Type") or "").strip().lower()
+                has_explicit_tok = bool(self.headers.get("X-Mersad-Token") or self.headers.get("Authorization"))
+                if not has_explicit_tok and not ctype_hdr.startswith("application/json"):
+                    return self._json(
+                        {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو رمز X-Mersad-Token)"},
+                        code=403,
+                    )
+                payload = json.loads(raw.decode("utf-8") if raw else "{}")
+                if not isinstance(payload, dict):
+                    res = {"ok": False, "error": "بيانات الطلب غير صالحة"}
                 else:
-                    return self.send_error(404)
-            except json.JSONDecodeError:
-                res = {"ok": False, "error": "صيغة JSON غير صالحة"}
-            except Exception as e:
-                log.error("POST %s failed: %s", p, e)
-                res = {"ok": False, "error": "تعذّر معالجة الطلب"}
-            self._json(res)
+                    res = post_fn(payload, ip)
+            elif p.startswith("/api/"):
+                return self._json({"ok": False, "error": "المسار غير موجود"}, code=404)
+            else:
+                return self.send_error(404)
+        except json.JSONDecodeError:
+            return self._json({"ok": False, "error": "صيغة JSON غير صالحة"}, code=400)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
+            return
+        except Exception as e:
+            log.error("POST %s failed: %s", p, _redact_log_text(e))
+            return self._json({"ok": False, "error": "تعذّر معالجة الطلب"}, code=500)
+        if isinstance(res, dict) and res.get("ok") is False:
+            return self._json(res, code=400)
+        return self._json(res, code=200)
 
     def stream(self, cam=""):
         with bus._lock:
