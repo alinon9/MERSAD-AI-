@@ -4257,7 +4257,7 @@ def main():
         logger.error("Verified vehicle model unavailable; vehicle detection disabled (%s)", type(e).__name__)
         if os.environ.get("MERSAD_STRICT_MODEL_VERIFICATION", "0").strip() == "1":
             raise
-    register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")    register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")
+    register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")
     trucks_only = a.trucks_only and vyolo is not None
     yunet_p = resolve_resource_path(os.path.join("models", "yunet.onnx"))
     sface_p = resolve_resource_path(os.path.join("models", "sface.onnx"))
