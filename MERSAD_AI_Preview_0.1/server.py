@@ -111,6 +111,19 @@ class Bus:
                 pass
 
 
+_LOG_URL_CREDENTIALS = re.compile(r"(?i)\\b(rtsp|rtsps|http|https)://([^/@\\s:]+):([^/@\\s]+)@")
+_LOG_BOT_TOKEN = re.compile(r"(?i)(/bot)[0-9]{5,}:[A-Za-z0-9_-]+")
+_LOG_SECRET_PARAM = re.compile(r"(?i)(token|authorization|password|passwd)=([^&\\s]+)")
+
+
+def _redact_log_text(value):
+    text = str(value or "")
+    text = _LOG_URL_CREDENTIALS.sub(r"\\1://[REDACTED]@", text)
+    text = _LOG_BOT_TOKEN.sub(r"\\1[REDACTED]", text)
+    text = _LOG_SECRET_PARAM.sub(r"\\1=[REDACTED]", text)
+    return text[:1600]
+
+
 bus = Bus()
 
 
@@ -350,9 +363,7 @@ class H(BaseHTTPRequestHandler):
         self._send(json.dumps(o, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", headers=headers, code=code)
 
     def _create_session(self):
-        provided = self._header_token()
-        if not provided or not bus.token or not secrets.compare_digest(provided, str(bus.token)):
-            self._json({"ok": False, "error": "رمز الدخول غير صالح"}, code=401)
+        if self._auth() is None:
             return
         secure_flag = "; Secure" if bool(getattr(self.server, "is_tls", False)) else ""
         cookie = f"mersad_k={bus.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure_flag}"
@@ -468,7 +479,7 @@ class H(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         except Exception as e:
-            log.error("GET %s failed: %s", p, e)
+            log.error("GET %s failed: %s", p, _redact_log_text(e))
             self._json({"ok": False, "error": "حدث خطأ داخلي في الخادم"}, code=500)
 
     def do_POST(self):
@@ -553,7 +564,8 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             last = -1
             idle_ticks = 0
-            while True:
+            stop_event = getattr(self.server, "stop_event", None)
+            while not (stop_event and stop_event.is_set()):
                 cur_fid, b = bus.get_stream_frame(cam)
                 if b is not None and cur_fid != last:
                     last = cur_fid
@@ -581,11 +593,16 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             init = bus.get_init_payload()
             self.wfile.write(f"data: {init}\n\n".encode("utf-8"))
-            while True:
+            stop_event = getattr(self.server, "stop_event", None)
+            last_ping = time.monotonic()
+            while not (stop_event and stop_event.is_set()):
                 try:
-                    self.wfile.write(f"data: {q.get(timeout=15)}\n\n".encode("utf-8"))
+                    event_data = q.get(timeout=0.5)
+                    self.wfile.write(f"data: {event_data}\n\n".encode("utf-8"))
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
+                    if time.monotonic() - last_ping >= 15.0:
+                        self.wfile.write(b": ping\n\n")
+                        last_ping = time.monotonic()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
         finally:
@@ -604,18 +621,51 @@ def get_lan_ip():
             return "127.0.0.1"
 
 
-def start_server(port=8000, host="127.0.0.1"):
-    """Start HTTP server. Binds to 127.0.0.1 by default for security unless host='0.0.0.0' is explicitly passed."""
+def _is_loopback_bind(host):
+    value = str(host or "").strip().lower()
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return value == "localhost"
+
+
+def _build_server_tls_context(host, tls_cert=None, tls_key=None):
+    has_cert, has_key = bool(tls_cert), bool(tls_key)
+    if has_cert != has_key:
+        raise ValueError("TLS requires both --tls-cert and --tls-key.")
+    if not _is_loopback_bind(host) and not (has_cert and has_key):
+        raise ValueError("LAN binding over plaintext HTTP is disabled. Supply --tls-cert and --tls-key.")
+    if not has_cert:
+        return None
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certfile=tls_cert, keyfile=tls_key)
+    return context
+
+
+class _IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+def start_server(port=8000, host="127.0.0.1", tls_cert=None, tls_key=None):
+    """Start MERSAD's web server; non-loopback binds are TLS-only."""
+    tls_context = _build_server_tls_context(host, tls_cert, tls_key)
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer.allow_reuse_address = True
-    srv = ThreadingHTTPServer((host, port), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    local_url = f"http://127.0.0.1:{port}/?k={bus.token}"
-    if host == "0.0.0.0":
-        lan_ip = get_lan_ip()
-        lan_url = f"http://{lan_ip}:{port}/?k={bus.token}"
-        print(f"\nDashboard URLs:\n  Local (هذا الجهاز):      {local_url}\n  LAN / Phone (الجوالات): {lan_url}")
-        print("  ⚠️ تنبيه أمني: الرمز السري يمر نصاً عبر HTTP على الشبكة المحلية. استخدم شبكة واي فاي موثوقة فقط.\n")
+    server_cls = _IPv6ThreadingHTTPServer if ":" in str(host) else ThreadingHTTPServer
+    srv = server_cls((host, int(port)), H)
+    srv.stop_event = threading.Event()
+    srv.is_tls = bool(tls_context)
+    srv.scheme = "https" if tls_context else "http"
+    if tls_context:
+        srv.socket = tls_context.wrap_socket(srv.socket, server_side=True)
+    threading.Thread(target=srv.serve_forever, daemon=True, name="mersad-http-server").start()
+    actual_port = int(srv.server_address[1])
+    lan_ip = get_lan_ip()
+    srv.local_url = f"{srv.scheme}://127.0.0.1:{actual_port}/"
+    srv.lan_url = f"{srv.scheme}://{lan_ip}:{actual_port}/"
+    if _is_loopback_bind(host):
+        print(f"\nDashboard URL (local only): {srv.local_url}")
     else:
-        print(f"\nDashboard URL (Local only — 127.0.0.1):\n  {local_url}\n  (لتفعيل الوصول من الجوالات على نفس الشبكة استخدم RUN_LAN.bat أو --host 0.0.0.0)\n")
+        print(f"\nDashboard URLs (TLS enabled):\n  Local: {srv.local_url}\n  LAN:   {srv.lan_url}")
     return srv
