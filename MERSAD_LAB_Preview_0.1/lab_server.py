@@ -555,10 +555,26 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         if auth_hdr.lower().startswith("bearer "):
             h_tok = auth_hdr[7:].strip()
         c_tok = ""
-        if "Cookie" in self.headers:
+        raw_cookie = self.headers.get("Cookie", "")
+        if raw_cookie:
+            # SimpleCookie may silently discard malformed fragments instead of
+            # raising CookieError, so validate each name=value pair first.
+            for part in raw_cookie.split(";"):
+                pair = part.strip()
+                name, sep, value = pair.partition("=")
+                if (
+                    not sep
+                    or not re.fullmatch(r"[!#$%&'*+\\-.^_`|~0-9A-Za-z]+", name.strip())
+                    or any(ord(ch) < 0x21 or ord(ch) == 0x7f for ch in value.strip())
+                ):
+                    self._json({"ok": False, "error": "ترويسة Cookie غير صالحة"}, code=400)
+                    return False
             try:
                 c = http.cookies.SimpleCookie()
-                c.load(self.headers["Cookie"])
+                c.load(raw_cookie)
+                if not c:
+                    self._json({"ok": False, "error": "ترويسة Cookie غير صالحة"}, code=400)
+                    return False
                 if "mersad_lab_k" in c:
                     c_tok = c["mersad_lab_k"].value
             except http.cookies.CookieError:
