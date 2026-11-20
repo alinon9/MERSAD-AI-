@@ -248,10 +248,10 @@ def run_unit_tests():
         official_https = not_mod._telegram_api_base() == "https://api.telegram.org"
         os.environ["TELEGRAM_API"] = "http://127.0.0.1:8780"
         test_loopback = not_mod._telegram_api_base() == "http://127.0.0.1:8780"
-        redirect_blocked = not_mod._NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://evil.example") is None
-        # The redirect handler raises HTTPError; exercise and record that behavior.
+        # The redirect handler raises HTTPError rather than following a token-bearing URL.
         try:
-            not_mod._NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://evil.example")
+            req = urllib.request.Request("https://api.telegram.org/botTOKEN/sendMessage")
+            not_mod._NoRedirectHandler().redirect_request(req, None, 302, "Found", {}, "https://evil.example")
             redirect_blocked = False
         except urllib.error.HTTPError:
             redirect_blocked = True
