@@ -34,7 +34,8 @@ for k, v in {
     "TELEGRAM_TOKEN": "SECRET_BOT_TOKEN_999",
     "TELEGRAM_CHAT_ID": "-100",
     "TELEGRAM_PATROL_CHAT_ID": "-200",
-    "TELEGRAM_API": "http://127.0.0.1:8780"
+    "TELEGRAM_API": "http://127.0.0.1:8780",
+    "MERSAD_ALLOW_INSECURE_TELEGRAM_TEST": "1",
 }.items():
     os.environ[k] = v
 
@@ -685,15 +686,16 @@ def run_security_lan_and_multiprocess_tests():
 
         srv_lan = ThreadingHTTPServer(("0.0.0.0", 8792), srv_mod.H)
         threading.Thread(target=srv_lan.serve_forever, daemon=True).start()
-        lan_200 = False
+        lan_denied = False
         try:
-            resp = urllib.request.urlopen(f"http://{lan_ip}:8792/api/verify?k={m.bus.token}", timeout=2.0)
-            lan_200 = (resp.status == 200 and b"Audit chain OK" in resp.read())
+            urllib.request.urlopen(f"http://{lan_ip}:8792/api/verify?k={m.bus.token}", timeout=2.0)
+        except urllib.error.HTTPError as he:
+            lan_denied = he.code == 403
         except Exception:
-            lan_200 = False
+            lan_denied = False
         srv_lan.shutdown()
-        check("P1-J", f"with wire() initialized: 127.0.0.1 serves 200 on loopback & refuses connection on LAN IP ({lan_ip}), while 0.0.0.0 serves 200 on LAN IP",
-              loopback_ok and lan_refused and lan_200, (loopback_ok, lan_refused, lan_200))
+        check("P1-J", f"loopback works; wildcard binding rejects unlisted LAN Host header ({lan_ip}) by default",
+              loopback_ok and lan_refused and lan_denied, (loopback_ok, lan_refused, lan_denied))
     else:
         skip_check("P1-J", "LAN IP binding check", "No non-loopback LAN interface IP available in container")
 
@@ -735,6 +737,7 @@ def run_security_lan_and_multiprocess_tests():
             "TELEGRAM_TOKEN": "TOK_MP_TEST",
             "TELEGRAM_CHAT_ID": "-100",
             "TELEGRAM_API": "http://127.0.0.1:8780",
+            "MERSAD_ALLOW_INSECURE_TELEGRAM_TEST": "1",
         }
         init_code = (
             f"import os, sys; sys.path.insert(0, {repr(WORK)})\n"
@@ -990,7 +993,7 @@ def run_multicam_loop_tests():
 # 5. END-TO-END INTEGRATION & ROUND 1/2/3 WORKFLOW DRIVER
 # ==============================================================================
 def post(p, b, tok="t"):
-    req = urllib.request.Request(U + p + f"?k={tok}", json.dumps(b).encode("utf-8"), method="POST")
+    req = urllib.request.Request(U + p + f"?k={tok}", json.dumps(b).encode("utf-8"), headers={"X-Mersad-Token": tok}, method="POST")
     return json.loads(urllib.request.urlopen(req).read())
 
 def get(p, tok="t"):
@@ -2642,7 +2645,7 @@ def run_stage2_gap_regression_tests():
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{cl_port}{path}?k={m.bus.token}",
                     data=json.dumps(body).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "X-Mersad-Token": m.bus.token},
                     method="POST"
                 )
                 return json.loads(urllib.request.urlopen(req, timeout=3.0).read())
