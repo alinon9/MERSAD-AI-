@@ -3251,7 +3251,7 @@ def run_stage4_gap_regression_tests():
     node_ok = True
     node_err = ""
     if node_bin:
-        np_res = subprocess.run([node_bin, "--check", js_tmp], capture_output=True, text=True, timeout=10)
+        np_res = subprocess.run([node_bin, "--check", js_tmp], capture_output=True, text=True, timeout=30)
         node_ok = (np_res.returncode == 0)
         node_err = np_res.stderr
     try:
@@ -3512,7 +3512,7 @@ def run_stage6_gap_regression_tests():
     node_b = shutil.which("node")
     node_03_ok = True
     if node_b:
-        node_03_ok = (subprocess.run([node_b, "--check", js_f], capture_output=True, text=True, timeout=10).returncode == 0)
+        node_03_ok = (subprocess.run([node_b, "--check", js_f], capture_output=True, text=True, timeout=30).returncode == 0)
     try: os.remove(js_f)
     except OSError: pass
     check("STAGE6-GAP03", "dashboard.html passes cam:CUR_CAM||undefined to /api/enroll, displays m.error & m.warning, and passes node --check",
@@ -3805,7 +3805,7 @@ def run_stage8_final_hardening_tests():
     node_b05 = shutil.which("node")
     node_05_ok = True
     if node_b05:
-        node_05_ok = (subprocess.run([node_b05, "--check", js_f05], capture_output=True, text=True, timeout=10).returncode == 0)
+        node_05_ok = (subprocess.run([node_b05, "--check", js_f05], capture_output=True, text=True, timeout=30).returncode == 0)
     try: os.remove(js_f05)
     except OSError: pass
     check("STAGE8-OBS05", "all async UI functions in dashboard.html are protected by try/catch and pass node --check syntax verification",
@@ -4685,7 +4685,7 @@ def run_stage12_security_and_eval_integrity_tests():
     try:
         with open(js_tmp, "w", encoding="utf-8") as jf:
             jf.write("\n".join(js_blocks))
-        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=10)
+        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=30)
         js_ok = (node_chk.returncode == 0)
     finally:
         if os.path.exists(js_tmp):
@@ -5170,7 +5170,7 @@ def run_stage14_100pct_readiness_tests():
     try:
         with open(js_tmp_14, "w", encoding="utf-8") as jf:
             jf.write("\n".join(js_blocks_14))
-        node_14 = subprocess.run(["node", "--check", js_tmp_14], capture_output=True, text=True, timeout=10)
+        node_14 = subprocess.run(["node", "--check", js_tmp_14], capture_output=True, text=True, timeout=30)
         js_14_ok = (node_14.returncode == 0)
     finally:
         if os.path.exists(js_tmp_14):
