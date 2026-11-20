@@ -82,6 +82,61 @@ class MersadBatch2SecurityTests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def test_post_malformed_json_returns_http_400(self):
+        route = "/api/batch2-test-malformed"
+        mersad_server.bus.post[route] = lambda payload, ip: {"ok": True}
+        try:
+            status, _, _ = self.request(
+                route,
+                method="POST",
+                headers={
+                    "X-Mersad-Token": "batch2-server-test-secret",
+                    "Content-Type": "application/json",
+                },
+                data=b"{",
+            )
+            self.assertEqual(status, 400)
+        finally:
+            mersad_server.bus.post.pop(route, None)
+
+    def test_post_unexpected_handler_exception_returns_http_500(self):
+        route = "/api/batch2-test-exception"
+        def fail_handler(payload, ip):
+            raise RuntimeError("private implementation detail")
+        mersad_server.bus.post[route] = fail_handler
+        try:
+            status, _, body = self.request(
+                route,
+                method="POST",
+                headers={
+                    "X-Mersad-Token": "batch2-server-test-secret",
+                    "Content-Type": "application/json",
+                },
+                data=b"{}",
+            )
+            self.assertEqual(status, 500)
+            self.assertNotIn(b"private implementation detail", body)
+        finally:
+            mersad_server.bus.post.pop(route, None)
+
+    def test_post_handled_business_rejection_remains_json_http_200(self):
+        route = "/api/batch2-test-business"
+        mersad_server.bus.post[route] = lambda payload, ip: {"ok": False, "reason": "not-applicable"}
+        try:
+            status, _, body = self.request(
+                route,
+                method="POST",
+                headers={
+                    "X-Mersad-Token": "batch2-server-test-secret",
+                    "Content-Type": "application/json",
+                },
+                data=b"{}",
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(__import__("json").loads(body.decode("utf-8"))["ok"])
+        finally:
+            mersad_server.bus.post.pop(route, None)
+
     def test_lan_startup_rejects_missing_tls_before_binding(self):
         with mock.patch.dict(
             os.environ,
