@@ -4355,6 +4355,8 @@ def main():
     ap.add_argument("--truck-curfew", default=cfg["truck_curfew"], help="restricted hours for trucks, e.g. 22-5")
     ap.add_argument("--port", type=int, default=cfg["port"])
     ap.add_argument("--token")
+    ap.add_argument("--tls-cert", default=os.environ.get("MERSAD_TLS_CERT"), help="TLS certificate PEM (required for LAN binding)")
+    ap.add_argument("--tls-key", default=os.environ.get("MERSAD_TLS_KEY"), help="TLS private key PEM (required for LAN binding)")
     ap.add_argument("--face-score", type=float, default=cfg["face_score"], help="min cosine similarity to raise a face alert")
     ap.add_argument("--face-detect-score", type=float, default=cfg.get("face_detect_score", 0.65), help="YuNet face detection score threshold (default 0.65)")
     ap.add_argument("--retention-days", type=float, default=cfg.get("evidence_retention_days", 30))
@@ -4386,6 +4388,23 @@ def main():
             a.host = cfg["host"] = "127.0.0.1"
         cfg["first_run_done"] = True
         save_cfg(cfg)
+
+    # Never expose the dashboard secret in a URL or console. Require the operator
+    # to supply a durable token once and pass it through the login dialog in the UI.
+    dashboard_token = str(
+        a.token or os.environ.get("MERSAD_DASHBOARD_TOKEN") or cfg.get("dashboard_token") or ""
+    ).strip()
+    if not dashboard_token:
+        if sys.stdin and sys.stdin.isatty():
+            import getpass
+            dashboard_token = getpass.getpass("MERSAD dashboard access token (will not be echoed): ").strip()
+        if not dashboard_token:
+            raise SystemExit(
+                "Dashboard authentication is required. Set MERSAD_DASHBOARD_TOKEN, configure dashboard_token, or pass --token."
+            )
+    bus.token = dashboard_token
+    # Fail before opening cameras or starting workers if LAN security is incomplete.
+    _build_server_tls_context(a.host, getattr(a, "tls_cert", None), getattr(a, "tls_key", None))
 
     if len(sources) > 1:
         SESSION_ID = "multi:" + uuid.uuid4().hex[:8]
@@ -4480,10 +4499,6 @@ def main():
         logger.warning("Face models unavailable in degraded preview mode: %s", e_face)
         det = type("_NoopDet", (), {"setInputSize": lambda self, s: None, "detect": lambda self, f: (0, None)})()
         rec = type("_NoopRec", (), {"alignCrop": lambda self, f, b: f[:10, :10], "feature": lambda self, a: np.zeros((1, 128), np.float32), "match": lambda self, a, b, fl: 0.0})()
-    if a.token:
-        bus.token = a.token
-    elif cfg.get("dashboard_token"):
-        bus.token = str(cfg["dashboard_token"])
     FACE_ALERT[0] = a.face_score
     if INS:
         threading.Thread(target=INS.train, daemon=True).start()
@@ -4724,9 +4739,13 @@ def main():
 
     _main_runtime_ctrl = _MainLoopRuntimeController()
     _ACTIVE_ENGINE_CONTROLLER = _main_runtime_ctrl
-    srv = start_server(a.port, host=a.host)
+    srv = start_server(
+        a.port, host=a.host,
+        tls_cert=getattr(a, "tls_cert", None),
+        tls_key=getattr(a, "tls_key", None),
+    )
     if cfg.get("open_browser") and not a.no_window:
-        webbrowser.open(f"http://127.0.0.1:{a.port}/?k={bus.token}")
+        webbrowser.open(srv.local_url)
 
     print("Faces are matched ONLY against volunteers who gave consent. Bystander faces in evidence photos are blurred.")
 
@@ -5013,6 +5032,12 @@ def main():
             _ACTIVE_ENGINE_CONTROLLER = None
         wait_for_pending_inference(timeout=2.0)
         stop_ev.set()
+        if not getattr(srv, "stop_event", None) is None:
+            srv.stop_event.set()
+        try:
+            wait_listener_stopped(timeout=8.0)
+        except Exception:
+            pass
         with _RUNTIME_STATE_LOCK:
             fin_cam_states = list(cam_states.values())
         for st_fin in fin_cam_states:
@@ -5050,8 +5075,14 @@ def main():
         if gui_enabled:
             try: cv2.destroyAllWindows()
             except Exception: pass
-        try: srv.shutdown()
-        except Exception: pass
+        try:
+            srv.shutdown()
+        except Exception:
+            pass
+        try:
+            srv.server_close()
+        except Exception:
+            pass
 
 
 def _levenshtein_distance(s1, s2):
