@@ -434,27 +434,97 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
 
+    @staticmethod
+    def _parse_authority(authority: str):
+        """Parse a strict Host/Origin authority, including bracketed IPv6 and optional port."""
+        raw = str(authority or "").strip()
+        if not raw or any(ord(ch) < 33 or ord(ch) == 127 for ch in raw) or "%" in raw:
+            return None
+        try:
+            parsed = urllib.parse.urlsplit("//" + raw)
+            if parsed.username is not None or parsed.password is not None or parsed.path or parsed.query or parsed.fragment:
+                return None
+            hostname = parsed.hostname
+            port = parsed.port
+            if not hostname:
+                return None
+            try:
+                hostname = ipaddress.ip_address(hostname).compressed
+            except ValueError:
+                hostname = hostname.rstrip(".").lower()
+                if not hostname or any(not part or len(part) > 63 for part in hostname.split(".")):
+                    return None
+            return hostname, port
+        except (ValueError, UnicodeError):
+            return None
+
+    def _allowed_local_hosts(self):
+        """Build a local-only Host allowlist; never trust arbitrary DNS names on wildcard binds."""
+        allowed = {"127.0.0.1", "localhost", "::1"}
+        server_host = str(self.server.server_address[0] or "").lower()
+        if server_host not in ("0.0.0.0", "::", ""):
+            parsed_server = self._parse_authority(server_host)
+            if parsed_server:
+                allowed.add(parsed_server[0])
+        else:
+            try:
+                for info in socket.getaddrinfo(socket.gethostname(), None, type=socket.SOCK_STREAM):
+                    ip_text = str(info[4][0]).split("%", 1)[0]
+                    try:
+                        allowed.add(ipaddress.ip_address(ip_text).compressed)
+                    except ValueError:
+                        pass
+            except OSError:
+                pass
+            try:
+                lan_ip = socket.gethostbyname(socket.gethostname())
+                allowed.add(ipaddress.ip_address(lan_ip).compressed)
+            except (OSError, ValueError):
+                pass
+        for item in os.environ.get("MERSAD_LAB_ALLOWED_HOSTS", "").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            parsed_item = self._parse_authority(item)
+            if parsed_item and parsed_item[1] is None:
+                allowed.add(parsed_item[0])
+        return allowed
+
     def _validate_host_and_origin(self, is_post: bool = False) -> bool:
-        """Protect local loopback service against DNS Rebinding, Origin: null, and Cross-Origin/Cross-Port CSRF."""
-        host_hdr = (self.headers.get("Host") or "").strip().lower()
-        if host_hdr:
-            host_only = host_hdr.split(":")[0].strip("[]")
-            allowed_hosts = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
-            srv_host = str(self.server.server_address[0]).lower()
-            if srv_host not in ("0.0.0.0", ""):
-                allowed_hosts.add(srv_host)
-            if host_only not in allowed_hosts:
-                self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة (DNS Rebinding Protection)"}, code=403)
-                return False
+        """Fail closed on malformed/untrusted Host and enforce same-origin browser mutations."""
+        host_hdr = (self.headers.get("Host") or "").strip()
+        host_parts = self._parse_authority(host_hdr)
+        server_port = int(self.server.server_address[1])
+        if not host_parts:
+            self._json({"ok": False, "error": "رفض الطلب: ترويسة Host مفقودة أو غير صالحة"}, code=403)
+            return False
+        host_only, host_port = host_parts
+        if host_only not in self._allowed_local_hosts():
+            self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة (DNS Rebinding Protection)"}, code=403)
+            return False
+        effective_host_port = host_port if host_port is not None else (80 if server_port == 80 else 443 if server_port == 443 else None)
+        if effective_host_port != server_port:
+            self._json({"ok": False, "error": "رفض الطلب: منفذ Host لا يطابق منفذ الخادم"}, code=403)
+            return False
 
         origin_hdr = (self.headers.get("Origin") or "").strip()
         if origin_hdr:
             if origin_hdr.lower() == "null":
                 self._json({"ok": False, "error": "رفض الطلب: المصدر Origin: null غير مسموح (CSRF Protection)"}, code=403)
                 return False
-            parsed_orig = urllib.parse.urlparse(origin_hdr)
-            orig_netloc = (parsed_orig.netloc or "").strip().lower()
-            if not orig_netloc or (host_hdr and orig_netloc != host_hdr):
+            try:
+                parsed_origin = urllib.parse.urlsplit(origin_hdr)
+                if parsed_origin.scheme.lower() not in ("http", "https") or parsed_origin.path or parsed_origin.query or parsed_origin.fragment:
+                    raise ValueError("invalid Origin")
+                origin_parts = self._parse_authority(parsed_origin.netloc)
+                if not origin_parts:
+                    raise ValueError("invalid Origin authority")
+                origin_host, origin_port = origin_parts
+                effective_origin_port = origin_port if origin_port is not None else (443 if parsed_origin.scheme.lower() == "https" else 80)
+            except (ValueError, UnicodeError):
+                self._json({"ok": False, "error": "رفض الطلب: ترويسة Origin غير صالحة"}, code=403)
+                return False
+            if origin_host != host_only or effective_origin_port != effective_host_port:
                 self._json({"ok": False, "error": "رفض الطلب: تعارض Origin مع Host (Cross-Origin/Cross-Port CSRF Blocked)"}, code=403)
                 return False
 
@@ -465,8 +535,10 @@ class LabRequestHandler(BaseHTTPRequestHandler):
 
         if is_post:
             ctype = (self.headers.get("Content-Type") or "").strip().lower()
-            # Block browser simple-request CSRF (text/plain or application/x-www-form-urlencoded without explicit token header)
-            has_token_hdr = bool(self.headers.get("X-Lab-Token") or self.headers.get("Authorization"))
+            has_token_hdr = bool(self.headers.get("X-Lab-Token") or (self.headers.get("Authorization") or "").lower().startswith("bearer "))
+            if not origin_hdr and not has_token_hdr:
+                self._json({"ok": False, "error": "رفض الطلب: Origin مطلوب أو استخدم X-Lab-Token صراحةً"}, code=403)
+                return False
             if ctype.startswith(("text/plain", "application/x-www-form-urlencoded")) and not has_token_hdr:
                 self._json(
                     {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو multipart/form-data أو X-Lab-Token)"},
@@ -486,9 +558,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             h_tok = auth_hdr[7:].strip()
         c_tok = ""
         if "Cookie" in self.headers:
-            c = http.cookies.SimpleCookie(self.headers["Cookie"])
-            if "mersad_lab_k" in c:
-                c_tok = c["mersad_lab_k"].value
+            c = http.cookies.SimpleCookie()
+            try:
+                c.load(self.headers.get("Cookie", ""))
+                if "mersad_lab_k" in c:
+                    c_tok = c["mersad_lab_k"].value
+            except http.cookies.CookieError:
+                # Malformed cookies must fail closed without crashing request handling.
+                c_tok = ""
 
         # State-changing requests must authenticate with an explicit header.
         # Browser cookies and query-string tokens are never accepted for mutations.
@@ -509,6 +586,10 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        # Local health is intentionally lightweight, but a wildcard/LAN-bound server
+        # requires the configured token before exposing process and camera telemetry.
+        if not self._check_auth(require_for_mutation=False):
+            return
 
         if path in ("/api/health", "/health"):
             tel = get_process_telemetry(self.state.start_time)
@@ -524,9 +605,6 @@ class LabRequestHandler(BaseHTTPRequestHandler):
                 "cameras_count": len(cams),
                 "cameras": cams,
             })
-
-        if not self._check_auth(require_for_mutation=False):
-            return
 
         if path in ("/", "/index.html"):
             idx_path = resolve_lab_asset("index.html")
@@ -804,7 +882,17 @@ class LabServerController:
     """Clean start/stop wrapper around LabHTTPServer with zero hanging threads."""
 
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False):
-        self.state = LabState(token=token, require_auth=require_auth)
+        host_norm = str(host or "").strip().lower()
+        try:
+            is_loopback = ipaddress.ip_address(host_norm).is_loopback
+        except ValueError:
+            is_loopback = host_norm == "localhost"
+        explicit_token = token or os.environ.get("MERSAD_LAB_TOKEN")
+        # Non-loopback binds are denied before a listening socket is opened unless
+        # the operator explicitly supplies a durable secret. LAN mode always requires auth.
+        if not is_loopback and not explicit_token:
+            raise ValueError("LAN binding requires an explicit MERSAD_LAB_TOKEN or --token; refusing to start without authentication.")
+        self.state = LabState(token=explicit_token, require_auth=(require_auth or not is_loopback))
         self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
         self.host, self.port = self.httpd.server_address
         self._thread = None
@@ -838,8 +926,16 @@ def main():
     ap.add_argument("--self-check", action="store_true", help="Run startup self-check and exit 0")
     args = ap.parse_args()
 
-    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.allow_lan:
-        print("[SECURITY ERROR] MERSAD LAB binds to 127.0.0.1 by default. Pass --allow-lan explicitly if LAN binding is required.", file=sys.stderr)
+    try:
+        normalized_host = ipaddress.ip_address(args.host).compressed
+        is_loopback_host = ipaddress.ip_address(normalized_host).is_loopback
+    except ValueError:
+        is_loopback_host = str(args.host).strip().lower() == "localhost"
+    if not is_loopback_host and not args.allow_lan:
+        print("[SECURITY ERROR] MERSAD LAB binds to loopback by default. Pass --allow-lan explicitly for LAN binding.", file=sys.stderr)
+        sys.exit(2)
+    if not is_loopback_host and not (args.token or os.environ.get("MERSAD_LAB_TOKEN")):
+        print("[SECURITY ERROR] LAN mode requires an explicit MERSAD_LAB_TOKEN or --token; no socket was opened.", file=sys.stderr)
         sys.exit(2)
 
     generated_token = not args.token and not os.environ.get("MERSAD_LAB_TOKEN")
