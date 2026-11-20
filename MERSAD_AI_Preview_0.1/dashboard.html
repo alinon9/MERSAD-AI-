@@ -475,7 +475,7 @@ async function loadIns(){
   const demoNote=(!DEMO_MODE&&m.demo_available>0)?` · <span class="chip wn">يوجد ${m.demo_available} سجل محاكاة تجريبي مخفي — فعّل «وضع استعراض بيانات المحاكاة التجريبية» لعرضه</span>`:"";
   $("#ins-st").innerHTML=m.ready?`<span class="chip ${r.includes_demo?'wn':'ok'}">النموذج جاهز (${esc(m.type||m.model_type||"")}) — ${r.includes_demo?'وضع تجريبي (Demo)':'رصد حي فقط (Live)'}</span> تدرّب على <b>${m.n}</b> رصد (${m.live} حقيقي · ${m.demo} تجريبي) · التوقيت ${esc(m.timezone||"")} · آخر تدريب ${fmt(m.trained)}${demoNote}`:`<span class="chip wn">غير مدرَّب (${esc(m.type||"—")}) — ${r.includes_demo?'وضع تجريبي':'رصد حي فقط'}</span> يلزم ${m.min_required||50} رصداً على الأقل (المتوفر حالياً: ${m.n||0}).${demoNote}`;
   const f=r.forecast;$("#ins-fc").innerHTML=f?chart(f.hours):'<p class="mu">لا توجد بيانات كافية للتوقّع في الوضع الحالي.</p>';
-  $("#ins-pk").innerHTML=f?`ساعات الذروة المتوقعة: ${f.peaks.map(x=>`<span class="chip wn">${x}</span>`).join(" ")} · الأعمدة = المتوسط المتوقع، والخط البرتقالي = ${esc(f.band_description_ar||"نطاق التشتت التجريبي (المتوسط ± 1.28×الانحراف المعياري)")} · مستوى الحركة الحالي ×${f.level}`:"";
+  $("#ins-pk").innerHTML=f?`ساعات الذروة المتوقعة: ${f.peaks.map(x=>`<span class="chip wn">${esc(x)}</span>`).join(" ")} · الأعمدة = المتوسط المتوقع، والخط البرتقالي = ${esc(f.band_description_ar||"نطاق التشتت التجريبي (المتوسط ± 1.28×الانحراف المعياري)")} · مستوى الحركة الحالي ×${f.level}`:"";
   const cor=r.corridors||[],pts=r.paths||[];
   $("#ins-cor").innerHTML=`<table><thead><tr><th>المسار (الاتجاه)</th><th>عدد المركبات</th><th>متوسط الانتقال</th><th>حالة المعايرة</th></tr></thead><tbody>${cor.map(c=>`<tr><td><b>${esc(c.route)}</b></td><td>${c.count}</td><td>${c.avg_min} د</td><td>${c.calibrated?'<span class="chip ok">معاير من المستخدم</span>':'<span class="chip wn">افتراضي تجريبي غير معاير</span>'}</td></tr>`).join("")||'<tr><td colspan="4" class="mu">لا توجد انتقالات مسجّلة بين الكاميرات بعد.</td></tr>'}</tbody></table>`;
   $("#ins-pt").innerHTML=`<table><thead><tr><th>اللوحة</th><th>المسار المرصود</th><th>مرات الرصد</th><th>الحالة</th></tr></thead><tbody>${pts.map(p=>`<tr><td>${plate(p.plate)}</td><td><b>${esc(p.route)}</b></td><td>${p.sightings}</td><td>${p.conflict?'<span class="chip er">اشتباه تعارض</span>':'<span class="chip ok">طبيعي</span>'}</td></tr>`).join("")||'<tr><td colspan="4" class="mu">لا توجد مسارات متعدّدة الكاميرات بعد.</td></tr>'}</tbody></table>`;
@@ -532,7 +532,7 @@ async function loadStats(){try{const s=await rJson("/api/stats");
  $("#rb").innerHTML=R(s.det24,"رصد خلال 24 ساعة")+R(s.trucks24,"شاحنات")+R(s.pending,"تنبيهات بانتظار القرار",s.pending>0)+R(s.failed_dispatches||0,"توجيهات لم تصل",(s.failed_dispatches||0)>0)+R(s.alerts,"تنبيهات اليوم")+R(s.confirmed,"مؤكّدة")+R(s.dismissed,"تحقق خاطئ")+R(s.vehicles,"مركبات مسجّلة")+R(s.persons,"أشخاص مسجّلون");
  const cams=s.cameras||{},camNames=Object.keys(cams);
  if(camNames.length>1){
-  $("#cam-sw").innerHTML=camNames.map(cn=>`<button data-cam="${esc(cn)}" class="${(CUR_CAM||camNames[0])==cn?'ok':''}">${esc(cn)} (${cams[cn].status})</button>`).join("");
+  $("#cam-sw").innerHTML=camNames.map(cn=>`<button data-cam="${esc(cn)}" class="${(CUR_CAM||camNames[0])==cn?'ok':''}">${esc(cn)} (${esc(cams[cn].status)})</button>`).join("");
  }else{$("#cam-sw").innerHTML=""}
  const C=(cls,dotOn,t)=>`<span class="chip ${cls}"><span class="dot ${dotOn?"on":""}" style="margin:0"></span>${t}</span>`;
  const camChips=camNames.length?camNames.map(cn=>{const st=cams[cn].status;return C(st=="online"?"ok":st=="reconnecting"?"wn":"er",st=="online",`${esc(cn)}: ${st=="online"?"متصل":st=="reconnecting"?"يعيد الاتصال...":"منقطع"}`)}).join("")
@@ -914,6 +914,72 @@ async function doImportManualCal(file){
   await loadManualCalibrations();
  }catch(e){if($("#fc-msg"))$("#fc-msg").innerHTML=`<span class="chip er">${esc(e.message||"فشل الاستيراد")}</span>`}
 }
+
+
+function dispatchDashboardAction(el){
+ const id=Number(el.dataset.id||0);
+ switch(el.dataset.action){
+  case "ins-train": return insAct("train");
+  case "ins-seed": return insAct("seed");
+  case "ins-clear": return insAct("clear");
+  case "trace-plate": return tracePlate();
+  case "reset-camera-link": return resetCameraLinkForm();
+  case "auto-calibrate-camera-links": return autoCalibrateCameraLinks();
+  case "save-camera-link": return saveCameraLink();
+  case "load-analytics": return loadAnalytics();
+  case "load-camera-health": return loadCameraHealth();
+  case "load-readiness": return loadReadinessReport();
+  case "inspect-eval-dataset": return inspectEvalDataset();
+  case "init-ground-truth": return initFolderGroundTruth();
+  case "start-plate-eval": return startPlateEval();
+  case "cancel-plate-eval": return cancelPlateEval();
+  case "browse-eval-folder": return browseEvalPath("folder","#pe-dataset-path");
+  case "browse-eval-model": return browseEvalPath("file","#pe-plate-model");
+  case "validate-eval-model": return validateEvalModel();
+  case "register-eval-model": return registerEvalModel();
+  case "reset-manual-cal": return resetManualCalForm();
+  case "save-manual-cal": return saveManualCal();
+  case "save-form": return saveForm();
+  case "close-dialog": return $("#dlg")?.close();
+  case "registry-open-form": return openForm(el.dataset.kind);
+  case "decision": return dec(id,el.dataset.choice);
+  case "retry-dispatch": return retryDisp(id);
+  case "edit-camera-link": return editCameraLink(el.dataset.fc,el.dataset.tc);
+  case "delete-camera-link": return delCameraLink(el.dataset.fc,el.dataset.tc);
+  case "toggle-demo-on": return toggleDemoMode(true);
+  case "edit-manual-cal": return editManualCal(id);
+  case "delete-manual-cal": return delManualCal(id);
+ }
+}
+document.addEventListener("click",e=>{
+ const el=e.target.closest("[data-action]");
+ if(!el)return;
+ dispatchDashboardAction(el);
+});
+document.addEventListener("change",e=>{
+ const el=e.target.closest("[data-action]");
+ if(!el)return;
+ switch(el.dataset.action){
+  case "toggle-demo-mode": toggleDemoMode(el.checked);break;
+  case "import-camera-links": doImportCameraLinks(el.files&&el.files[0]);el.value="";break;
+  case "upload-eval-dataset": uploadEvalDataset(el.files);el.value="";break;
+  case "import-manual-cal": doImportManualCal(el.files&&el.files[0]);el.value="";break;
+  case "registry-import": doImport(el.dataset.kind,el.files&&el.files[0]);el.value="";break;
+  case "load-camera-links": loadCameraLinks();break;
+ }
+});
+document.addEventListener("input",e=>{
+ const el=e.target.closest("[data-action]");
+ if(!el)return;
+ if(el.dataset.action==="registry-search")load(el.dataset.kind);
+ else if(el.dataset.action==="load-camera-links")loadCameraLinks();
+});
+document.addEventListener("keydown",e=>{
+ if(e.target&&e.target.dataset&&e.target.dataset.action==="trace-enter"&&e.key==="Enter"){
+  e.preventDefault();tracePlate();
+ }
+});
+$("#dlg-f")?.addEventListener("submit",e=>e.preventDefault());
 
 loadStats();setInterval(loadStats,4000);
 </script>
