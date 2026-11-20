@@ -451,10 +451,14 @@ class H(BaseHTTPRequestHandler):
                     return self.send_error(404)
             except json.JSONDecodeError:
                 res = {"ok": False, "error": "صيغة JSON غير صالحة"}
+                response_code = 400
             except Exception as e:
-                log.error("POST %s failed: %s", p, e)
+                log.error("POST %s failed: %s", p, _redact_log_text(e))
                 res = {"ok": False, "error": "تعذّر معالجة الطلب"}
-            self._json(res)
+                response_code = 500
+            else:
+                response_code = 400 if isinstance(res, dict) and res.get("ok") is False else 200
+            self._json(res, code=response_code)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
@@ -522,18 +526,75 @@ def get_lan_ip():
             return "127.0.0.1"
 
 
+def _write_operator_token_file():
+    """Persist the operator credential outside the repository; never print the secret."""
+    root = os.environ.get("MERSAD_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".mersad")
+    os.makedirs(root, exist_ok=True)
+    path = os.environ.get("MERSAD_TOKEN_FILE") or os.path.join(root, "session.token")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(str(bus.token) + "\n")
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
 def start_server(port=8000, host="127.0.0.1"):
-    """Start HTTP server. Binds to 127.0.0.1 by default for security unless host='0.0.0.0' is explicitly passed."""
+    """Start locally by default; non-loopback interfaces are TLS-only and host-allowlisted."""
+    is_loopback = _is_loopback_bind(host)
+    tls_context = None
+    if not is_loopback:
+        cert_file = os.environ.get("MERSAD_TLS_CERT", "").strip()
+        key_file = os.environ.get("MERSAD_TLS_KEY", "").strip()
+        if not cert_file or not key_file or not os.path.isfile(cert_file) or not os.path.isfile(key_file):
+            raise RuntimeError("LAN mode is disabled without valid MERSAD_TLS_CERT and MERSAD_TLS_KEY files")
+        allowed_hosts = _configured_allowed_hosts()
+        lan_ip = get_lan_ip() if str(host).strip() in ("0.0.0.0", "::") else _normalize_host_name(host)
+        if not allowed_hosts or lan_ip not in allowed_hosts:
+            raise RuntimeError("LAN mode requires MERSAD_ALLOWED_HOSTS to explicitly include the served LAN address")
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer.allow_reuse_address = True
+    bus.stop_event.clear()
     srv = ThreadingHTTPServer((host, port), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    local_url = f"http://127.0.0.1:{port}/?k={bus.token}"
-    if host == "0.0.0.0":
-        lan_ip = get_lan_ip()
-        lan_url = f"http://{lan_ip}:{port}/?k={bus.token}"
-        print(f"\nDashboard URLs:\n  Local (هذا الجهاز):      {local_url}\n  LAN / Phone (الجوالات): {lan_url}")
-        print("  ⚠️ تنبيه أمني: الرمز السري يمر نصاً عبر HTTP على الشبكة المحلية. استخدم شبكة واي فاي موثوقة فقط.\n")
-    else:
-        print(f"\nDashboard URL (Local only — 127.0.0.1):\n  {local_url}\n  (لتفعيل الوصول من الجوالات على نفس الشبكة استخدم RUN_LAN.bat أو --host 0.0.0.0)\n")
+    if tls_context is not None:
+        srv.socket = tls_context.wrap_socket(srv.socket, server_side=True)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True, name="mersad-http")
+    srv._mersad_thread = thread
+    thread.start()
+
+    token_file = _write_operator_token_file()
+    scheme = "https" if tls_context is not None else "http"
+    print(f"\nDashboard URL: {scheme}://127.0.0.1:{srv.server_address[1]}/")
+    if not is_loopback:
+        lan_ip = get_lan_ip() if str(host).strip() in ("0.0.0.0", "::") else str(host)
+        print(f"LAN Dashboard URL: https://{lan_ip}:{srv.server_address[1]}/")
+    print(f"Access credential file: {token_file}")
+    print("For first sign-in, append ?k=<contents of session.token> once; the server immediately redirects and clears the URL.")
     return srv
+
+
+def stop_server(server, timeout=5.0):
+    """Stop request loops, close the listener, and join the serving thread."""
+    if server is None:
+        return
+    bus.stop_event.set()
+    try:
+        server.shutdown()
+    finally:
+        server.server_close()
+    thread = getattr(server, "_mersad_thread", None)
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=max(0.0, float(timeout)))
