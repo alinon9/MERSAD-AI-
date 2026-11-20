@@ -1,7 +1,7 @@
 """Tiny dependency-free web server: live MJPEG video (per-camera support) + Server-Sent Events + registry & path-tracking API.
 Supports HttpOnly session cookie (with 302 redirect on first ?k=TOKEN visit to strip token from URL)
 while retaining full backward compatibility with ?k=TOKEN query parameters."""
-import http.cookies, json, logging, os, queue, secrets, socket, sys, threading, time
+import http.cookies, ipaddress, json, logging, os, queue, re, secrets, socket, ssl, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -121,18 +121,145 @@ class H(BaseHTTPRequestHandler):
 
     def arg(self, k): return parse_qs(urlparse(self.path).query).get(k, [""])[0]
 
+    @staticmethod
+    def _parse_authority(authority):
+        raw = str(authority or "").strip()
+        if not raw or "%" in raw or any(ord(ch) < 33 or ord(ch) == 127 for ch in raw):
+            return None
+        try:
+            parsed = urlparse("//" + raw)
+            if parsed.username is not None or parsed.password is not None or parsed.path or parsed.params or parsed.query or parsed.fragment:
+                return None
+            hostname = parsed.hostname
+            port = parsed.port
+            if not hostname:
+                return None
+            try:
+                hostname = ipaddress.ip_address(hostname).compressed
+            except ValueError:
+                hostname = hostname.rstrip(".").lower()
+                if not hostname or any(not part or len(part) > 63 for part in hostname.split(".")):
+                    return None
+            return hostname, port
+        except (ValueError, UnicodeError):
+            return None
+
+    def _allowed_hosts(self):
+        """Exact local Host allowlist for the current bind; wildcard binds admit local interface IPs only."""
+        allowed = {"localhost", "127.0.0.1", "::1"}
+        bound = str(self.server.server_address[0] or "").lower().split("%", 1)[0]
+        if bound not in ("0.0.0.0", "::", ""):
+            try:
+                allowed.add(ipaddress.ip_address(bound).compressed)
+            except ValueError:
+                allowed.add(bound.rstrip("."))
+        else:
+            try:
+                for info in socket.getaddrinfo(socket.gethostname(), None, type=socket.SOCK_STREAM):
+                    ip_text = str(info[4][0]).split("%", 1)[0]
+                    try:
+                        allowed.add(ipaddress.ip_address(ip_text).compressed)
+                    except ValueError:
+                        pass
+            except OSError:
+                pass
+            try:
+                allowed.add(ipaddress.ip_address(get_lan_ip()).compressed)
+            except (OSError, ValueError):
+                pass
+        for item in os.environ.get("MERSAD_ALLOWED_HOSTS", "").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            parsed = self._parse_authority(item)
+            if parsed and parsed[1] is None:
+                allowed.add(parsed[0])
+        return allowed
+
+    def _validate_host(self):
+        host_hdr = self.headers.get("Host", "")
+        parts = self._parse_authority(host_hdr)
+        if not parts:
+            self._json({"ok": False, "error": "Invalid or missing Host header"}, code=403)
+            return False
+        hostname, port = parts
+        server_port = int(self.server.server_address[1])
+        if hostname not in self._allowed_hosts() or (port is not None and port != server_port):
+            self._json({"ok": False, "error": "Untrusted Host header (DNS rebinding protection)"}, code=403)
+            return False
+        return True
+
+    def _validate_origin(self, is_post=False):
+        origin = (self.headers.get("Origin") or "").strip()
+        host_parts = self._parse_authority(self.headers.get("Host", ""))
+        if not host_parts:
+            self._json({"ok": False, "error": "Invalid Host header"}, code=403)
+            return False
+        host_name, host_port = host_parts
+        if host_port is None:
+            host_port = int(self.server.server_address[1])
+        if origin:
+            if origin.lower() == "null":
+                self._json({"ok": False, "error": "Origin: null is not allowed"}, code=403)
+                return False
+            try:
+                parsed = urlparse(origin)
+                if parsed.scheme.lower() not in ("http", "https") or parsed.path or parsed.params or parsed.query or parsed.fragment:
+                    raise ValueError("invalid origin")
+                origin_parts = self._parse_authority(parsed.netloc)
+                if not origin_parts:
+                    raise ValueError("invalid origin authority")
+                origin_name, origin_port = origin_parts
+                if origin_port is None:
+                    origin_port = 443 if parsed.scheme.lower() == "https" else 80
+            except (ValueError, UnicodeError):
+                self._json({"ok": False, "error": "Invalid Origin header"}, code=403)
+                return False
+            if origin_name != host_name or origin_port != host_port:
+                self._json({"ok": False, "error": "Origin does not match Host (cross-origin/cross-port request blocked)"}, code=403)
+                return False
+            if bool(getattr(self.server, "is_tls", False)) != (parsed.scheme.lower() == "https"):
+                self._json({"ok": False, "error": "Origin scheme does not match server transport"}, code=403)
+                return False
+        elif is_post:
+            has_header_token = bool(self.headers.get("X-Mersad-Token") or
+                                    (self.headers.get("Authorization") or "").lower().startswith("bearer "))
+            if self.headers.get("Cookie") and not has_header_token:
+                self._json({"ok": False, "error": "Origin is required for cookie-authenticated POST requests"}, code=403)
+                return False
+
+        if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() == "cross-site":
+            self._json({"ok": False, "error": "Cross-site request blocked"}, code=403)
+            return False
+
+        if is_post:
+            ctype = (self.headers.get("Content-Type") or "").strip().lower()
+            has_header_token = bool(self.headers.get("X-Mersad-Token") or
+                                    (self.headers.get("Authorization") or "").lower().startswith("bearer "))
+            if ctype.startswith(("text/plain", "application/x-www-form-urlencoded")) and not has_header_token:
+                self._json({"ok": False, "error": "Simple-request CSRF blocked"}, code=403)
+                return False
+        return True
+
     def _cookie_token(self):
         raw_c = self.headers.get("Cookie", "")
         if not raw_c:
             return ""
+        c = http.cookies.SimpleCookie()
         try:
-            c = http.cookies.SimpleCookie()
             c.load(raw_c)
             if "mersad_k" in c:
                 return c["mersad_k"].value
-        except Exception:
-            pass
+        except http.cookies.CookieError:
+            log.warning("Rejected malformed session cookie from %s", self.client_address[0])
         return ""
+
+    def _header_token(self):
+        token = (self.headers.get("X-Mersad-Token") or "").strip()
+        auth_hdr = (self.headers.get("Authorization") or "").strip()
+        if auth_hdr.lower().startswith("bearer "):
+            token = auth_hdr[7:].strip()
+        return token
 
     def _auth(self):
         client_ip = str(self.client_address[0] if getattr(self, "client_address", None) else "unknown")
@@ -155,7 +282,9 @@ class H(BaseHTTPRequestHandler):
                     code=429,
                 )
                 return None
-        provided = self.arg("k") or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
+        # Query-string tokens are deliberately not accepted. Use an HttpOnly session
+        # cookie or an explicit X-Mersad-Token / Authorization: Bearer header.
+        provided = self._header_token() or self._cookie_token()
         if not provided or not bus.token or not secrets.compare_digest(str(provided), str(bus.token)):
             with bus._lock:
                 if len(bus.auth_failures) >= 1024 and client_ip not in bus.auth_failures:
@@ -187,15 +316,27 @@ class H(BaseHTTPRequestHandler):
 
     def _send(self, body, ctype="text/html; charset=utf-8", headers=None, code=200):
         try:
+            is_html = ctype.lower().startswith("text/html")
+            nonce = secrets.token_urlsafe(18) if is_html else ""
+            if is_html:
+                body = re.sub(
+                    rb"<script(?=[\\s>])",
+                    lambda _m: b'<script nonce="' + nonce.encode("ascii") + b'"',
+                    body,
+                    flags=re.IGNORECASE,
+                )
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
+            script_policy = f"script-src 'self' 'nonce-{nonce}'" if is_html else "script-src 'self'"
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+                + script_policy
+                + "; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
             )
             self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
@@ -205,9 +346,18 @@ class H(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
-    def _json(self, o, code=200):
-        self._send(json.dumps(o, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", code=code)
+    def _json(self, o, code=200, headers=None):
+        self._send(json.dumps(o, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", headers=headers, code=code)
 
+    def _create_session(self):
+        provided = self._header_token()
+        if not provided or not bus.token or not secrets.compare_digest(provided, str(bus.token)):
+            self._json({"ok": False, "error": "رمز الدخول غير صالح"}, code=401)
+            return
+        secure_flag = "; Secure" if bool(getattr(self.server, "is_tls", False)) else ""
+        cookie = f"mersad_k={bus.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure_flag}"
+        self._json({"ok": True, "authenticated": True}, headers={"Set-Cookie": cookie})
+        
     def _serve_evidence(self, req_path):
         """Strictly prevent path traversal and symlinks; serve .jpg from evidence/ or evidence_archive/."""
         raw_rel = unquote(req_path[len("/evidence/"):])
