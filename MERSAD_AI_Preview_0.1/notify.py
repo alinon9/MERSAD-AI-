@@ -4,7 +4,7 @@ Env: TELEGRAM_TOKEN (from @BotFather) | TELEGRAM_CHAT_ID (operations room) | TEL
 Never logs or exposes TELEGRAM_TOKEN or RTSP passwords in errors or logs.
 Enforces single-owner OS lock on getUpdates listener so multiple processes never compete on the same bot token.
 Records outcome metadata (ok / uncertain timeout / error) in LAST_SEND_OUTCOMES for P0-B dispatch lease recovery."""
-import hashlib, json, logging, os, re, socket, threading, time, urllib.error, urllib.request, uuid
+import hashlib, ipaddress, json, logging, os, re, socket, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 
 try:
     import fcntl
@@ -37,6 +37,52 @@ def _redact(msg):
     return s
 
 
+def _validate_telegram_api_base(api_base=None):
+    """Permit Telegram's HTTPS endpoint or explicit HTTPS allowlisted hosts only."""
+    raw = str(api_base or os.getenv("TELEGRAM_API", "https://api.telegram.org")).strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        if parsed.username or parsed.password or not parsed.hostname or parsed.query or parsed.fragment:
+            raise ValueError("invalid Telegram API endpoint")
+        if parsed.path not in ("", "/"):
+            raise ValueError("Telegram API base path is not allowed")
+        host = parsed.hostname.rstrip(".").lower()
+        port = parsed.port
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("Invalid TELEGRAM_API endpoint") from exc
+
+    if parsed.scheme.lower() == "https":
+        allowed_hosts = {"api.telegram.org"}
+        allowed_hosts.update(
+            item.strip().lower().rstrip(".")
+            for item in os.getenv("TELEGRAM_ALLOWED_HOSTS", "").split(",")
+            if item.strip()
+        )
+        if host not in allowed_hosts or port not in (None, 443):
+            raise ValueError("TELEGRAM_API must use an HTTPS host and port in the explicit allowlist")
+        return raw
+
+    if parsed.scheme.lower() == "http" and os.getenv("MERSAD_TELEGRAM_TEST_MODE") == "1":
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = host == "localhost"
+        if is_loopback and port is not None:
+            return raw
+    raise ValueError("TELEGRAM_API must use HTTPS; HTTP is allowed only for explicit loopback self-tests")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # The bot token is embedded in the Telegram API path; never forward it to redirects.
+        return None
+
+
+def _open_telegram_request(req, timeout):
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    return opener.open(req, timeout=timeout)
+
+
 def _is_timeout_error(err):
     if isinstance(err, (TimeoutError, socket.timeout)):
         return True
@@ -66,13 +112,14 @@ def _call(method, fields=None, files=None, timeout=15, retries=2):
     if not tok:
         raise RuntimeError("TELEGRAM_TOKEN is not configured")
     body, ct = multipart(fields or {}, files)
-    url = f"{os.getenv('TELEGRAM_API', 'https://api.telegram.org').rstrip('/')}/bot{tok}/{method}"
+    api_base = _validate_telegram_api_base()
+    url = f"{api_base}/bot{tok}/{method}"
     last_err = None
     timed_out = False
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, body, {"Content-Type": ct})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _open_telegram_request(req, timeout=timeout) as resp:
                 raw = resp.read()
             res = json.loads(raw)
             if not res.get("ok", True):
@@ -291,8 +338,8 @@ def start_listener(on_press, stop_event=None):
                 try:
                     r = _call(
                         "getUpdates",
-                        {"offset": off, "timeout": 15, "allowed_updates": json.dumps(["callback_query"])},
-                        timeout=20,
+                        {"offset": off, "timeout": 5, "allowed_updates": json.dumps(["callback_query"])},
+                        timeout=8,
                         retries=0
                     )
                     allowed_users = {
@@ -326,7 +373,10 @@ def start_listener(on_press, stop_event=None):
                                 log.debug("editMessageReplyMarkup failed: %s", _redact(e))
                 except Exception as e:
                     log.debug("Listener poll error: %s", _redact(e))
-                    time.sleep(2)
+                    if stop_event is None:
+                        time.sleep(0.5)
+                    else:
+                        stop_event.wait(timeout=0.5)
         finally:
             _release_listener_lock(lock_fd)
             _LISTENER_DONE.set()
