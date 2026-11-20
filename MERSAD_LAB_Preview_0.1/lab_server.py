@@ -564,7 +564,7 @@ class LabRequestHandler(BaseHTTPRequestHandler):
                 name, sep, value = pair.partition("=")
                 if (
                     not sep
-                    or not re.fullmatch(r"[!#$%&'*+\\-.^_`|~0-9A-Za-z]+", name.strip())
+                    or not re.fullmatch(r"[!#$%&'*+.^_|~0-9A-Za-z-]+", name.strip())
                     or any(ord(ch) < 0x21 or ord(ch) == 0x7f for ch in value.strip())
                 ):
                     self._json({"ok": False, "error": "ترويسة Cookie غير صالحة"}, code=400)
