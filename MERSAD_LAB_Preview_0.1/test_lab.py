@@ -79,7 +79,12 @@ def fail(name: str, detail: str = ""):
 
 
 def _http_req(url: str, method: str = "GET", data: bytes = None, headers: dict = None, timeout: float = 8.0):
-    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    request_headers = dict(headers or {})
+    # Legitimate state-changing requests authenticate explicitly. An empty
+    # X-Lab-Token is preserved for negative authentication/CSRF test cases.
+    if method.upper() == "POST" and "X-Lab-Token" not in request_headers and "Authorization" not in request_headers:
+        request_headers["X-Lab-Token"] = "lab_test_secret_token_2026"
+    req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read()
@@ -281,12 +286,25 @@ def run_all_tests():
         # 9. LAB-SEC-01: Access permissions & token enforcement
         # ------------------------------------------------------------------
         try:
-            # 9a: Invalid token header is always rejected with 401
+            # 9a: Invalid and missing tokens are rejected.
             st_bad, _, _ = _http_req(
                 f"{base_url}/api/cameras",
                 headers={"X-Lab-Token": "wrong_token_999"},
             )
-            # 9b: When require_auth=True, missing token is rejected with 401 and valid token succeeds with 200
+            # 9b: Mutating POSTs require a token even when require_auth=False.
+            st_post_missing, _, _ = _http_req(
+                f"{base_url}/api/cameras/cam1/mode",
+                method="POST",
+                data=json.dumps({"mode": "normal"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "X-Lab-Token": ""},
+            )
+            st_post_good, _, _ = _http_req(
+                f"{base_url}/api/cameras/cam1/mode",
+                method="POST",
+                data=json.dumps({"mode": "normal"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "X-Lab-Token": "lab_test_secret_token_2026"},
+            )
+            # 9c: When require_auth=True, unauthenticated GET is rejected and valid token succeeds.
             ctrl.state.require_auth = True
             try:
                 st_missing, _, _ = _http_req(f"{base_url}/api/cameras")
@@ -296,8 +314,14 @@ def run_all_tests():
                 )
             finally:
                 ctrl.state.require_auth = False
-            assert st_bad == 401 and st_missing == 401 and st_good == 200, f"got {st_bad}/{st_missing}/{st_good}"
-            ok("LAB-SEC-01: Access control & token validation", f"bad_token={st_bad}, missing_token={st_missing}, valid_token={st_good}")
+            assert (
+                st_bad == 401 and st_post_missing == 401 and st_post_good == 200
+                and st_missing == 401 and st_good == 200
+            ), f"got invalid_get={st_bad}, post_missing={st_post_missing}, post_valid={st_post_good}, get_missing={st_missing}, get_valid={st_good}"
+            ok(
+                "LAB-SEC-01: Access control & token validation",
+                f"invalid_get={st_bad}, post_missing={st_post_missing}, post_valid={st_post_good}, get_missing={st_missing}, get_valid={st_good}",
+            )
         except Exception as e:
             fail("LAB-SEC-01: Access control & token validation", str(e))
 
@@ -340,7 +364,7 @@ def run_all_tests():
                 f"{base_url}/api/cameras/cam1/mode",
                 method="POST",
                 data=b'{"mode":"offline"}',
-                headers={"Content-Type": "text/plain"},
+                headers={"Content-Type": "text/plain", "X-Lab-Token": ""},
             )
             assert st_null_origin == 403 and st_sec_fetch == 403 and st_text_plain == 403
             ok("LAB-SEC-03: CSRF & unexpected local access blocked", f"null_origin={st_null_origin}, cross_site={st_sec_fetch}, text_plain={st_text_plain}")
