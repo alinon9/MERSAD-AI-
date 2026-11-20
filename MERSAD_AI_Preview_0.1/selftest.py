@@ -5212,13 +5212,36 @@ def run_stage15_forensic_remediation_tests():
             zf.writestr("archive/version", b"3\n")
             zf.writestr("archive/data/0", b"\x00" * 4096)
 
-        # Calling register_plate_model_api with allow_outside_copy=False (as wired on HTTP POST /api/plate_eval/register_model) must reject outside path
+        # Calling register_plate_model_api with allow_outside_copy=False (as wired on HTTP POST /api/plate_eval/register_model)
+        # must reject outside paths even if request JSON attempts to elevate the permission.
         web_reg = m.register_plate_model_api({"plate_model": ext_pt}, who="http_op", allow_outside_copy=False)
+        web_reg_escalation = m.register_plate_model_api(
+            {"plate_model": ext_pt, "allow_outside_copy": True},
+            who="http_op", allow_outside_copy=False,
+        )
+        web_reg_string_bool = m.register_plate_model_api(
+            {"plate_model": ext_pt, "allow_outside_copy": "false"},
+            who="http_op", allow_outside_copy=False,
+        )
+        startup_src = open(os.path.join(WORK, "mersad_live.py"), encoding="utf-8").read()
+        startup_begin = startup_src.find("    yolo = vyolo = None")
+        startup_end = startup_src.find("    register_shared_engines(reader=reader", startup_begin)
+        startup_block = startup_src[startup_begin:startup_end] if startup_begin >= 0 and startup_end > startup_begin else ""
+        aud003_no_raw_fallback = (
+            "load_verified_yolo_model(" in startup_block
+            and 'YOLO("yolov8n.pt")' not in startup_block
+            and "YOLO('yolov8n.pt')" not in startup_block
+        )
         check(
             "STAGE15-GAP01-MODEL-TRUST-BOUNDARY",
-            "HTTP /api/plate_eval/register_model blocks copying .pt files from outside models/ and enforces trusted directory boundary",
-            web_reg.get("ok") is False and web_reg.get("reason") == "outside_trusted_models_dir_blocked",
-            web_reg,
+            "AUD-003 startup uses only load_verified_yolo_model; AUD-004 prevents JSON permission escalation and rejects non-Boolean values",
+            web_reg.get("ok") is False and web_reg.get("reason") == "outside_trusted_models_dir_blocked"
+            and web_reg_escalation.get("ok") is False
+            and web_reg_escalation.get("reason") == "outside_trusted_models_dir_blocked"
+            and web_reg_string_bool.get("ok") is False
+            and "Boolean" in web_reg_string_bool.get("error", "")
+            and aud003_no_raw_fallback,
+            (web_reg, web_reg_escalation, web_reg_string_bool, aud003_no_raw_fallback),
         )
     finally:
         shutil.rmtree(s15_dir, ignore_errors=True)
