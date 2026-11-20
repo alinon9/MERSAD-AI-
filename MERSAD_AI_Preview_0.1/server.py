@@ -1,9 +1,9 @@
 """Tiny dependency-free web server: live MJPEG video (per-camera support) + Server-Sent Events + registry & path-tracking API.
 Supports HttpOnly session cookie (with 302 redirect on first ?k=TOKEN visit to strip token from URL)
 while retaining full backward compatibility with ?k=TOKEN query parameters."""
-import http.cookies, json, logging, os, queue, secrets, socket, sys, threading, time
+import http.cookies, ipaddress, json, logging, os, queue, re, secrets, socket, ssl, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 BASE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 MAX_UPLOAD = 5_000_000
@@ -55,6 +55,7 @@ class Bus:
         self.auth_block_sec = 60.0
         self.evidence_dir = "evidence"
         self.archive_dir = "evidence_archive"
+        self.stop_event = threading.Event()
 
     def set_frame(self, jpg, cam=None, status="online"):
         now_ts = time.time()
@@ -114,12 +115,74 @@ class Bus:
 bus = Bus()
 
 
+def _normalize_host_name(value):
+    raw = str(value or "").strip().lower().rstrip(".")
+    if not raw or any(ch in raw for ch in ("/", "\\\\", "@", "%")):
+        raise ValueError("invalid host")
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        return raw.encode("idna").decode("ascii").lower()
+
+
+def _configured_allowed_hosts():
+    raw = os.environ.get("MERSAD_ALLOWED_HOSTS", "")
+    return {_normalize_host_name(item) for item in raw.split(",") if item.strip()}
+
+
+def _is_loopback_bind(host):
+    value = str(host or "").strip().lower()
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _redact_log_text(value):
+    text = str(value or "")
+    text = re.sub(r"(?i)((?:rtsp|rtsps|https?)://[^:/\\s]+:)[^@/\\s]+(@)", r"\\1***\\2", text)
+    text = re.sub(r"(?i)([?&](?:k|token)=)[^&\\s]+", r"\\1<REDACTED>", text)
+    token = str(getattr(bus, "token", "") or "")
+    if token:
+        text = text.replace(token, "<REDACTED_TOKEN>")
+    return text
+
+
 class H(BaseHTTPRequestHandler):
     timeout = 15
 
     def log_message(self, *a): pass
 
     def arg(self, k): return parse_qs(urlparse(self.path).query).get(k, [""])[0]
+
+    def _validate_host_header(self):
+        raw = (self.headers.get("Host") or "").strip()
+        if not raw:
+            self._json({"ok": False, "error": "ترويسة Host مطلوبة"}, code=400)
+            return False
+        try:
+            parsed = urlsplit("//" + raw)
+            hostname = _normalize_host_name(parsed.hostname or "")
+            port = parsed.port
+            if parsed.username is not None or parsed.password is not None or parsed.path or parsed.query or parsed.fragment:
+                raise ValueError("invalid Host authority")
+            server_port = int(self.server.server_address[1])
+            if port is not None and port != server_port:
+                raise ValueError("unexpected Host port")
+            allowed = {"127.0.0.1", "localhost", "::1"}
+            bound_host = str(self.server.server_address[0]).lower()
+            if bound_host not in ("0.0.0.0", "::", ""):
+                allowed.add(_normalize_host_name(bound_host))
+            allowed.update(_configured_allowed_hosts())
+        except (ValueError, UnicodeError):
+            self._json({"ok": False, "error": "ترويسة Host غير صالحة"}, code=400)
+            return False
+        if hostname not in allowed:
+            self._json({"ok": False, "error": "ترويسة Host غير موثوقة (DNS Rebinding Blocked)"}, code=403)
+            return False
+        return True
 
     def _cookie_token(self):
         raw_c = self.headers.get("Cookie", "")
@@ -155,7 +218,9 @@ class H(BaseHTTPRequestHandler):
                     code=429,
                 )
                 return None
-        provided = self.arg("k") or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
+        # Query credentials are accepted only for the one-time browser entry URL.
+        query_token = self.arg("k") if self.command == "GET" and urlparse(self.path).path == "/" else ""
+        provided = query_token or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
         if not provided or not bus.token or not secrets.compare_digest(str(provided), str(bus.token)):
             with bus._lock:
                 if len(bus.auth_failures) >= 1024 and client_ip not in bus.auth_failures:
@@ -226,12 +291,15 @@ class H(BaseHTTPRequestHandler):
         self.send_error(404, "Evidence not found")
 
     def do_GET(self):
+        if not self._validate_host_header():
+            return
         p = self._auth()
         if p is None: return
         try:
             if p == "/":
                 if self.arg("k") and self.arg("noredir") != "1":
-                    cookie_val = f"mersad_k={bus.token}; HttpOnly; SameSite=Strict; Path=/"
+                    secure_attr = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
+                    cookie_val = f"mersad_k={bus.token}; HttpOnly; SameSite=Strict; Path=/{secure_attr}"
                     self.send_response(302)
                     self.send_header("Set-Cookie", cookie_val)
                     self.send_header("Location", "/")
@@ -318,15 +386,23 @@ class H(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         except Exception as e:
-            log.error("GET %s failed: %s", p, e)
+            log.error("GET %s failed: %s", p, _redact_log_text(e))
             self._json({"ok": False, "error": "حدث خطأ داخلي في الخادم"}, code=500)
 
     def do_POST(self):
+        if not self._validate_host_header():
+            return
         p = self._auth()
         if p is None: return
         try:
             origin_hdr = self.headers.get("Origin", "").strip()
             host_hdr = self.headers.get("Host", "").strip()
+            has_explicit_auth = bool((self.headers.get("X-Mersad-Token") or "").strip())
+            if not origin_hdr and not has_explicit_auth:
+                return self._json(
+                    {"ok": False, "error": "طلبات POST دون Origin تتطلب ترويسة X-Mersad-Token صريحة"},
+                    code=403,
+                )
             if origin_hdr:
                 if origin_hdr.lower() == "null":
                     return self._json({"ok": False, "error": "رفض الطلب بسبب مصدر غير موثوق (Origin: null CSRF Blocked)"}, code=403)
@@ -346,7 +422,7 @@ class H(BaseHTTPRequestHandler):
             try:
                 with bus._lock:
                     post_fn = bus.post.get(p)
-                has_import_guard = bool(self.arg("k") or self.headers.get("X-Mersad-Token") or self.headers.get("X-Filename"))
+                has_import_guard = bool(self.headers.get("X-Mersad-Token") or self.headers.get("X-Filename"))
                 ctype_low = (self.headers.get("Content-Type") or "").strip().lower()
                 if p in ("/api/import", "/api/camera_links/import", "/api/field_calibrations/import") and (not has_import_guard or ctype_low.startswith("text/plain")):
                     return self._json({"ok": False, "error": "رفض طلب الاستيراد لحماية الجلسة (يتطلب ترويسة X-Filename أو رمز X-Mersad-Token)"}, code=403)
@@ -358,7 +434,7 @@ class H(BaseHTTPRequestHandler):
                     res = bus.on_field_calibrations_import(unquote(self.headers.get("X-Filename", "")), raw, ip)
                 elif post_fn is not None:
                     ctype_hdr = (self.headers.get("Content-Type") or "").strip().lower()
-                    has_explicit_tok = bool(self.arg("k") or self.headers.get("X-Mersad-Token"))
+                    has_explicit_tok = bool(self.headers.get("X-Mersad-Token"))
                     if not has_explicit_tok and not ctype_hdr.startswith("application/json"):
                         return self._json(
                             {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو رمز X-Mersad-Token)"},
@@ -394,7 +470,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             last = -1
             idle_ticks = 0
-            while True:
+            while not bus.stop_event.is_set():
                 cur_fid, b = bus.get_stream_frame(cam)
                 if b is not None and cur_fid != last:
                     last = cur_fid
@@ -422,11 +498,12 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             init = bus.get_init_payload()
             self.wfile.write(f"data: {init}\n\n".encode("utf-8"))
-            while True:
+            while not bus.stop_event.is_set():
                 try:
-                    self.wfile.write(f"data: {q.get(timeout=15)}\n\n".encode("utf-8"))
+                    self.wfile.write(f"data: {q.get(timeout=5)}\n\n".encode("utf-8"))
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
+                    if not bus.stop_event.is_set():
+                        self.wfile.write(b": ping\n\n")
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
         finally:
