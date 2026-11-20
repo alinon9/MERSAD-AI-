@@ -36,7 +36,7 @@ class Bus:
         self.frame, self.fid, self.subs, self.alerts, self.failed_dispatches = None, 0, [], [], []
         self.cam_frames = {}                             # cam_id -> {"jpg": bytes, "fid": int, "status": str, "ts": float}
         self.cam_status = {}                             # cam_id -> str ("online" | "reconnecting" | "offline")
-        self.token = secrets.token_urlsafe(12)
+        self.token = os.environ.get("MERSAD_TOKEN", "").strip() or secrets.token_urlsafe(24)
         self.post = {}                                   # path -> fn(data: dict, ip) -> dict
         self.verify = lambda: "Audit chain OK (0 records)"
         self.on_list = self.on_template = self.on_import = self.on_insights = self.on_stats = self.on_path = None
@@ -218,9 +218,9 @@ class H(BaseHTTPRequestHandler):
                     code=429,
                 )
                 return None
-        # Query credentials are accepted only for the one-time browser entry URL.
-        query_token = self.arg("k") if self.command == "GET" and urlparse(self.path).path == "/" else ""
-        provided = query_token or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
+        # Cookie/header auth is used by the dashboard. Legacy ?k= links remain
+        # accepted for compatibility, but the current dashboard never emits them.
+        provided = self.arg("k") or self._cookie_token() or self.headers.get("X-Mersad-Token", "")
         if not provided or not bus.token or not secrets.compare_digest(str(provided), str(bus.token)):
             with bus._lock:
                 if len(bus.auth_failures) >= 1024 and client_ip not in bus.auth_failures:
