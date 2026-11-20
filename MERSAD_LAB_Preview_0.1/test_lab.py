@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MERSAD LAB 1.0 — PREVIEW 0.1
-Comprehensive Functional & Security Test Suite (22 Checks)
+Comprehensive Functional & Security Test Suite (23 Checks)
 ==========================================================
 Covers:
 A. The 8 Mandatory Core Tests:
@@ -128,7 +128,7 @@ def _create_synthetic_video_bytes(num_frames: int = 12, width: int = 320, height
 
 def run_all_tests():
     print("==================================================================")
-    print("  MERSAD LAB 1.0 (PREVIEW 0.1) — 22-Check Functional & Security Suite")
+    print("  MERSAD LAB 1.0 (PREVIEW 0.1) — 23-Check Functional & Security Suite")
     print("==================================================================")
 
     ctrl = LabServerController(host="127.0.0.1", port=0, token="lab_test_secret_token_2026", require_auth=False)
@@ -648,6 +648,43 @@ def run_all_tests():
             error_ctrl.stop()
     except Exception as e:
         fail("LAB-SEC-14: Generic AI integration 502 response", str(e))
+
+    # ----------------------------------------------------------------------
+    # AUD-009 regression tests: IPv6 Host parsing, malformed Cookie, LAN health auth
+    # ----------------------------------------------------------------------
+    try:
+        ipv6_host = f"[::1]:{ctrl.port}"
+        st_ipv6, _, _ = _http_req(
+            f"{base_url}/api/health",
+            headers={"Host": ipv6_host},
+        )
+        assert st_ipv6 == 200, f"Bracketed IPv6 Host rejected: {st_ipv6}"
+
+        st_bad_cookie, _, _ = _http_req(
+            f"{base_url}/api/cameras",
+            headers={"Cookie": 'mersad_lab_k="unterminated'},
+        )
+        assert st_bad_cookie == 400, f"Malformed Cookie should return 400, got {st_bad_cookie}"
+
+        old_addr = ctrl.httpd.server_address
+        ctrl.httpd.server_address = ("0.0.0.0", old_addr[1])
+        ctrl.state.require_auth = True
+        try:
+            st_lan_health, _, _ = _http_req(f"{base_url}/api/health")
+            st_lan_health_auth, _, _ = _http_req(
+                f"{base_url}/api/health",
+                headers={"X-Lab-Token": "lab_test_secret_token_2026"},
+            )
+        finally:
+            ctrl.state.require_auth = False
+            ctrl.httpd.server_address = old_addr
+        assert st_lan_health == 401 and st_lan_health_auth == 200, (
+            f"LAN health auth statuses: {st_lan_health}/{st_lan_health_auth}"
+        )
+        ok("AUD-009: IPv6 Host, malformed Cookie, and LAN health auth",
+           f"IPv6={st_ipv6}, malformed_cookie={st_bad_cookie}, LAN_health={st_lan_health}/{st_lan_health_auth}")
+    except Exception as e:
+        fail("AUD-009: IPv6 Host, malformed Cookie, and LAN health auth", str(e))
 
     print("==================================================================")
     print(f"  TOTAL: {PASS} PASS, {FAIL} FAIL (Out of {PASS + FAIL} checks)")
