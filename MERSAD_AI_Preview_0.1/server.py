@@ -320,7 +320,7 @@ class H(BaseHTTPRequestHandler):
             nonce = secrets.token_urlsafe(18) if is_html else ""
             if is_html:
                 body = re.sub(
-                    rb"<script(?=[\\s>])",
+                    rb"<script(?=[\s>])",
                     lambda _m: b'<script nonce="' + nonce.encode("ascii") + b'"',
                     body,
                     flags=re.IGNORECASE,
