@@ -3765,6 +3765,7 @@ def run_stage8_final_hardening_tests():
         conn_413 = http.client.HTTPConnection("127.0.0.1", port_04, timeout=5)
         conn_413.putrequest("POST", f"/api/vehicle?k={m.bus.token}")
         conn_413.putheader("Content-Type", "application/json")
+        conn_413.putheader("X-Mersad-Token", m.bus.token)
         conn_413.putheader("Content-Length", str(srv_mod.MAX_UPLOAD + 1024))
         conn_413.endheaders()
         resp_413 = conn_413.getresponse()
@@ -3774,6 +3775,7 @@ def run_stage8_final_hardening_tests():
         conn_400 = http.client.HTTPConnection("127.0.0.1", port_04, timeout=5)
         conn_400.putrequest("POST", f"/api/vehicle?k={m.bus.token}")
         conn_400.putheader("Content-Type", "application/json")
+        conn_400.putheader("X-Mersad-Token", m.bus.token)
         conn_400.putheader("Content-Length", "invalid_len")
         conn_400.endheaders()
         resp_400 = conn_400.getresponse()
@@ -3915,7 +3917,7 @@ def run_stage9_complete_polish_tests():
         c_get404.close()
 
         c_post404 = http.client.HTTPConnection("127.0.0.1", port_03, timeout=5)
-        c_post404.request("POST", f"/api/nonexistent_route?k={m.bus.token}", body=b"{}", headers={"Content-Type": "application/json", "Content-Length": "2"})
+        c_post404.request("POST", f"/api/nonexistent_route?k={m.bus.token}", body=b"{}", headers={"Content-Type": "application/json", "Content-Length": "2", "X-Mersad-Token": m.bus.token})
         r_post404 = c_post404.getresponse()
         b_post404 = json.loads(r_post404.read().decode("utf-8"))
         c_post404.close()
@@ -4308,7 +4310,7 @@ def run_stage11_field_calibration_and_eval_tests():
                 {"name": "u1.jpg", "content_base64": b64_img},
             ]
         }).encode("utf-8")
-        conn_u.request("POST", f"/api/plate_eval/upload_dataset?k={m.bus.token}", body=body_u, headers={"Content-Type": "application/json", "Content-Length": str(len(body_u))})
+        conn_u.request("POST", f"/api/plate_eval/upload_dataset?k={m.bus.token}", body=body_u, headers={"Content-Type": "application/json", "Content-Length": str(len(body_u)), "X-Mersad-Token": m.bus.token})
         resp_u = json.loads(conn_u.getresponse().read().decode("utf-8"))
         conn_u.close()
 
