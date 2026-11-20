@@ -967,6 +967,9 @@ def run_multicam_loop_tests():
     finally:
         globals()["NFR"] = orig_nfr
         CAM_DROP_STATE["reads"].clear()
+        # Reset injected YOLO failures so later independent device-propagation
+        # tests start from a clean deterministic detector state.
+        INJECT_DETECT_EXC["count"] = 0
         with TG["lock"]:
             TG["calls"].clear()
             TG["updates"].clear()
