@@ -124,6 +124,19 @@ def _redact_log_text(value):
     return text[:1600]
 
 
+_LOG_URL_CREDENTIALS = re.compile(r"(?i)\b(rtsp|rtsps|http|https)://([^/@\s:]+):([^/@\s]+)@")
+_LOG_BOT_TOKEN = re.compile(r"(?i)(/bot)[0-9]{5,}:[A-Za-z0-9_-]+")
+_LOG_SECRET_PARAM = re.compile(r"(?i)(token|authorization|password|passwd)=([^&\s]+)")
+
+
+def _redact_log_text(value):
+    text = str(value or "")
+    text = _LOG_URL_CREDENTIALS.sub(r"\1://[REDACTED]@", text)
+    text = _LOG_BOT_TOKEN.sub(r"\1[REDACTED]", text)
+    text = _LOG_SECRET_PARAM.sub(r"\1=[REDACTED]", text)
+    return text[:1600]
+
+
 bus = Bus()
 
 
