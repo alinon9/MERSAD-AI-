@@ -142,8 +142,8 @@ def _is_loopback_bind(host):
 
 def _redact_log_text(value):
     text = str(value or "")
-    text = re.sub(r"(?i)((?:rtsp|rtsps|https?)://[^:/\\s]+:)[^@/\\s]+(@)", r"\\1***\\2", text)
-    text = re.sub(r"(?i)([?&](?:k|token)=)[^&\\s]+", r"\\1<REDACTED>", text)
+    text = re.sub(r"(?i)((?:rtsp|rtsps|https?)://[^:/\s]+:)[^@/\s]+(@)", r"\1***\2", text)
+    text = re.sub(r"(?i)([?&](?:k|token)=)[^&\s]+", r"\1<REDACTED>", text)
     token = str(getattr(bus, "token", "") or "")
     if token:
         text = text.replace(token, "<REDACTED_TOKEN>")
