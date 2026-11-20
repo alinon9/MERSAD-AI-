@@ -536,8 +536,10 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         if is_post:
             ctype = (self.headers.get("Content-Type") or "").strip().lower()
             has_token_hdr = bool(self.headers.get("X-Lab-Token") or (self.headers.get("Authorization") or "").lower().startswith("bearer "))
-            if not origin_hdr and not has_token_hdr:
-                self._json({"ok": False, "error": "رفض الطلب: Origin مطلوب أو استخدم X-Lab-Token صراحةً"}, code=403)
+            # Cookie-authenticated browser writes need a trustworthy Origin;
+            # unauthenticated requests continue to the auth gate and receive 401.
+            if not origin_hdr and self.headers.get("Cookie") and not has_token_hdr:
+                self._json({"ok": False, "error": "رفض الطلب: Origin مطلوب مع مصادقة Cookie؛ استخدم X-Lab-Token صراحةً للعميل البرمجي"}, code=403)
                 return False
             if ctype.startswith(("text/plain", "application/x-www-form-urlencoded")) and not has_token_hdr:
                 self._json(
@@ -735,9 +737,9 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         return raw_body
 
     def do_POST(self):
-        if not self._check_auth(require_for_mutation=True):
-            return
         if not self._validate_host_and_origin(is_post=True):
+            return
+        if not self._check_auth(require_for_mutation=True):
             return
 
         parsed = urllib.parse.urlparse(self.path)
