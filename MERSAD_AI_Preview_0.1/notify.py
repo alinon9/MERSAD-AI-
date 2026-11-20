@@ -6,7 +6,6 @@ Enforces single-owner OS lock on getUpdates listener so multiple processes never
 Records outcome metadata (ok / uncertain timeout / error) in LAST_SEND_OUTCOMES for P0-B dispatch lease recovery."""
 import hashlib, ipaddress, json, logging, os, re, socket, threading, time, urllib.error, urllib.request, uuid
 from urllib.parse import urlsplit
-from urllib.parse import urlsplit
 
 try:
     import fcntl
