@@ -426,7 +426,7 @@ def _is_loopback_bind(host: str) -> bool:
         return False
 
 
-def _validate_lab_bind_policy(host: str, allow_lan: bool) -> None:
+def _validate_lab_bind_policy(host: str, allow_lan: bool, token: str = None) -> None:
     """Fail closed before socket creation when a non-loopback LAB bind is requested."""
     if _is_loopback_bind(host):
         return
@@ -440,8 +440,8 @@ def _validate_lab_bind_policy(host: str, allow_lan: bool) -> None:
         normalized_bind = _normalize_allowed_host(bind_value)
         if normalized_bind not in allowed_hosts:
             raise ValueError("MERSAD_LAB_ALLOWED_HOSTS must include the configured bind address")
-    if not os.environ.get("MERSAD_LAB_TOKEN", "").strip():
-        raise ValueError("LAN binding requires an explicitly configured MERSAD_LAB_TOKEN")
+    if not str(token or os.environ.get("MERSAD_LAB_TOKEN", "")).strip():
+        raise ValueError("LAN binding requires an explicitly configured LAB token (--token or MERSAD_LAB_TOKEN)")
 
 
 class LabHTTPServer(ThreadingHTTPServer):
@@ -883,7 +883,7 @@ class LabServerController:
     """Clean start/stop wrapper around LabHTTPServer with zero hanging threads."""
 
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False, allow_lan: bool = False):
-        _validate_lab_bind_policy(host, allow_lan)
+        _validate_lab_bind_policy(host, allow_lan, token=token)
         self.state = LabState(token=token, require_auth=require_auth, allow_lan=allow_lan)
         self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
         self.host, self.port = self.httpd.server_address
