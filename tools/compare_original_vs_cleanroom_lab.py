@@ -131,7 +131,7 @@ def verify_original_commit(pres_dir: Path) -> dict:
 
 
 def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str) -> dict:
-    """Run the 20-check functional & security test suite against a LAB directory in an isolated subprocess."""
+    """Run the 22-check functional & security test suite against a LAB directory in an isolated subprocess."""
     if not lab_dir.is_dir():
         return {
             "label": label,
@@ -210,7 +210,7 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
         if label == "CleanRoom_LAB_Preview_0.1":
             # The release gate is exactly 20 independent checks; a truncated or
             # partially skipped suite must not pass merely because it has no FAIL lines.
-            status = "PASS" if (proc.returncode == 0 and passed == 20 and failed == 0 and len(checks) == 20) else "FAIL"
+            status = "PASS" if (proc.returncode == 0 and passed == 22 and failed == 0 and len(checks) == 22) else "FAIL"
         else:
             status = "PASS" if (proc.returncode == 0 and passed > 0 and failed == 0) else "FAIL"
         return {
@@ -306,7 +306,7 @@ def main():
     ap.add_argument("--output-md", default=str(Path(__file__).resolve().parent.parent / "reports_and_logs" / "08_ORIGINAL_VS_CLEANROOM_LAB_COMPARISON_AR.md"))
     ap.add_argument("--output-json", default=str(Path(__file__).resolve().parent.parent / "reports_and_logs" / "original_vs_cleanroom_lab_comparison.json"))
     ap.add_argument("--require-unblocked", action="store_true", help="Exit with code 2 if Original LAB commit ed7b8f727243da4878e547f08489af581c83291c is unavailable or comparison is BLOCKED")
-    ap.add_argument("--require-cleanroom-pass", action="store_true", help="Require Clean-Room LAB suite (20/20 PASS) to succeed while recording Original LAB as BLOCKED/NOT_TESTED without aborting the Preview 0.1 build pipeline")
+    ap.add_argument("--require-cleanroom-pass", action="store_true", help="Require Clean-Room LAB suite (22/22 PASS) to succeed while recording Original LAB as BLOCKED/NOT_TESTED without aborting the Preview 0.1 build pipeline")
     args = ap.parse_args()
 
     orig_in = Path(args.original_source).resolve()
@@ -486,12 +486,12 @@ def main():
                 print(f"[PHASE2 CLEANROOM OUTPUT] {line}")
 
     # The original LAB may legitimately remain BLOCKED when the historical source
-    # cannot be restored, but the current Clean-Room LAB must pass all 20 checks.
+    # cannot be restored, but the current Clean-Room LAB must pass all 22 checks.
     if args.require_cleanroom_pass and clean_suite.get("status") != "PASS":
         print(
             f"[FAILED] Clean-Room LAB suite is {clean_suite.get('status')} "
             f"({clean_suite.get('passed', 0)}/{clean_suite.get('total', 0)} PASS); "
-            "required 20/20 PASS before release.",
+            "required 22/22 PASS before release.",
             file=sys.stderr,
         )
         sys.exit(1)

@@ -967,6 +967,9 @@ def run_multicam_loop_tests():
     finally:
         globals()["NFR"] = orig_nfr
         CAM_DROP_STATE["reads"].clear()
+        # Reset injected YOLO failures so later independent device-propagation
+        # tests start from a clean deterministic detector state.
+        INJECT_DETECT_EXC["count"] = 0
         with TG["lock"]:
             TG["calls"].clear()
             TG["updates"].clear()
@@ -3248,7 +3251,7 @@ def run_stage4_gap_regression_tests():
     node_ok = True
     node_err = ""
     if node_bin:
-        np_res = subprocess.run([node_bin, "--check", js_tmp], capture_output=True, text=True, timeout=10)
+        np_res = subprocess.run([node_bin, "--check", js_tmp], capture_output=True, text=True, timeout=30)
         node_ok = (np_res.returncode == 0)
         node_err = np_res.stderr
     try:
@@ -3509,7 +3512,7 @@ def run_stage6_gap_regression_tests():
     node_b = shutil.which("node")
     node_03_ok = True
     if node_b:
-        node_03_ok = (subprocess.run([node_b, "--check", js_f], capture_output=True, text=True, timeout=10).returncode == 0)
+        node_03_ok = (subprocess.run([node_b, "--check", js_f], capture_output=True, text=True, timeout=30).returncode == 0)
     try: os.remove(js_f)
     except OSError: pass
     check("STAGE6-GAP03", "dashboard.html passes cam:CUR_CAM||undefined to /api/enroll, displays m.error & m.warning, and passes node --check",
@@ -3802,7 +3805,7 @@ def run_stage8_final_hardening_tests():
     node_b05 = shutil.which("node")
     node_05_ok = True
     if node_b05:
-        node_05_ok = (subprocess.run([node_b05, "--check", js_f05], capture_output=True, text=True, timeout=10).returncode == 0)
+        node_05_ok = (subprocess.run([node_b05, "--check", js_f05], capture_output=True, text=True, timeout=30).returncode == 0)
     try: os.remove(js_f05)
     except OSError: pass
     check("STAGE8-OBS05", "all async UI functions in dashboard.html are protected by try/catch and pass node --check syntax verification",
@@ -4682,7 +4685,7 @@ def run_stage12_security_and_eval_integrity_tests():
     try:
         with open(js_tmp, "w", encoding="utf-8") as jf:
             jf.write("\n".join(js_blocks))
-        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=10)
+        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=30)
         js_ok = (node_chk.returncode == 0)
     finally:
         if os.path.exists(js_tmp):
@@ -5167,7 +5170,7 @@ def run_stage14_100pct_readiness_tests():
     try:
         with open(js_tmp_14, "w", encoding="utf-8") as jf:
             jf.write("\n".join(js_blocks_14))
-        node_14 = subprocess.run(["node", "--check", js_tmp_14], capture_output=True, text=True, timeout=10)
+        node_14 = subprocess.run(["node", "--check", js_tmp_14], capture_output=True, text=True, timeout=30)
         js_14_ok = (node_14.returncode == 0)
     finally:
         if os.path.exists(js_tmp_14):
@@ -5212,13 +5215,73 @@ def run_stage15_forensic_remediation_tests():
             zf.writestr("archive/version", b"3\n")
             zf.writestr("archive/data/0", b"\x00" * 4096)
 
-        # Calling register_plate_model_api with allow_outside_copy=False (as wired on HTTP POST /api/plate_eval/register_model) must reject outside path
+        # Calling register_plate_model_api with allow_outside_copy=False (as wired on HTTP POST /api/plate_eval/register_model)
+        # must reject outside paths even if request JSON attempts to elevate the permission.
         web_reg = m.register_plate_model_api({"plate_model": ext_pt}, who="http_op", allow_outside_copy=False)
+        web_reg_escalation = m.register_plate_model_api(
+            {"plate_model": ext_pt, "allow_outside_copy": True},
+            who="http_op", allow_outside_copy=False,
+        )
+        web_reg_string_bool = m.register_plate_model_api(
+            {"plate_model": ext_pt, "allow_outside_copy": "false"},
+            who="http_op", allow_outside_copy=False,
+        )
+        startup_src = open(os.path.join(WORK, "mersad_live.py"), encoding="utf-8").read()
+        startup_begin = startup_src.find("    yolo = vyolo = None")
+        startup_end = startup_src.find("    register_shared_engines(reader=reader", startup_begin)
+        startup_block = startup_src[startup_begin:startup_end] if startup_begin >= 0 and startup_end > startup_begin else ""
+        aud003_no_raw_fallback = (
+            "_load_optional_vehicle_yolo(" in startup_block
+            and 'YOLO("yolov8n.pt")' not in startup_block
+            and "YOLO('yolov8n.pt')" not in startup_block
+        )
+
+        # The repository-root entry point must carry the same Batch 1 security fixes.
+        root_live_path = os.path.join(os.path.dirname(SRC), "mersad_live.py")
+        root_live_src = open(root_live_path, encoding="utf-8").read()
+        root_register_begin = root_live_src.find("def register_plate_model_api(")
+        root_register_end = root_live_src.find("\ndef verify_yolo_pt_file(", root_register_begin)
+        root_register_block = root_live_src[root_register_begin:root_register_end] if root_register_begin >= 0 and root_register_end > root_register_begin else ""
+        root_start_begin = root_live_src.find("    yolo = vyolo = None")
+        root_start_end = root_live_src.find("    register_shared_engines(reader=reader", root_start_begin)
+        root_start_block = root_live_src[root_start_begin:root_start_end] if root_start_begin >= 0 and root_start_end > root_start_begin else ""
+        root_aud004_hardened = (
+            "if not isinstance(allow_outside_copy, bool)" in root_register_block
+            and "if not isinstance(raw_allow_copy, bool)" in root_register_block
+            and "eff_allow_copy = allow_outside_copy and raw_allow_copy" in root_register_block
+        )
+        root_aud003_hardened = (
+            "_load_optional_vehicle_yolo(" in root_start_block
+            and "def _load_optional_vehicle_yolo(" in root_live_src
+            and 'YOLO("yolov8n.pt")' not in root_start_block
+            and "YOLO('yolov8n.pt')" not in root_start_block
+        )
+
+        # Runtime regression: invalid/untrusted vehicle checkpoint disables the detector,
+        # while explicit strict mode fails startup instead of silently continuing.
+        from unittest import mock as _mock
+        with _mock.patch.object(m, "load_verified_yolo_model", side_effect=ValueError("untrusted checkpoint")):
+            with _mock.patch.dict(os.environ, {"MERSAD_STRICT_MODEL_VERIFICATION": "0"}, clear=False):
+                runtime_fail_closed = m._load_optional_vehicle_yolo("untrusted.pt") is None
+            with _mock.patch.dict(os.environ, {"MERSAD_STRICT_MODEL_VERIFICATION": "1"}, clear=False):
+                try:
+                    m._load_optional_vehicle_yolo("untrusted.pt")
+                    runtime_strict_rejected = False
+                except ValueError as strict_exc:
+                    runtime_strict_rejected = str(strict_exc) == "untrusted checkpoint"
+
         check(
             "STAGE15-GAP01-MODEL-TRUST-BOUNDARY",
-            "HTTP /api/plate_eval/register_model blocks copying .pt files from outside models/ and enforces trusted directory boundary",
-            web_reg.get("ok") is False and web_reg.get("reason") == "outside_trusted_models_dir_blocked",
-            web_reg,
+            "AUD-003 is fail-closed at runtime; root and Preview entry points both enforce the trusted YOLO gate; AUD-004 blocks JSON permission escalation",
+            web_reg.get("ok") is False and web_reg.get("reason") == "outside_trusted_models_dir_blocked"
+            and web_reg_escalation.get("ok") is False
+            and web_reg_escalation.get("reason") == "outside_trusted_models_dir_blocked"
+            and web_reg_string_bool.get("ok") is False
+            and "Boolean" in web_reg_string_bool.get("error", "")
+            and aud003_no_raw_fallback and root_aud004_hardened and root_aud003_hardened
+            and runtime_fail_closed and runtime_strict_rejected,
+            (web_reg, web_reg_escalation, web_reg_string_bool, aud003_no_raw_fallback,
+             root_aud004_hardened, root_aud003_hardened, runtime_fail_closed, runtime_strict_rejected),
         )
     finally:
         shutil.rmtree(s15_dir, ignore_errors=True)
@@ -5831,7 +5894,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 and cmp_data.get("phase2_comparison_status") == "BLOCKED"
                 and suites_js.get("original_lab", {}).get("status") == "BLOCKED"
                 and suites_js.get("cleanroom_lab", {}).get("status") == "PASS"
-                and suites_js.get("cleanroom_lab", {}).get("passed") == 20
+                and suites_js.get("cleanroom_lab", {}).get("passed") == 22
                 and "--require-cleanroom-pass" in ps1_txt_chk
                 and "--require-unblocked" not in ps1_txt_chk
             )

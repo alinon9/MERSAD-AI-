@@ -7,7 +7,9 @@ Default Binding: 127.0.0.1:8090 (Local Loopback Only)
 import argparse
 import cgi
 import html
+import http.client
 import http.cookies
+import ipaddress
 import io
 import json
 import logging
@@ -20,6 +22,7 @@ except ImportError:  # The resource module is Unix-only; Windows uses Win32 proc
 import secrets
 import signal
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -44,6 +47,226 @@ MAX_JSON_BODY_BYTES = 256 * 1024
 MAX_CONCURRENT_UPLOADS = int(os.environ.get("MERSAD_LAB_MAX_CONCURRENT_UPLOADS", "3"))
 DEFAULT_VIDEO_TIMEOUT_SEC = float(os.environ.get("MERSAD_LAB_VIDEO_TIMEOUT_SEC", "8.0"))
 MAX_MJPEG_STREAMS = 16
+
+
+# AUD-002: allowlisted, DNS-pinned LAB -> AI connection. No redirects are followed.
+_AI_MAX_RESPONSE_BYTES = 1024 * 1024
+_AI_LOCAL_ALLOWED_PORTS = {80, 443, 8000, 8765}
+_AI_REMOTE_ALLOWED_PORTS = {443, 8443, 8000, 8765}
+
+
+def _normalize_ai_host(value: str) -> str:
+    raw = str(value or "").strip().lower().rstrip(".")
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    if not raw or "%" in raw or any(ord(ch) < 33 or ord(ch) == 127 for ch in raw):
+        raise ValueError("invalid host")
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        try:
+            return raw.encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise ValueError("invalid host") from exc
+
+
+def _allowed_ai_hosts() -> set:
+    values = os.environ.get("MERSAD_LAB_ALLOWED_AI_HOSTS", "")
+    return {_normalize_ai_host(item) for item in values.split(",") if item.strip()}
+
+
+def _allowed_ai_ports(env_name: str, defaults: set) -> set:
+    raw = os.environ.get(env_name, "").strip()
+    if not raw:
+        return set(defaults)
+    ports = set()
+    for item in raw.split(","):
+        try:
+            port = int(item.strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid port policy") from exc
+        if not 1 <= port <= 65535:
+            raise ValueError("invalid port policy")
+        ports.add(port)
+    if not ports:
+        raise ValueError("empty port policy")
+    return ports
+
+
+def _ip_for_policy(value: str):
+    if "%" in str(value):
+        raise ValueError("scoped IP addresses are not allowed")
+    ip_obj = ipaddress.ip_address(value)
+    return getattr(ip_obj, "ipv4_mapped", None) or ip_obj
+
+
+def _is_disallowed_remote_ip(ip_obj) -> bool:
+    return bool(
+        ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+        or ip_obj.is_reserved
+    )
+
+
+def _validate_ai_connect_url(ai_url: str) -> dict:
+    """Validate an AI base URL, resolve its host once, and pin the TCP destination IP."""
+    try:
+        parsed = urllib.parse.urlsplit(str(ai_url or "").strip())
+        if parsed.scheme.lower() not in ("http", "https"):
+            raise ValueError("unsupported scheme")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("URL credentials are not allowed")
+        if parsed.query or parsed.fragment or parsed.path not in ("", "/"):
+            raise ValueError("only an origin/base URL is allowed")
+        if not parsed.hostname:
+            raise ValueError("missing host")
+        host = _normalize_ai_host(parsed.hostname)
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        if not 1 <= port <= 65535:
+            raise ValueError("invalid port")
+
+        try:
+            host_ip = ipaddress.ip_address(host)
+            is_loopback_host = bool((getattr(host_ip, "ipv4_mapped", None) or host_ip).is_loopback)
+        except ValueError:
+            is_loopback_host = host == "localhost"
+
+        if is_loopback_host:
+            allowed_ports = _allowed_ai_ports("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", _AI_LOCAL_ALLOWED_PORTS)
+            if parsed.scheme.lower() not in ("http", "https") or port not in allowed_ports:
+                raise ValueError("loopback destination/port is not allowed")
+        else:
+            if parsed.scheme.lower() != "https":
+                raise ValueError("remote AI hosts require HTTPS")
+            if host not in _allowed_ai_hosts():
+                raise ValueError("remote AI host is not allowlisted")
+            allowed_ports = _allowed_ai_ports("MERSAD_LAB_ALLOWED_AI_PORTS", _AI_REMOTE_ALLOWED_PORTS)
+            if port not in allowed_ports:
+                raise ValueError("remote AI port is not allowlisted")
+
+        try:
+            literal_ip = ipaddress.ip_address(host)
+        except ValueError:
+            literal_ip = None
+
+        if literal_ip is not None:
+            resolved = [str(literal_ip)]
+        else:
+            # Exactly one hostname resolution. The resulting IP is used for the TCP
+            # socket directly; the hostname is retained separately for Host/SNI.
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            resolved = []
+            for info in infos:
+                address = info[4][0]
+                if address not in resolved:
+                    resolved.append(address)
+
+        if not resolved:
+            raise ValueError("host did not resolve")
+        normalized_ips = []
+        for address in resolved:
+            ip_obj = _ip_for_policy(address)
+            if is_loopback_host:
+                if not ip_obj.is_loopback:
+                    raise ValueError("localhost resolved to a non-loopback address")
+            elif _is_disallowed_remote_ip(ip_obj):
+                raise ValueError("allowlisted host resolved to a prohibited address")
+            normalized_ips.append(str(ipaddress.ip_address(address.split("%", 1)[0])))
+
+        return {
+            "scheme": parsed.scheme.lower(),
+            "host": host,
+            "port": port,
+            "pinned_ip": normalized_ips[0],
+            "path": "/api/cameras/add",
+        }
+    except (ValueError, OSError, UnicodeError) as exc:
+        raise ValueError("AI destination is invalid or not allowlisted") from exc
+
+
+def _open_pinned_socket(pinned_ip: str, port: int, timeout: float):
+    """Open a socket to a numeric IP without performing hostname DNS resolution."""
+    ip_obj = ipaddress.ip_address(pinned_ip)
+    family = socket.AF_INET6 if ip_obj.version == 6 else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(timeout)
+        sockaddr = (str(ip_obj), int(port), 0, 0) if ip_obj.version == 6 else (str(ip_obj), int(port))
+        sock.connect(sockaddr)
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
+class _PinnedIPHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, port: int, pinned_ip: str, timeout: float = 5.0):
+        super().__init__(host=host, port=port, timeout=timeout)
+        self._pinned_ip = str(pinned_ip)
+
+    def connect(self):
+        if self._tunnel_host:
+            raise OSError("HTTP tunneling is disabled for pinned AI connections")
+        self.sock = _open_pinned_socket(self._pinned_ip, self.port, self.timeout)
+
+
+class _PinnedIPHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host: str, port: int, pinned_ip: str, timeout: float = 5.0, context=None):
+        context = context or ssl.create_default_context()
+        if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+            raise ValueError("TLS certificate and hostname verification are mandatory")
+        super().__init__(host=host, port=port, timeout=timeout, context=context)
+        self._pinned_ip = str(pinned_ip)
+
+    def connect(self):
+        if self._tunnel_host:
+            raise OSError("HTTPS tunneling is disabled for pinned AI connections")
+        raw_sock = _open_pinned_socket(self._pinned_ip, self.port, self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(raw_sock, server_hostname=self.host)
+        except Exception:
+            raw_sock.close()
+            raise
+
+
+def _send_pinned_ai_request(target: dict, request_body: bytes, ai_token: str) -> dict:
+    """Send one POST to a prevalidated/pinned destination; redirects are never followed."""
+    host = target["host"]
+    port = target["port"]
+    conn_type = _PinnedIPHTTPSConnection if target["scheme"] == "https" else _PinnedIPHTTPConnection
+    kwargs = {"host": host, "port": port, "pinned_ip": target["pinned_ip"], "timeout": 5.0}
+    if target["scheme"] == "https":
+        kwargs["context"] = ssl.create_default_context()
+    conn = conn_type(**kwargs)
+    try:
+        conn.request(
+            "POST",
+            target["path"],
+            body=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Mersad-Token": ai_token,
+                "Connection": "close",
+            },
+        )
+        response = conn.getresponse()
+        if 300 <= response.status < 400:
+            raise OSError("AI endpoint redirects are not permitted")
+        raw = response.read(_AI_MAX_RESPONSE_BYTES + 1)
+        if len(raw) > _AI_MAX_RESPONSE_BYTES:
+            raise OSError("AI response exceeds size limit")
+        if response.status < 200 or response.status >= 300:
+            raise OSError("AI endpoint returned a non-success status")
+        result = json.loads(raw.decode("utf-8"))
+        if not isinstance(result, dict):
+            raise ValueError("AI response must be a JSON object")
+        return result
+    finally:
+        conn.close()
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -256,7 +479,7 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         """Check token authentication when require_auth is enabled or when invalid token is explicitly supplied."""
         parsed = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(parsed.query)
-        q_tok = (qs.get("token") or qs.get("k") or [""])[0].strip()
+        q_tok = "" if require_for_mutation else (qs.get("token") or qs.get("k") or [""])[0].strip()
         h_tok = (self.headers.get("X-Lab-Token") or "").strip()
         auth_hdr = (self.headers.get("Authorization") or "").strip()
         if auth_hdr.lower().startswith("bearer "):
@@ -267,7 +490,9 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             if "mersad_lab_k" in c:
                 c_tok = c["mersad_lab_k"].value
 
-        provided = h_tok or q_tok or c_tok
+        # State-changing requests must authenticate with an explicit header.
+        # Browser cookies and query-string tokens are never accepted for mutations.
+        provided = h_tok or q_tok or ("" if require_for_mutation else c_tok)
         expected = self.state.token
 
         if provided and not secrets.compare_digest(provided, expected):
@@ -311,7 +536,6 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(raw_html)))
-            self.send_header("Set-Cookie", f"mersad_lab_k={self.state.token}; HttpOnly; SameSite=Strict; Path=/")
             self._send_security_headers()
             self.end_headers()
             self.wfile.write(raw_html)
@@ -435,7 +659,7 @@ class LabRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._validate_host_and_origin(is_post=True):
             return
-        if not self._check_auth(require_for_mutation=False):
+        if not self._check_auth(require_for_mutation=True):
             return
 
         parsed = urllib.parse.urlparse(self.path)
@@ -545,8 +769,16 @@ class LabRequestHandler(BaseHTTPRequestHandler):
                 data = json.loads(raw.decode("utf-8") if raw else "{}")
             except Exception:
                 return self._json({"ok": False, "error": "صيغة JSON غير صالحة"}, code=400)
-            ai_url = str(data.get("ai_url") or "http://127.0.0.1:8765").rstrip("/")
+            if not isinstance(data, dict):
+                return self._json({"ok": False, "error": "بيانات الربط غير صالحة"}, code=400)
+            ai_url = str(data.get("ai_url") or "http://127.0.0.1:8765").strip()
             ai_token = str(data.get("ai_token") or "").strip()
+            if len(ai_token) > 4096 or "\r" in ai_token or "\n" in ai_token:
+                return self._json({"ok": False, "error": "رمز المصادقة غير صالح"}, code=400)
+            try:
+                target = _validate_ai_connect_url(ai_url)
+            except ValueError:
+                return self._json({"ok": False, "error": "عنوان خادم مرصاد غير مسموح أو غير صالح"}, code=400)
             cam_id = str(data.get("cam_id") or "cam1").strip()
             cam_name = str(data.get("cam_name") or f"LAB_{cam_id.upper()}").strip()
             cam = self.state.get_camera(cam_id)
@@ -554,25 +786,16 @@ class LabRequestHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "الكاميرا المطلوبة غير موجودة في المختبر"}, code=404)
             lab_host, lab_port = self.server.server_address
             eff_host = "127.0.0.1" if lab_host in ("0.0.0.0", "") else lab_host
+            if ":" in eff_host and not eff_host.startswith("["):
+                eff_host = f"[{eff_host}]"
             stream_url = f"http://{eff_host}:{lab_port}/stream/{cam.cam_id}.mjpg"
             req_body = json.dumps({"name": cam_name, "source": stream_url}).encode("utf-8")
-            req = urllib.request.Request(
-                f"{ai_url}/api/cameras/add",
-                data=req_body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Mersad-Token": ai_token,
-                },
-                method="POST",
-            )
             try:
-                with urllib.request.urlopen(req, timeout=5.0) as resp:
-                    ai_resp = json.loads(resp.read().decode("utf-8"))
+                ai_resp = _send_pinned_ai_request(target, req_body, ai_token)
                 return self._json({"ok": True, "stream_url": stream_url, "ai_response": ai_resp})
-            except urllib.error.HTTPError as he:
-                return self._json({"ok": False, "error": f"رفض خادم مرصاد الطلب (HTTP {he.code})", "stream_url": stream_url}, code=502)
-            except Exception as e:
-                return self._json({"ok": False, "error": f"تعذّر الاتصال بخادم مرصاد: {e}", "stream_url": stream_url}, code=502)
+            except Exception as exc:
+                log.warning("MERSAD AI connection failed (%s)", type(exc).__name__)
+                return self._json({"ok": False, "error": "تعذّر الاتصال بخادم مرصاد"}, code=502)
 
         return self._json({"ok": False, "error": "المسار غير موجود"}, code=404)
 
@@ -619,6 +842,7 @@ def main():
         print("[SECURITY ERROR] MERSAD LAB binds to 127.0.0.1 by default. Pass --allow-lan explicitly if LAN binding is required.", file=sys.stderr)
         sys.exit(2)
 
+    generated_token = not args.token and not os.environ.get("MERSAD_LAB_TOKEN")
     ctrl = LabServerController(host=args.host, port=args.port, token=args.token, require_auth=args.require_auth)
     if args.self_check:
         ctrl.start()
@@ -643,6 +867,11 @@ def main():
     print(f"  {VERSION}")
     print(f"  Local URL   : http://{ctrl.host}:{ctrl.port}/")
     print(f"  Stream CAM1 : http://{ctrl.host}:{ctrl.port}/stream/cam1.mjpg")
+    if generated_token:
+        # Show the auto-generated credential only to the local operator console.
+        # It is never returned by HTTP and is not stored in browser cookies.
+        print(f"  LAB API Token: {ctrl.state.token}", flush=True)
+        print("  Enter this token in the LAB page; keep it private.")
     print("  Security    : Localhost-only (127.0.0.1) + Host/Origin/CSRF Guard")
     print("======================================================================")
     try:
