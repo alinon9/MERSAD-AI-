@@ -110,7 +110,12 @@ class MersadBatch2SecurityTests(unittest.TestCase):
                     self.assertNotIn(stored_token, out.getvalue())
                     self.assertNotIn(stored_token, out.getvalue())
                 finally:
-                    mersad_server.stop_server(srv)
+                    # Exercise the legacy direct shutdown path; it must also
+                    # signal all long-lived SSE/MJPEG request loops to exit.
+                    srv.shutdown()
+                    srv.server_close()
+                    srv._mersad_thread.join(timeout=2)
+            self.assertTrue(mersad_server.bus.stop_event.is_set())
             self.assertFalse(srv._mersad_thread.is_alive())
 
     def test_telegram_remote_http_is_rejected(self):
