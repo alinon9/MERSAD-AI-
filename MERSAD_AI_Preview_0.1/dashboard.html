@@ -210,8 +210,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div id="toast"></div>
 
 <script>
-const K=new URLSearchParams(location.search).get("k")||"",Q=K?"?k="+encodeURIComponent(K):"";
-const qSep=u=>Q?(u.includes("?")?u+"&"+Q.slice(1):u+Q):u;
+const qSep=u=>u;
 const $=s=>document.querySelector(s),esc=s=>String(s??"").replace(/[&<>"']/g,c=>"&#"+c.charCodeAt(0)+";");
 const AR={"NEW PLATE (first sighting)":"لوحة غير مسجّلة (أول رصد)","UNUSUAL HOUR (learned pattern)":"ساعة غير معتادة (نمط متعلَّم)","TRUCK IN RESTRICTED HOURS":"شاحنة في ساعات المنع","FACE MATCH (demo watchlist)":"تطابق وجه محتمل (قائمة تجريبية) — يتطلب تحققاً بشرياً","VEHICLE: WANTED":"مركبة مطلوبة","VEHICLE: STOLEN":"مركبة مسروقة","POSSIBLE MATCH (visual check)":"تطابق محتمل — تحقق بصري (أحرف متعارضة/ملتبسة أو مسافة تحرير)","ANOMALY (learned pattern)":"شذوذ مكتشف بالتعلّم الآلي","ROUTE ANOMALY (impossible transit)":"اشتباه تعارض مسار مكاني-زماني معاير (يتطلب مراجعة)","ROUTE NOTICE (uncalibrated)":"ملاحظة مسار للعلم (حد افتراضي غير معاير)","VEHICLE: EXPIRED":"ترخيص منتهي","VEHICLE: WATCH":"مركبة تحت المراقبة"};
 const VT={car:"سيارة",truck:"شاحنة",bus:"حافلة",motorcycle:"دراجة نارية",other:"أخرى"};
@@ -227,10 +226,29 @@ function setConnState(mode,msg){
  else if(mode==="auth_error"){SESSION_EXPIRED=true;const m=msg||"انتهت الجلسة أو رمز الدخول غير صالح — أعد فتح الرابط المعتمد";if(d){d.className="dot bad";d.title=m}if(lbl){lbl.textContent=m;lbl.style.color="var(--er)"}}
  else{const m=msg||"انقطع الاتصال بالخادم — جاري إعادة المحاولة...";if(d){d.className="dot bad";d.title=m}if(lbl){lbl.textContent=m;lbl.style.color="var(--er)"}}
 }
+async function establishSession(){
+ try{
+  const check=await fetch("/api/ping",{credentials:"same-origin",cache:"no-store"});
+  if(check.ok){setConnState("online","متصل");return true}
+  const token=window.prompt("أدخل رمز الدخول إلى لوحة مرصاد (الرمز المحدد عند تشغيل التطبيق):");
+  if(!token){setConnState("auth_error","يلزم تسجيل الدخول لمتابعة العرض");return false}
+  const login=await fetch("/api/session",{
+   method:"POST",credentials:"same-origin",headers:{"X-Mersad-Token":token}
+  });
+  if(!login.ok){setConnState("auth_error","رمز الدخول غير صحيح أو تعذّر إنشاء الجلسة");toast("تعذّر تسجيل الدخول: تحقق من الرمز");return false}
+  setConnState("online","متصل");return true;
+ }catch(e){
+  setConnState("net_error","تعذّر الاتصال بخادم مرصاد");
+  return false;
+ }
+}
+const SESSION_READY=establishSession();
 async function rJson(u,opts){
- const r=await fetch(qSep(u),opts);
+ if(!(await SESSION_READY)){const err=new Error("يلزم تسجيل الدخول إلى لوحة مرصاد");err.isAuthError=true;throw err}
+ const requestOpts=Object.assign({credentials:"same-origin"},opts||{});
+ const r=await fetch(qSep(u),requestOpts);
  if(r.status===401||r.status===403){
-  const authMsg="انتهت الجلسة أو رمز الدخول غير صالح — أعد فتح الرابط المعتمد";
+  const authMsg="انتهت الجلسة أو رمز الدخول غير صالح — أعد تسجيل الدخول";
   setConnState("auth_error",authMsg);
   toast(authMsg);
   const err=new Error(authMsg);err.isAuthError=true;throw err;
@@ -326,8 +344,11 @@ async function retryDisp(id){
   else toast("المحاولة قيد التنفيذ أو مجدولة للإعادة التلقائية");
  }catch(e){toast(e.message||"تعذّر الاتصال بالخادم لإعادة التوجيه")}
 }
-const es=new EventSource(qSep("/events"));
-es.onopen=()=>{if(!SESSION_EXPIRED)setConnState("online","متصل")};es.onerror=()=>{if(!SESSION_EXPIRED)setConnState("net_error","انقطع الاتصال بالخادم — جاري إعادة المحاولة...")};
+let es=null;
+SESSION_READY.then(ready=>{
+ if(!ready)return;
+ es=new EventSource("/events",{withCredentials:true});
+ es.onopen=()=>{if(!SESSION_EXPIRED)setConnState("online","متصل")};es.onerror=()=>{if(!SESSION_EXPIRED)setConnState("net_error","انقطع الاتصال بالخادم — جاري إعادة المحاولة...")};
 es.onmessage=e=>{const m=JSON.parse(e.data);
  if(m.type=="init"){al=m.alerts||[];fdisp=m.failed_dispatches||[];drawAl();drawFdisp()}
  else if(m.type=="alert"){al.push(m);drawAl();beep();navigator.vibrate&&navigator.vibrate([300,100,300])}
@@ -343,6 +364,8 @@ $("#vf").onclick=async()=>{try{const r=await rJson("/api/verify");const bad=r.re
 $("#nav").onclick=e=>{const b=e.target.closest("button[data-t]");if(!b)return;const t=b.dataset.t;document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("on",x.dataset.t==t));
  ["ops","vehicles","persons","insights","analytics","health","calibration"].forEach(x=>{if($("#t-"+x))$("#t-"+x).hidden=x!=t});
  if(t=="insights")loadIns();else if(t=="analytics")loadAnalytics();else if(t=="health")loadCameraHealth();else if(t=="calibration")loadCalibrationTab();else if(t!="ops"){if(!$("#t-"+t).innerHTML)buildReg(t);else load(t)}};
+});
+
 
 /* ---------- learning, trends & path tracking ---------- */
 const fmt=ts=>new Date(ts*1000).toLocaleString("ar",{dateStyle:"short",timeStyle:"short"});
