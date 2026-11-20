@@ -392,11 +392,26 @@ class LabState:
             return cam
 
 
+def _is_loopback_bind_address(host: str) -> bool:
+    """Return True only for an explicitly loopback bind address."""
+    value = str(host or "").strip().lower()
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
 class LabHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, server_address, RequestHandlerClass, lab_state: LabState):
+    def __init__(self, server_address, RequestHandlerClass, lab_state: LabState, allow_lan: bool = False):
+        bind_host = str(server_address[0] or "")
+        if not _is_loopback_bind_address(bind_host) and not allow_lan:
+            # Fail before ThreadingHTTPServer creates or binds a listening socket.
+            raise ValueError("LAN binding is disabled; explicit allow_lan=True is required")
         super().__init__(server_address, RequestHandlerClass)
         self.lab_state = lab_state
 
@@ -435,44 +450,77 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def _validate_host_and_origin(self, is_post: bool = False) -> bool:
-        """Protect local loopback service against DNS Rebinding, Origin: null, and Cross-Origin/Cross-Port CSRF."""
-        host_hdr = (self.headers.get("Host") or "").strip().lower()
-        if host_hdr:
-            host_only = host_hdr.split(":")[0].strip("[]")
-            allowed_hosts = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
-            srv_host = str(self.server.server_address[0]).lower()
-            if srv_host not in ("0.0.0.0", ""):
-                allowed_hosts.add(srv_host)
-            if host_only not in allowed_hosts:
-                self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة (DNS Rebinding Protection)"}, code=403)
-                return False
+        """Fail closed unless Host names the exact local socket endpoint (DNS-rebinding defense)."""
+        def reject(message):
+            self._json({"ok": False, "error": message}, code=403)
+            return False
+
+        host_hdr = (self.headers.get("Host") or "").strip()
+        if not host_hdr or any(ch in host_hdr for ch in "\\r\\n\\t"):
+            return reject("رفض الطلب: ترويسة Host مفقودة أو غير صالحة")
+
+        try:
+            parsed_host = urllib.parse.urlsplit("//" + host_hdr)
+            if parsed_host.username is not None or parsed_host.password is not None:
+                return reject("رفض الطلب: ترويسة Host غير موثوقة")
+            host_name = (parsed_host.hostname or "").strip().lower().rstrip(".")
+            host_port = parsed_host.port or 80
+            if not host_name or parsed_host.path or parsed_host.query or parsed_host.fragment:
+                return reject("رفض الطلب: ترويسة Host غير موثوقة")
+            local_sock = self.connection.getsockname()
+            local_ip = ipaddress.ip_address(str(local_sock[0]).split("%", 1)[0])
+            host_ip = None
+            try:
+                host_ip = ipaddress.ip_address(host_name)
+            except ValueError:
+                pass
+            if host_port != int(self.server.server_address[1]):
+                return reject("رفض الطلب: منفذ Host لا يطابق منفذ الخدمة")
+            if host_name == "localhost":
+                if not local_ip.is_loopback:
+                    return reject("رفض الطلب: localhost غير مطابق لواجهة الاتصال")
+            elif host_ip is not None:
+                local_cmp = getattr(local_ip, "ipv4_mapped", None) or local_ip
+                host_cmp = getattr(host_ip, "ipv4_mapped", None) or host_ip
+                if host_cmp != local_cmp:
+                    return reject("رفض الطلب: Host لا يطابق عنوان واجهة الاتصال")
+            else:
+                return reject("رفض الطلب: اسم Host غير معروف محلياً")
+        except (ValueError, OSError, AttributeError, TypeError):
+            return reject("رفض الطلب: ترويسة Host غير صالحة")
 
         origin_hdr = (self.headers.get("Origin") or "").strip()
         if origin_hdr:
             if origin_hdr.lower() == "null":
-                self._json({"ok": False, "error": "رفض الطلب: المصدر Origin: null غير مسموح (CSRF Protection)"}, code=403)
-                return False
-            parsed_orig = urllib.parse.urlparse(origin_hdr)
-            orig_netloc = (parsed_orig.netloc or "").strip().lower()
-            if not orig_netloc or (host_hdr and orig_netloc != host_hdr):
-                self._json({"ok": False, "error": "رفض الطلب: تعارض Origin مع Host (Cross-Origin/Cross-Port CSRF Blocked)"}, code=403)
-                return False
+                return reject("رفض الطلب: المصدر Origin: null غير مسموح (CSRF Protection)")
+            try:
+                parsed_origin = urllib.parse.urlsplit(origin_hdr)
+                if (
+                    parsed_origin.scheme.lower() not in ("http", "https")
+                    or not parsed_origin.hostname
+                    or parsed_origin.username is not None
+                    or parsed_origin.password is not None
+                    or parsed_origin.path not in ("", "/")
+                    or parsed_origin.query
+                    or parsed_origin.fragment
+                ):
+                    return reject("رفض الطلب: Origin غير صالح")
+                origin_host = parsed_origin.hostname.strip().lower().rstrip(".")
+                origin_port = parsed_origin.port or (443 if parsed_origin.scheme.lower() == "https" else 80)
+                if origin_host != host_name or origin_port != host_port:
+                    return reject("رفض الطلب: تعارض Origin مع Host (Cross-Origin/Cross-Port CSRF Blocked)")
+            except ValueError:
+                return reject("رفض الطلب: Origin غير صالح")
 
         sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
         if sec_site == "cross-site":
-            self._json({"ok": False, "error": "رفض الطلب: Sec-Fetch-Site: cross-site غير مسموح (CSRF Protection)"}, code=403)
-            return False
+            return reject("رفض الطلب: Sec-Fetch-Site: cross-site غير مسموح (CSRF Protection)")
 
         if is_post:
             ctype = (self.headers.get("Content-Type") or "").strip().lower()
-            # Block browser simple-request CSRF (text/plain or application/x-www-form-urlencoded without explicit token header)
             has_token_hdr = bool(self.headers.get("X-Lab-Token") or self.headers.get("Authorization"))
             if ctype.startswith(("text/plain", "application/x-www-form-urlencoded")) and not has_token_hdr:
-                self._json(
-                    {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو multipart/form-data أو X-Lab-Token)"},
-                    code=403,
-                )
-                return False
+                return reject("رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو multipart/form-data أو X-Lab-Token)")
         return True
 
     def _check_auth(self, require_for_mutation: bool = False) -> bool:
@@ -486,9 +534,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             h_tok = auth_hdr[7:].strip()
         c_tok = ""
         if "Cookie" in self.headers:
-            c = http.cookies.SimpleCookie(self.headers["Cookie"])
-            if "mersad_lab_k" in c:
-                c_tok = c["mersad_lab_k"].value
+            try:
+                c = http.cookies.SimpleCookie()
+                c.load(self.headers["Cookie"])
+                if "mersad_lab_k" in c:
+                    c_tok = c["mersad_lab_k"].value
+            except http.cookies.CookieError:
+                self._json({"ok": False, "error": "ترويسة Cookie غير صالحة (Unauthorized)"}, code=401)
+                return False
 
         # State-changing requests must authenticate with an explicit header.
         # Browser cookies and query-string tokens are never accepted for mutations.
@@ -510,6 +563,11 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        # Authentication is checked before every route, including health. Local
+        # developer mode may leave require_auth disabled; LAN mode forces it on.
+        if not self._check_auth(require_for_mutation=False):
+            return
+
         if path in ("/api/health", "/health"):
             tel = get_process_telemetry(self.state.start_time)
             cams = {cid: cam.info() for cid, cam in self.state.cameras.items()}
@@ -524,9 +582,6 @@ class LabRequestHandler(BaseHTTPRequestHandler):
                 "cameras_count": len(cams),
                 "cameras": cams,
             })
-
-        if not self._check_auth(require_for_mutation=False):
-            return
 
         if path in ("/", "/index.html"):
             idx_path = resolve_lab_asset("index.html")
@@ -803,9 +858,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
 class LabServerController:
     """Clean start/stop wrapper around LabHTTPServer with zero hanging threads."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False):
-        self.state = LabState(token=token, require_auth=require_auth)
-        self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
+    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False, allow_lan: bool = False):
+        # Enforce LAN policy at the controller boundary as well as the CLI boundary.
+        # This prevents programmatic callers from bypassing --allow-lan before socket creation.
+        is_lan = not _is_loopback_bind_address(host)
+        if is_lan and not allow_lan:
+            raise ValueError("LAN binding is disabled; pass allow_lan=True explicitly")
+        self.state = LabState(token=token, require_auth=(require_auth or allow_lan))
+        self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state, allow_lan=allow_lan)
         self.host, self.port = self.httpd.server_address
         self._thread = None
 
@@ -843,7 +903,14 @@ def main():
         sys.exit(2)
 
     generated_token = not args.token and not os.environ.get("MERSAD_LAB_TOKEN")
-    ctrl = LabServerController(host=args.host, port=args.port, token=args.token, require_auth=args.require_auth)
+    # LAN exposure always requires authentication on every route, including /api/health.
+    ctrl = LabServerController(
+        host=args.host,
+        port=args.port,
+        token=args.token,
+        require_auth=(args.require_auth or args.allow_lan),
+        allow_lan=args.allow_lan,
+    )
     if args.self_check:
         ctrl.start()
         try:

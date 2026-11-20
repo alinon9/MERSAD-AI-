@@ -34,7 +34,8 @@ for k, v in {
     "TELEGRAM_TOKEN": "SECRET_BOT_TOKEN_999",
     "TELEGRAM_CHAT_ID": "-100",
     "TELEGRAM_PATROL_CHAT_ID": "-200",
-    "TELEGRAM_API": "http://127.0.0.1:8780"
+    "TELEGRAM_API": "http://127.0.0.1:8780",
+    "MERSAD_TELEGRAM_ALLOW_LOCAL_API": "1"
 }.items():
     os.environ[k] = v
 
