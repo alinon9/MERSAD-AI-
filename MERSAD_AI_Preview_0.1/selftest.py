@@ -34,7 +34,8 @@ for k, v in {
     "TELEGRAM_TOKEN": "SECRET_BOT_TOKEN_999",
     "TELEGRAM_CHAT_ID": "-100",
     "TELEGRAM_PATROL_CHAT_ID": "-200",
-    "TELEGRAM_API": "http://127.0.0.1:8780"
+    "TELEGRAM_API": "http://127.0.0.1:8780",
+    "MERSAD_TESTING": "1"
 }.items():
     os.environ[k] = v
 
@@ -234,6 +235,35 @@ def skip_check(cat, name, reason):
 # 1. UNIT TESTS (Plates, P0-A/B/C, Multi-frame Confirmation, Faces, P2-8 YOLO)
 # ==============================================================================
 def run_unit_tests():
+    # AUD-010: Telegram API transport must reject non-allowlisted origins and redirects.
+    original_api = os.environ.get("TELEGRAM_API")
+    try:
+        os.environ["TELEGRAM_API"] = "http://evil.example"
+        rejected_remote_http = False
+        try:
+            not_mod._telegram_api_base()
+        except RuntimeError:
+            rejected_remote_http = True
+        os.environ["TELEGRAM_API"] = "https://api.telegram.org"
+        official_https = not_mod._telegram_api_base() == "https://api.telegram.org"
+        os.environ["TELEGRAM_API"] = "http://127.0.0.1:8780"
+        test_loopback = not_mod._telegram_api_base() == "http://127.0.0.1:8780"
+        redirect_blocked = not_mod._NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://evil.example") is None
+        # The redirect handler raises HTTPError; exercise and record that behavior.
+        try:
+            not_mod._NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://evil.example")
+            redirect_blocked = False
+        except urllib.error.HTTPError:
+            redirect_blocked = True
+        check("SECURITY", "Telegram API HTTPS allowlist, test-only loopback and redirect denial",
+              rejected_remote_http and official_https and test_loopback and redirect_blocked,
+              (rejected_remote_http, official_https, test_loopback, redirect_blocked))
+    finally:
+        if original_api is None:
+            os.environ.pop("TELEGRAM_API", None)
+        else:
+            os.environ["TELEGRAM_API"] = original_api
+
     p1 = reg_mod.norm_plate("١٢٣٤٥")
     p2 = reg_mod.norm_plate("۱۲۳۴۵")
     p3 = reg_mod.norm_plate("أ ب ١٢٣٤")
