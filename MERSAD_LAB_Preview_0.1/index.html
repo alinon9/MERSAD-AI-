@@ -41,6 +41,12 @@ button.active-mode { background: var(--accent); color: #051410; font-weight: 700
   <span class="badge" id="bind-badge">ربط محلي آمن 127.0.0.1</span>
 </header>
 
+<div class="card" style="margin-bottom:18px">
+  <label for="lab-token">رمز مصادقة المختبر (X-Lab-Token)</label>
+  <input type="password" id="lab-token" autocomplete="off" placeholder="أدخل الرمز الذي حددته عند تشغيل MERSAD LAB" style="width:min(100%, 460px)">
+  <p class="status-line">استخدم الرمز نفسه الذي مررته عبر --token أو متغير البيئة MERSAD_LAB_TOKEN. لا يُحفظ الرمز في المتصفح.</p>
+</div>
+
 <div class="grid" id="cameras-container"></div>
 
 <div class="grid">
@@ -91,11 +97,26 @@ const MODES = [
   ["offline", "منقطع 503 (Offline)"]
 ];
 
+function labToken() {
+  return document.getElementById("lab-token").value.trim();
+}
+
+function labAuthHeaders(headers = {}) {
+  return Object.assign({}, headers, {"X-Lab-Token": labToken()});
+}
+
+function requireLabToken(output) {
+  if (labToken()) return true;
+  output.textContent = "يرجى إدخال رمز مصادقة المختبر أولاً (X-Lab-Token).";
+  return false;
+}
+
 async function setCameraMode(camId, mode) {
   try {
+    if (!requireLabToken(document.getElementById("health-summary"))) return;
     const res = await fetch("/api/cameras/" + encodeURIComponent(camId) + "/mode", {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: labAuthHeaders({"Content-Type": "application/json"}),
       body: JSON.stringify({mode: mode})
     });
     const data = await res.json();
@@ -171,11 +192,12 @@ document.getElementById("btn-analyze-img").addEventListener("click", async () =>
     out.textContent = "يرجى اختيار ملف صورة أولاً.";
     return;
   }
+  if (!requireLabToken(out)) return;
   out.textContent = "جارٍ تحليل الصورة...";
   const fd = new FormData();
   fd.append("file", input.files[0]);
   try {
-    const r = await fetch("/api/analyze/image", {method: "POST", body: fd});
+    const r = await fetch("/api/analyze/image", {method: "POST", headers: labAuthHeaders(), body: fd});
     const d = await r.json();
     out.textContent = JSON.stringify(d, null, 2);
   } catch (e) {
@@ -190,11 +212,12 @@ document.getElementById("btn-analyze-vid").addEventListener("click", async () =>
     out.textContent = "يرجى اختيار ملف فيديو أولاً.";
     return;
   }
+  if (!requireLabToken(out)) return;
   out.textContent = "جارٍ تحليل الفيديو...";
   const fd = new FormData();
   fd.append("file", input.files[0]);
   try {
-    const r = await fetch("/api/analyze/video", {method: "POST", body: fd});
+    const r = await fetch("/api/analyze/video", {method: "POST", headers: labAuthHeaders(), body: fd});
     const d = await r.json();
     out.textContent = JSON.stringify(d, null, 2);
   } catch (e) {
@@ -207,11 +230,12 @@ document.getElementById("btn-connect-ai").addEventListener("click", async () => 
   const aiToken = document.getElementById("ai-token").value.trim();
   const camId = document.getElementById("ai-cam-select").value;
   const out = document.getElementById("ai-connect-result");
+  if (!requireLabToken(out)) return;
   out.textContent = "جارٍ الاتصال بمرصاد الذكي...";
   try {
     const r = await fetch("/api/integration/connect_ai", {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: labAuthHeaders({"Content-Type": "application/json"}),
       body: JSON.stringify({ai_url: aiUrl, ai_token: aiToken, cam_id: camId})
     });
     const d = await r.json();
