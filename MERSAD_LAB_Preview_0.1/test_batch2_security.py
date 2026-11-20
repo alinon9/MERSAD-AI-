@@ -68,6 +68,22 @@ class LabBatch2SecurityTests(unittest.TestCase):
         ):
             _validate_lab_bind_policy("0.0.0.0", allow_lan=True)
 
+    def test_specific_lan_bind_must_be_listed_and_have_token(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MERSAD_LAB_ALLOWED_HOSTS": "192.168.1.20", "MERSAD_LAB_TOKEN": ""},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "LAB token"):
+                _validate_lab_bind_policy("192.168.1.20", allow_lan=True)
+        with mock.patch.dict(
+            os.environ,
+            {"MERSAD_LAB_ALLOWED_HOSTS": "192.168.1.21", "MERSAD_LAB_TOKEN": "configured"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "include the configured bind address"):
+                _validate_lab_bind_policy("192.168.1.20", allow_lan=True, token="configured")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
