@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/mersad-preview-0.2-release-hardening
+      - fix/mersad-preview-0.2-batch2-security-20261120
   workflow_dispatch:
 
 concurrency:
@@ -47,6 +48,14 @@ jobs:
           $env:PYTHONUTF8 = "1"
           python -X utf8 -u MERSAD_LAB_Preview_0.1\test_batch1_security.py -v 2>&1 | Tee-Object artifacts\batch1-logs\test_batch1_security.py.log
           if ($LASTEXITCODE -ne 0) { throw "Batch 1 LAB security tests failed ($LASTEXITCODE)" }
+
+      - name: Batch 2 LAB LAN, IPv6, Host and cookie regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_LAB_Preview_0.1\\test_batch2_security.py -v 2>&1 | Tee-Object artifacts\\batch1-logs\\test_batch2_security.py.log
+          if ($LASTEXITCODE -ne 0) { throw "Batch 2 LAB security tests failed ($LASTEXITCODE)" }
 
       - name: MERSAD LAB functional and security suite
         shell: pwsh
