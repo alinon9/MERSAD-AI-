@@ -435,43 +435,69 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def _validate_host_and_origin(self, is_post: bool = False) -> bool:
-        """Protect local loopback service against DNS Rebinding, Origin: null, and Cross-Origin/Cross-Port CSRF."""
+        """Strict Host/Origin validation with correct IPv4/IPv6 authority parsing."""
         host_hdr = (self.headers.get("Host") or "").strip().lower()
-        if host_hdr:
-            host_only = host_hdr.split(":")[0].strip("[]")
+        if not host_hdr or any(ch in host_hdr for ch in "\\r\\n\\t"):
+            self._json({"ok": False, "error": "ترويسة Host مفقودة أو غير صالحة"}, code=400)
+            return False
+        try:
+            parsed_host = urllib.parse.urlsplit("//" + host_hdr)
+            host_only = _normalize_ai_host(parsed_host.hostname or "")
+            host_port = parsed_host.port
+            if parsed_host.path or parsed_host.query or parsed_host.fragment or parsed_host.username is not None:
+                raise ValueError("invalid Host authority")
+            expected_port = int(self.server.server_address[1])
+            if host_port is not None and host_port != expected_port:
+                raise ValueError("unexpected Host port")
             allowed_hosts = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
             srv_host = str(self.server.server_address[0]).lower()
-            if srv_host not in ("0.0.0.0", ""):
-                allowed_hosts.add(srv_host)
+            if srv_host not in ("0.0.0.0", "::", ""):
+                allowed_hosts.add(_normalize_ai_host(srv_host))
             if host_only not in allowed_hosts:
-                self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة (DNS Rebinding Protection)"}, code=403)
-                return False
+                # A wildcard-bound LAB may be reached through a private LAN interface.
+                # This is accepted only when LAB auth is enabled; the token remains mandatory
+                # for mutations and for the LAN health endpoint.
+                try:
+                    host_ip = ipaddress.ip_address(host_only)
+                    lan_host_ok = (
+                        srv_host in ("0.0.0.0", "::")
+                        and host_ip.version == 4
+                        and host_ip.is_private
+                        and self.state.require_auth
+                    )
+                except ValueError:
+                    lan_host_ok = False
+                if not lan_host_ok:
+                    raise ValueError("untrusted Host")
+        except (ValueError, UnicodeError):
+            self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة"}, code=403)
+            return False
 
         origin_hdr = (self.headers.get("Origin") or "").strip()
         if origin_hdr:
             if origin_hdr.lower() == "null":
-                self._json({"ok": False, "error": "رفض الطلب: المصدر Origin: null غير مسموح (CSRF Protection)"}, code=403)
+                self._json({"ok": False, "error": "رفض الطلب: Origin null غير مسموح"}, code=403)
                 return False
-            parsed_orig = urllib.parse.urlparse(origin_hdr)
-            orig_netloc = (parsed_orig.netloc or "").strip().lower()
-            if not orig_netloc or (host_hdr and orig_netloc != host_hdr):
-                self._json({"ok": False, "error": "رفض الطلب: تعارض Origin مع Host (Cross-Origin/Cross-Port CSRF Blocked)"}, code=403)
+            try:
+                parsed_orig = urllib.parse.urlsplit(origin_hdr)
+                orig_host = _normalize_ai_host(parsed_orig.hostname or "")
+                orig_port = parsed_orig.port or (443 if parsed_orig.scheme == "https" else 80)
+                request_port = host_port or expected_port
+                if parsed_orig.scheme not in ("http", "https") or orig_host != host_only or orig_port != request_port:
+                    raise ValueError("Origin mismatch")
+            except (ValueError, UnicodeError):
+                self._json({"ok": False, "error": "رفض الطلب: تعارض Origin مع Host"}, code=403)
                 return False
 
-        sec_site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
-        if sec_site == "cross-site":
-            self._json({"ok": False, "error": "رفض الطلب: Sec-Fetch-Site: cross-site غير مسموح (CSRF Protection)"}, code=403)
+        if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() == "cross-site":
+            self._json({"ok": False, "error": "رفض الطلب: Cross-Site غير مسموح"}, code=403)
             return False
 
         if is_post:
             ctype = (self.headers.get("Content-Type") or "").strip().lower()
-            # Block browser simple-request CSRF (text/plain or application/x-www-form-urlencoded without explicit token header)
             has_token_hdr = bool(self.headers.get("X-Lab-Token") or self.headers.get("Authorization"))
             if ctype.startswith(("text/plain", "application/x-www-form-urlencoded")) and not has_token_hdr:
-                self._json(
-                    {"ok": False, "error": "رفض الطلب لحماية الجلسة (يتطلب Content-Type: application/json أو multipart/form-data أو X-Lab-Token)"},
-                    code=403,
-                )
+                self._json({"ok": False, "error": "طلب غير مسموح: يلزم ترويسة مصادقة صريحة"}, code=403)
                 return False
         return True
 
@@ -486,9 +512,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             h_tok = auth_hdr[7:].strip()
         c_tok = ""
         if "Cookie" in self.headers:
-            c = http.cookies.SimpleCookie(self.headers["Cookie"])
-            if "mersad_lab_k" in c:
-                c_tok = c["mersad_lab_k"].value
+            try:
+                c = http.cookies.SimpleCookie()
+                c.load(self.headers["Cookie"])
+                if "mersad_lab_k" in c:
+                    c_tok = c["mersad_lab_k"].value
+            except http.cookies.CookieError:
+                self._json({"ok": False, "error": "ترويسة Cookie غير صالحة"}, code=400)
+                return False
 
         # State-changing requests must authenticate with an explicit header.
         # Browser cookies and query-string tokens are never accepted for mutations.
@@ -511,6 +542,13 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path in ("/api/health", "/health"):
+            bind_host = str(self.server.server_address[0]).lower()
+            try:
+                loopback_only = ipaddress.ip_address(bind_host).is_loopback
+            except ValueError:
+                loopback_only = bind_host == "localhost"
+            if not loopback_only and not self._check_auth(require_for_mutation=False):
+                return
             tel = get_process_telemetry(self.state.start_time)
             cams = {cid: cam.info() for cid, cam in self.state.cameras.items()}
             return self._json({
