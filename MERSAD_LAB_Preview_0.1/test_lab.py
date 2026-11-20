@@ -308,6 +308,37 @@ def run_all_tests():
                 data=json.dumps({"mode": "normal"}).encode("utf-8"),
                 headers={"Content-Type": "application/json", "X-Lab-Token": "lab_test_secret_token_2026"},
             )
+
+            # A malformed Cookie header must never crash auth parsing or override a valid header token.
+            with mock.patch.object(
+                lab_server.http.cookies.SimpleCookie, "load",
+                side_effect=lab_server.http.cookies.CookieError("malformed test cookie"),
+            ):
+                st_cookie_error, _, _ = _http_req(
+                    f"{base_url}/api/cameras",
+                    headers={"Cookie": "mersad_lab_k=broken", "X-Lab-Token": "lab_test_secret_token_2026"},
+                )
+
+            # LAN-bound controllers require an explicit secret before creating a listening socket,
+            # and protect health telemetry even when the caller did not request --require-auth.
+            lan_missing_token_rejected = False
+            try:
+                LabServerController(host="0.0.0.0", port=0)
+            except ValueError as lan_error:
+                lan_missing_token_rejected = "explicit" in str(lan_error).lower()
+            lan_ctrl = LabServerController(
+                host="0.0.0.0", port=0, token="lab_test_secret_token_2026", require_auth=False
+            )
+            lan_ctrl.start()
+            try:
+                lan_url = f"http://127.0.0.1:{lan_ctrl.port}/api/health"
+                st_lan_health_missing, _, _ = _http_req(lan_url)
+                st_lan_health_good, _, _ = _http_req(
+                    lan_url, headers={"X-Lab-Token": "lab_test_secret_token_2026"}
+                )
+            finally:
+                lan_ctrl.stop()
+
             # 9c: When require_auth=True, unauthenticated GET is rejected and valid token succeeds.
             ctrl.state.require_auth = True
             try:
@@ -320,11 +351,13 @@ def run_all_tests():
                 ctrl.state.require_auth = False
             assert (
                 st_bad == 401 and st_post_missing == 401 and st_post_good == 200
+                and st_cookie_error == 200 and lan_missing_token_rejected
+                and st_lan_health_missing == 401 and st_lan_health_good == 200
                 and st_missing == 401 and st_good == 200
-            ), f"got invalid_get={st_bad}, post_missing={st_post_missing}, post_valid={st_post_good}, get_missing={st_missing}, get_valid={st_good}"
+            ), f"got invalid_get={st_bad}, post_missing={st_post_missing}, post_valid={st_post_good}, cookie_error={st_cookie_error}, lan_missing_token_rejected={lan_missing_token_rejected}, lan_health_missing={st_lan_health_missing}, lan_health_good={st_lan_health_good}, get_missing={st_missing}, get_valid={st_good}"
             ok(
                 "LAB-SEC-01: Access control & token validation",
-                f"invalid_get={st_bad}, post_missing={st_post_missing}, post_valid={st_post_good}, get_missing={st_missing}, get_valid={st_good}",
+                f"invalid_get={st_bad}, post_missing={st_post_missing}, post_valid={st_post_good}, malformed_cookie_header={st_cookie_error}, lan_missing_token_rejected={lan_missing_token_rejected}, lan_health_missing={st_lan_health_missing}, lan_health_valid={st_lan_health_good}, get_missing={st_missing}, get_valid={st_good}",
             )
         except Exception as e:
             fail("LAB-SEC-01: Access control & token validation", str(e))
@@ -337,14 +370,26 @@ def run_all_tests():
                 f"{base_url}/api/health",
                 headers={"Host": "evil-rebind.attacker.com"},
             )
+            test_port = ctrl.port
+            st_ipv6_host, _, _ = _http_req(
+                f"{base_url}/api/health",
+                headers={"Host": f"[::1]:{test_port}"},
+            )
+            st_wrong_port, _, _ = _http_req(
+                f"{base_url}/api/health",
+                headers={"Host": "127.0.0.1:1"},
+            )
             st_origin, _, _ = _http_req(
                 f"{base_url}/api/cameras/cam1/mode",
                 method="POST",
                 data=json.dumps({"mode": "normal"}).encode("utf-8"),
                 headers={"Content-Type": "application/json", "Origin": "http://evil.attacker.com"},
             )
-            assert st_host == 403 and st_origin == 403, f"Expected 403/403, got {st_host}/{st_origin}"
-            ok("LAB-SEC-02: Host & Origin validation", f"evil_host={st_host}, evil_origin={st_origin}")
+            assert (
+                st_host == 403 and st_wrong_port == 403 and st_ipv6_host == 200 and st_origin == 403
+            ), f"Expected evil_host=403, wrong_port=403, ipv6=200, evil_origin=403; got {st_host}/{st_wrong_port}/{st_ipv6_host}/{st_origin}"
+            ok("LAB-SEC-02: Host & Origin validation",
+               f"evil_host={st_host}, wrong_port={st_wrong_port}, bracketed_ipv6={st_ipv6_host}, evil_origin={st_origin}")
         except Exception as e:
             fail("LAB-SEC-02: Host & Origin validation", str(e))
 
