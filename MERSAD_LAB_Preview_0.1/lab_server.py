@@ -351,10 +351,11 @@ def get_process_telemetry(start_time: float) -> dict:
 
 
 class LabState:
-    def __init__(self, token: str = None, require_auth: bool = False):
+    def __init__(self, token: str = None, require_auth: bool = False, allow_lan: bool = False):
         self.start_time = time.time()
         self.token = token or os.environ.get("MERSAD_LAB_TOKEN") or secrets.token_urlsafe(16)
         self.require_auth = bool(require_auth)
+        self.allow_lan = bool(allow_lan)
         self.stop_event = threading.Event()
         self.upload_semaphore = threading.BoundedSemaphore(MAX_CONCURRENT_UPLOADS)
         self.active_uploads = 0
@@ -390,6 +391,51 @@ class LabState:
             elif title_ar:
                 cam.title_ar = safe_title
             return cam
+
+
+def _normalize_allowed_host(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw or any(ch in raw for ch in ("/", "\\", "@", "%")):
+        raise ValueError("invalid allowed host")
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        if raw.endswith("."):
+            raw = raw[:-1]
+        if not raw or any(not part for part in raw.split(".")):
+            raise ValueError("invalid allowed host")
+        return raw.encode("idna").decode("ascii").lower()
+
+
+def _configured_lab_allowed_hosts() -> set:
+    raw = os.environ.get("MERSAD_LAB_ALLOWED_HOSTS", "")
+    hosts = set()
+    for item in raw.split(","):
+        if item.strip():
+            hosts.add(_normalize_allowed_host(item))
+    return hosts
+
+
+def _is_loopback_bind(host: str) -> bool:
+    value = str(host or "").strip().lower()
+    if value == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_lab_bind_policy(host: str, allow_lan: bool) -> None:
+    """Fail closed before socket creation when a non-loopback LAB bind is requested."""
+    if _is_loopback_bind(host):
+        return
+    if not allow_lan:
+        raise ValueError("Non-loopback LAB binding requires --allow-lan")
+    if not _configured_lab_allowed_hosts() and str(host).strip() in ("0.0.0.0", "::"):
+        raise ValueError("Wildcard LAN binding requires MERSAD_LAB_ALLOWED_HOSTS with explicit client-facing host names/IPs")
+    if str(host).strip() in ("0.0.0.0", "::") and not os.environ.get("MERSAD_LAB_TOKEN", "").strip():
+        raise ValueError("Wildcard LAN binding requires an explicitly configured MERSAD_LAB_TOKEN")
 
 
 class LabHTTPServer(ThreadingHTTPServer):
@@ -435,17 +481,35 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def _validate_host_and_origin(self, is_post: bool = False) -> bool:
-        """Protect local loopback service against DNS Rebinding, Origin: null, and Cross-Origin/Cross-Port CSRF."""
-        host_hdr = (self.headers.get("Host") or "").strip().lower()
-        if host_hdr:
-            host_only = host_hdr.split(":")[0].strip("[]")
-            allowed_hosts = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
-            srv_host = str(self.server.server_address[0]).lower()
-            if srv_host not in ("0.0.0.0", ""):
-                allowed_hosts.add(srv_host)
-            if host_only not in allowed_hosts:
-                self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة (DNS Rebinding Protection)"}, code=403)
-                return False
+        """Validate authority/port safely, including bracketed IPv6, before processing a request."""
+        host_hdr = (self.headers.get("Host") or "").strip()
+        if not host_hdr:
+            self._json({"ok": False, "error": "رفض الطلب: ترويسة Host مطلوبة"}, code=400)
+            return False
+        try:
+            parsed_host = urllib.parse.urlsplit("//" + host_hdr)
+            host_only = _normalize_allowed_host(parsed_host.hostname or "")
+            host_port = parsed_host.port
+            if parsed_host.username is not None or parsed_host.password is not None or parsed_host.path or parsed_host.query or parsed_host.fragment:
+                raise ValueError("invalid Host authority")
+            if host_port is not None and host_port != int(self.server.server_address[1]):
+                raise ValueError("unexpected Host port")
+        except (ValueError, UnicodeError):
+            self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير صالحة"}, code=400)
+            return False
+
+        allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+        srv_host = str(self.server.server_address[0]).lower()
+        if srv_host not in ("0.0.0.0", "::", ""):
+            allowed_hosts.add(_normalize_allowed_host(srv_host))
+        try:
+            allowed_hosts.update(_configured_lab_allowed_hosts())
+        except (ValueError, UnicodeError):
+            self._json({"ok": False, "error": "سياسة أسماء المضيفين المسموحة غير صالحة"}, code=503)
+            return False
+        if host_only not in allowed_hosts:
+            self._json({"ok": False, "error": "رفض الطلب: ترويسة Host غير موثوقة (DNS Rebinding Protection)"}, code=403)
+            return False
 
         origin_hdr = (self.headers.get("Origin") or "").strip()
         if origin_hdr:
@@ -486,9 +550,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             h_tok = auth_hdr[7:].strip()
         c_tok = ""
         if "Cookie" in self.headers:
-            c = http.cookies.SimpleCookie(self.headers["Cookie"])
-            if "mersad_lab_k" in c:
-                c_tok = c["mersad_lab_k"].value
+            try:
+                c = http.cookies.SimpleCookie()
+                c.load(self.headers["Cookie"])
+                if "mersad_lab_k" in c:
+                    c_tok = c["mersad_lab_k"].value
+            except http.cookies.CookieError:
+                self._json({"ok": False, "error": "ترويسة Cookie غير صالحة"}, code=400)
+                return False
 
         # State-changing requests must authenticate with an explicit header.
         # Browser cookies and query-string tokens are never accepted for mutations.
@@ -511,6 +580,10 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path in ("/api/health", "/health"):
+            # Health remains unauthenticated for loopback diagnostics only. LAN mode
+            # requires the same explicit header as other sensitive API routes.
+            if self.state.allow_lan and not self._check_auth(require_for_mutation=True):
+                return
             tel = get_process_telemetry(self.state.start_time)
             cams = {cid: cam.info() for cid, cam in self.state.cameras.items()}
             return self._json({
@@ -803,8 +876,9 @@ class LabRequestHandler(BaseHTTPRequestHandler):
 class LabServerController:
     """Clean start/stop wrapper around LabHTTPServer with zero hanging threads."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False):
-        self.state = LabState(token=token, require_auth=require_auth)
+    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False, allow_lan: bool = False):
+        _validate_lab_bind_policy(host, allow_lan)
+        self.state = LabState(token=token, require_auth=require_auth, allow_lan=allow_lan)
         self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
         self.host, self.port = self.httpd.server_address
         self._thread = None
@@ -843,7 +917,14 @@ def main():
         sys.exit(2)
 
     generated_token = not args.token and not os.environ.get("MERSAD_LAB_TOKEN")
-    ctrl = LabServerController(host=args.host, port=args.port, token=args.token, require_auth=args.require_auth)
+    try:
+        ctrl = LabServerController(
+            host=args.host, port=args.port, token=args.token,
+            require_auth=args.require_auth, allow_lan=args.allow_lan,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[SECURITY ERROR] LAB bind policy rejected startup: {type(exc).__name__}: {exc}", file=sys.stderr)
+        sys.exit(2)
     if args.self_check:
         ctrl.start()
         try:
