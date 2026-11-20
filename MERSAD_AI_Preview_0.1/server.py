@@ -571,6 +571,15 @@ def start_server(port=8000, host="127.0.0.1"):
     srv = ThreadingHTTPServer((host, port), H)
     if tls_context is not None:
         srv.socket = tls_context.wrap_socket(srv.socket, server_side=True)
+
+    # Also signal long-lived request handlers when legacy callers invoke
+    # srv.shutdown() directly instead of the newer stop_server() helper.
+    _original_shutdown = srv.shutdown
+    def _shutdown_with_stream_signal():
+        bus.stop_event.set()
+        return _original_shutdown()
+    srv.shutdown = _shutdown_with_stream_signal
+
     thread = threading.Thread(target=srv.serve_forever, daemon=True, name="mersad-http")
     srv._mersad_thread = thread
     thread.start()
