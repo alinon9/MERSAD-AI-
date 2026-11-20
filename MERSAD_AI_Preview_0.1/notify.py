@@ -4,7 +4,7 @@ Env: TELEGRAM_TOKEN (from @BotFather) | TELEGRAM_CHAT_ID (operations room) | TEL
 Never logs or exposes TELEGRAM_TOKEN or RTSP passwords in errors or logs.
 Enforces single-owner OS lock on getUpdates listener so multiple processes never compete on the same bot token.
 Records outcome metadata (ok / uncertain timeout / error) in LAST_SEND_OUTCOMES for P0-B dispatch lease recovery."""
-import hashlib, json, logging, os, re, socket, threading, time, urllib.error, urllib.request, uuid
+import hashlib, ipaddress, json, logging, os, re, socket, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 
 try:
     import fcntl
@@ -61,18 +61,58 @@ class UncertainDeliveryError(RuntimeError):
     pass
 
 
+def _telegram_api_base():
+    """Return a strictly validated Telegram API origin; HTTP is test-only loopback."""
+    raw = (os.getenv("TELEGRAM_API") or "https://api.telegram.org").strip()
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        if (
+            parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment or parsed.path not in ("", "/")
+            or not parsed.hostname
+        ):
+            raise ValueError("invalid Telegram API origin")
+        host = parsed.hostname.strip().lower().rstrip(".")
+        port = parsed.port
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("TELEGRAM_API must be a valid HTTPS Telegram API origin") from exc
+
+    if parsed.scheme.lower() == "https" and host == "api.telegram.org" and port in (None, 443):
+        return "https://api.telegram.org"
+    local_test_enabled = os.getenv("MERSAD_TELEGRAM_ALLOW_LOCAL_API", "").strip() == "1"
+    if parsed.scheme.lower() == "http" and local_test_enabled:
+        try:
+            local_ip = ipaddress.ip_address(host)
+            if local_ip.is_loopback and port is not None:
+                return f"http://{parsed.netloc}"
+        except ValueError:
+            if host == "localhost" and port is not None:
+                return f"http://{parsed.netloc}"
+    raise RuntimeError("Telegram API must use https://api.telegram.org; HTTP loopback is test-only")
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # The bot token is embedded in the URL path; never forward it to a redirect target.
+        return None
+
+
 def _call(method, fields=None, files=None, timeout=15, retries=2):
     tok = os.getenv("TELEGRAM_TOKEN", "").strip()
     if not tok:
         raise RuntimeError("TELEGRAM_TOKEN is not configured")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", str(method or "")):
+        raise RuntimeError("Invalid Telegram API method")
+    base = _telegram_api_base()
     body, ct = multipart(fields or {}, files)
-    url = f"{os.getenv('TELEGRAM_API', 'https://api.telegram.org').rstrip('/')}/bot{tok}/{method}"
+    url = f"{base}/bot{tok}/{method}"
+    opener = urllib.request.build_opener(_NoRedirectHandler())
     last_err = None
     timed_out = False
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, body, {"Content-Type": ct})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 raw = resp.read()
             res = json.loads(raw)
             if not res.get("ok", True):
