@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MERSAD LAB 1.0 — PREVIEW 0.1
-Comprehensive Functional & Security Test Suite (20 Checks)
+Comprehensive Functional & Security Test Suite (22 Checks)
 ==========================================================
 Covers:
 A. The 8 Mandatory Core Tests:
@@ -13,7 +13,7 @@ A. The 8 Mandatory Core Tests:
    6. LAB-06: OpenCV/FFmpeg virtual camera reading (`cv2.VideoCapture` over MJPEG HTTP URL).
    7. LAB-07: Image quality upload (`/api/analyze/image` multipart & raw JPEG).
    8. LAB-08: Video quality upload (`/api/analyze/video` valid synthetic MP4/AVI).
-B. The 12 New Security, Resilience & Lifecycle Tests:
+B. The 14 New Security, Resilience & Lifecycle Tests:
    9. LAB-SEC-01: Access control & token validation (`X-Lab-Token` / `require_auth=True` / invalid token `HTTP 401`).
    10. LAB-SEC-02: Host & Origin validation (DNS rebinding & foreign origin `HTTP 403`).
    11. LAB-SEC-03: CSRF & unexpected local access (`Origin: null`, cross-site `text/plain` POST blocked `HTTP 403`).
