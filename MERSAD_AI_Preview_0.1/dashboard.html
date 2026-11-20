@@ -210,8 +210,9 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div id="toast"></div>
 
 <script>
-const K=new URLSearchParams(location.search).get("k")||"",Q=K?"?k="+encodeURIComponent(K):"";
-const qSep=u=>Q?(u.includes("?")?u+"&"+Q.slice(1):u+Q):u;
+// Authentication is carried by the HttpOnly same-origin session cookie.
+// Never append credentials to API URLs, exports, stream URLs or browser history.
+const qSep=u=>u;
 const $=s=>document.querySelector(s),esc=s=>String(s??"").replace(/[&<>"']/g,c=>"&#"+c.charCodeAt(0)+";");
 const AR={"NEW PLATE (first sighting)":"لوحة غير مسجّلة (أول رصد)","UNUSUAL HOUR (learned pattern)":"ساعة غير معتادة (نمط متعلَّم)","TRUCK IN RESTRICTED HOURS":"شاحنة في ساعات المنع","FACE MATCH (demo watchlist)":"تطابق وجه محتمل (قائمة تجريبية) — يتطلب تحققاً بشرياً","VEHICLE: WANTED":"مركبة مطلوبة","VEHICLE: STOLEN":"مركبة مسروقة","POSSIBLE MATCH (visual check)":"تطابق محتمل — تحقق بصري (أحرف متعارضة/ملتبسة أو مسافة تحرير)","ANOMALY (learned pattern)":"شذوذ مكتشف بالتعلّم الآلي","ROUTE ANOMALY (impossible transit)":"اشتباه تعارض مسار مكاني-زماني معاير (يتطلب مراجعة)","ROUTE NOTICE (uncalibrated)":"ملاحظة مسار للعلم (حد افتراضي غير معاير)","VEHICLE: EXPIRED":"ترخيص منتهي","VEHICLE: WATCH":"مركبة تحت المراقبة"};
 const VT={car:"سيارة",truck:"شاحنة",bus:"حافلة",motorcycle:"دراجة نارية",other:"أخرى"};
@@ -452,7 +453,7 @@ async function loadIns(){
   const demoNote=(!DEMO_MODE&&m.demo_available>0)?` · <span class="chip wn">يوجد ${m.demo_available} سجل محاكاة تجريبي مخفي — فعّل «وضع استعراض بيانات المحاكاة التجريبية» لعرضه</span>`:"";
   $("#ins-st").innerHTML=m.ready?`<span class="chip ${r.includes_demo?'wn':'ok'}">النموذج جاهز (${esc(m.type||m.model_type||"")}) — ${r.includes_demo?'وضع تجريبي (Demo)':'رصد حي فقط (Live)'}</span> تدرّب على <b>${m.n}</b> رصد (${m.live} حقيقي · ${m.demo} تجريبي) · التوقيت ${esc(m.timezone||"")} · آخر تدريب ${fmt(m.trained)}${demoNote}`:`<span class="chip wn">غير مدرَّب (${esc(m.type||"—")}) — ${r.includes_demo?'وضع تجريبي':'رصد حي فقط'}</span> يلزم ${m.min_required||50} رصداً على الأقل (المتوفر حالياً: ${m.n||0}).${demoNote}`;
   const f=r.forecast;$("#ins-fc").innerHTML=f?chart(f.hours):'<p class="mu">لا توجد بيانات كافية للتوقّع في الوضع الحالي.</p>';
-  $("#ins-pk").innerHTML=f?`ساعات الذروة المتوقعة: ${f.peaks.map(x=>`<span class="chip wn">${x}</span>`).join(" ")} · الأعمدة = المتوسط المتوقع، والخط البرتقالي = ${esc(f.band_description_ar||"نطاق التشتت التجريبي (المتوسط ± 1.28×الانحراف المعياري)")} · مستوى الحركة الحالي ×${f.level}`:"";
+  $("#ins-pk").innerHTML=f?`ساعات الذروة المتوقعة: ${f.peaks.map(x=>`<span class="chip wn">${esc(x)}</span>`).join(" ")} · الأعمدة = المتوسط المتوقع، والخط البرتقالي = ${esc(f.band_description_ar||"نطاق التشتت التجريبي (المتوسط ± 1.28×الانحراف المعياري)")} · مستوى الحركة الحالي ×${f.level}`:"";
   const cor=r.corridors||[],pts=r.paths||[];
   $("#ins-cor").innerHTML=`<table><thead><tr><th>المسار (الاتجاه)</th><th>عدد المركبات</th><th>متوسط الانتقال</th><th>حالة المعايرة</th></tr></thead><tbody>${cor.map(c=>`<tr><td><b>${esc(c.route)}</b></td><td>${c.count}</td><td>${c.avg_min} د</td><td>${c.calibrated?'<span class="chip ok">معاير من المستخدم</span>':'<span class="chip wn">افتراضي تجريبي غير معاير</span>'}</td></tr>`).join("")||'<tr><td colspan="4" class="mu">لا توجد انتقالات مسجّلة بين الكاميرات بعد.</td></tr>'}</tbody></table>`;
   $("#ins-pt").innerHTML=`<table><thead><tr><th>اللوحة</th><th>المسار المرصود</th><th>مرات الرصد</th><th>الحالة</th></tr></thead><tbody>${pts.map(p=>`<tr><td>${plate(p.plate)}</td><td><b>${esc(p.route)}</b></td><td>${p.sightings}</td><td>${p.conflict?'<span class="chip er">اشتباه تعارض</span>':'<span class="chip ok">طبيعي</span>'}</td></tr>`).join("")||'<tr><td colspan="4" class="mu">لا توجد مسارات متعدّدة الكاميرات بعد.</td></tr>'}</tbody></table>`;
@@ -509,7 +510,7 @@ async function loadStats(){try{const s=await rJson("/api/stats");
  $("#rb").innerHTML=R(s.det24,"رصد خلال 24 ساعة")+R(s.trucks24,"شاحنات")+R(s.pending,"تنبيهات بانتظار القرار",s.pending>0)+R(s.failed_dispatches||0,"توجيهات لم تصل",(s.failed_dispatches||0)>0)+R(s.alerts,"تنبيهات اليوم")+R(s.confirmed,"مؤكّدة")+R(s.dismissed,"تحقق خاطئ")+R(s.vehicles,"مركبات مسجّلة")+R(s.persons,"أشخاص مسجّلون");
  const cams=s.cameras||{},camNames=Object.keys(cams);
  if(camNames.length>1){
-  $("#cam-sw").innerHTML=camNames.map(cn=>`<button data-cam="${esc(cn)}" class="${(CUR_CAM||camNames[0])==cn?'ok':''}">${esc(cn)} (${cams[cn].status})</button>`).join("");
+  $("#cam-sw").innerHTML=camNames.map(cn=>`<button data-cam="${esc(cn)}" class="${(CUR_CAM||camNames[0])==cn?'ok':''}">${esc(cn)} (${esc(cams[cn].status)})</button>`).join("");
  }else{$("#cam-sw").innerHTML=""}
  const C=(cls,dotOn,t)=>`<span class="chip ${cls}"><span class="dot ${dotOn?"on":""}" style="margin:0"></span>${t}</span>`;
  const camChips=camNames.length?camNames.map(cn=>{const st=cams[cn].status;return C(st=="online"?"ok":st=="reconnecting"?"wn":"er",st=="online",`${esc(cn)}: ${st=="online"?"متصل":st=="reconnecting"?"يعيد الاتصال...":"منقطع"}`)}).join("")

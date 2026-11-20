@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/mersad-preview-0.2-release-hardening
+      - security/batch2-server-hardening-20261120
   workflow_dispatch:
 
 concurrency:
@@ -48,6 +49,14 @@ jobs:
           python -X utf8 -u MERSAD_LAB_Preview_0.1\test_batch1_security.py -v 2>&1 | Tee-Object artifacts\batch1-logs\test_batch1_security.py.log
           if ($LASTEXITCODE -ne 0) { throw "Batch 1 LAB security tests failed ($LASTEXITCODE)" }
 
+      - name: Batch 2 LAB LAN, IPv6 and Cookie hardening
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_LAB_Preview_0.1\test_batch2_security.py -v 2>&1 | Tee-Object artifacts\batch1-logs\test_batch2_security.py.log
+          if ($LASTEXITCODE -ne 0) { throw "Batch 2 LAB security tests failed ($LASTEXITCODE)" }
+
       - name: MERSAD LAB functional and security suite
         shell: pwsh
         run: |
@@ -55,6 +64,14 @@ jobs:
           $env:PYTHONUTF8 = "1"
           python -X utf8 -u MERSAD_LAB_Preview_0.1\test_lab.py 2>&1 | Tee-Object artifacts\batch1-logs\test_lab.py.log
           if ($LASTEXITCODE -ne 0) { throw "MERSAD LAB test suite failed ($LASTEXITCODE)" }
+
+      - name: Batch 2 AI server, TLS, CSRF and Telegram regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_AI_Preview_0.1\test_batch2_security.py -v 2>&1 | Tee-Object artifacts\batch1-logs\test_batch2_ai_security.py.log
+          if ($LASTEXITCODE -ne 0) { throw "Batch 2 AI security tests failed ($LASTEXITCODE)" }
 
       - name: MERSAD AI self-test (standard)
         shell: pwsh

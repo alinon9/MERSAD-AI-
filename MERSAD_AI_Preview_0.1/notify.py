@@ -4,7 +4,8 @@ Env: TELEGRAM_TOKEN (from @BotFather) | TELEGRAM_CHAT_ID (operations room) | TEL
 Never logs or exposes TELEGRAM_TOKEN or RTSP passwords in errors or logs.
 Enforces single-owner OS lock on getUpdates listener so multiple processes never compete on the same bot token.
 Records outcome metadata (ok / uncertain timeout / error) in LAST_SEND_OUTCOMES for P0-B dispatch lease recovery."""
-import hashlib, json, logging, os, re, socket, threading, time, urllib.error, urllib.request, uuid
+import hashlib, ipaddress, json, logging, os, re, socket, threading, time, urllib.error, urllib.request, uuid
+from urllib.parse import urlsplit
 
 try:
     import fcntl
@@ -37,6 +38,39 @@ def _redact(msg):
     return s
 
 
+def _telegram_api_base():
+    """Validate Telegram API endpoint; insecure HTTP is loopback-only and explicit test opt-in."""
+    raw = (os.getenv("TELEGRAM_API") or "https://api.telegram.org").strip().rstrip("/")
+    try:
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+        if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+            raise ValueError("invalid Telegram API URL")
+        if parsed.path not in ("", "/") or not host:
+            raise ValueError("invalid Telegram API base path")
+        if parsed.scheme.lower() == "https":
+            allowed = {
+                item.strip().lower().rstrip(".")
+                for item in (os.getenv("TELEGRAM_ALLOWED_API_HOSTS", "api.telegram.org")).split(",")
+                if item.strip()
+            }
+            if host not in allowed or port not in (None, 443):
+                raise ValueError("Telegram API host is not allowlisted")
+        elif parsed.scheme.lower() == "http":
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = host == "localhost"
+            if not loopback or os.getenv("MERSAD_ALLOW_INSECURE_TELEGRAM_TEST") != "1":
+                raise ValueError("insecure Telegram API transport is allowed only for explicit loopback tests")
+        else:
+            raise ValueError("Telegram API must use HTTPS")
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("TELEGRAM_API must be HTTPS to an allowlisted host") from exc
+    return raw
+
+
 def _is_timeout_error(err):
     if isinstance(err, (TimeoutError, socket.timeout)):
         return True
@@ -66,7 +100,7 @@ def _call(method, fields=None, files=None, timeout=15, retries=2):
     if not tok:
         raise RuntimeError("TELEGRAM_TOKEN is not configured")
     body, ct = multipart(fields or {}, files)
-    url = f"{os.getenv('TELEGRAM_API', 'https://api.telegram.org').rstrip('/')}/bot{tok}/{method}"
+    url = f"{_telegram_api_base()}/bot{tok}/{method}"
     last_err = None
     timed_out = False
     for attempt in range(retries + 1):
@@ -291,8 +325,8 @@ def start_listener(on_press, stop_event=None):
                 try:
                     r = _call(
                         "getUpdates",
-                        {"offset": off, "timeout": 15, "allowed_updates": json.dumps(["callback_query"])},
-                        timeout=20,
+                        {"offset": off, "timeout": 3, "allowed_updates": json.dumps(["callback_query"])},
+                        timeout=5,
                         retries=0
                     )
                     allowed_users = {
