@@ -1,0 +1,91 @@
+name: MERSAD Batch 2 Server Security Regression
+
+on:
+  push:
+    branches:
+      - fix/mersad-batch2-server-security
+  workflow_dispatch:
+
+concurrency:
+  group: mersad-batch2-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-server-security:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Batch 2 branch
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
+          python -m pip install numpy==1.26.4 opencv-python==4.11.0.86 Pillow==10.4.0 openpyxl==3.1.5 scikit-learn==1.5.2
+          if ($LASTEXITCODE -ne 0) { throw "test dependencies installation failed ($LASTEXITCODE)" }
+          New-Item -ItemType Directory -Force -Path artifacts\batch2-logs | Out-Null
+
+      - name: Batch 1 security regression baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_LAB_Preview_0.1\test_batch1_security.py -v 2>&1 | Tee-Object artifacts\batch2-logs\batch1-security.log
+          if ($LASTEXITCODE -ne 0) { throw "Batch 1 security regression failed ($LASTEXITCODE)" }
+
+      - name: Batch 2 AUD-009 LAB Host Origin and LAN authentication
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_LAB_Preview_0.1\test_batch2_server_security.py -v 2>&1 | Tee-Object artifacts\batch2-logs\batch2-lab-security.log
+          if ($LASTEXITCODE -ne 0) { throw "Batch 2 LAB security tests failed ($LASTEXITCODE)" }
+
+      - name: MERSAD LAB functional and security suite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          python -X utf8 -u MERSAD_LAB_Preview_0.1\test_lab.py 2>&1 | Tee-Object artifacts\batch2-logs\test_lab.log
+          if ($LASTEXITCODE -ne 0) { throw "MERSAD LAB suite failed ($LASTEXITCODE)" }
+
+      - name: MERSAD AI self-test (standard)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          Remove-Item Env:MERSAD_BLOCK_SKLEARN -ErrorAction SilentlyContinue
+          python -X utf8 -u MERSAD_AI_Preview_0.1\selftest.py 2>&1 | Tee-Object artifacts\batch2-logs\selftest-standard.log
+          if ($LASTEXITCODE -ne 0) { throw "MERSAD AI selftest failed ($LASTEXITCODE)" }
+
+      - name: MERSAD AI self-test (without scikit-learn)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          $env:MERSAD_BLOCK_SKLEARN = "1"
+          python -X utf8 -u MERSAD_AI_Preview_0.1\selftest.py 2>&1 | Tee-Object artifacts\batch2-logs\selftest-no-sklearn.log
+          if ($LASTEXITCODE -ne 0) { throw "MERSAD AI selftest without scikit-learn failed ($LASTEXITCODE)" }
+
+      - name: Upload Batch 2 test logs
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: MERSAD_Batch2_Windows_Test_Logs
+          path: artifacts/batch2-logs/
+          if-no-files-found: warn
