@@ -41,10 +41,14 @@ class MersadBatch2SecurityTests(unittest.TestCase):
             return exc.code, dict(exc.headers), exc.read()
 
     def test_bracketed_ipv6_host_is_parsed_and_wrong_port_rejected(self):
-        # Unauthenticated local GET is permitted when require_auth is disabled;
-        # this isolates Host parsing from the separate token-authentication path.
+        # Supply a valid credential so this assertion isolates Host parsing
+        # from the independent authentication layer.
         status, _, _ = self.request(
-            "/", headers={"Host": f"[::1]:{self.httpd.server_address[1]}"}
+            "/",
+            headers={
+                "Host": f"[::1]:{self.httpd.server_address[1]}",
+                "X-Mersad-Token": "batch2-server-test-secret",
+            },
         )
         self.assertEqual(status, 200)
 
