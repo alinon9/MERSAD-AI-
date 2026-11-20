@@ -4450,21 +4450,14 @@ def main():
         if a.plate_model:
             yolo = load_verified_yolo_model(a.plate_model, role="plate", min_bytes=1024, enforce_trusted=True)
         if not a.no_vehicles:
-            # AUD-003: no implicit Ultralytics download/fallback is allowed.
-            # Every checkpoint must pass the centralized trusted-model gate.
             yolo_p = resolve_resource_path(os.path.join("models", "yolov8n.pt"))
-            vyolo = load_verified_yolo_model(
-                yolo_p,
-                role="vehicle",
-                min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
-                enforce_trusted=True,
-            )
+            vyolo = _load_optional_vehicle_yolo(yolo_p)
     except Exception as e:
         vyolo = None
         logger.error("Verified vehicle model unavailable; vehicle detection disabled (%s)", type(e).__name__)
         if os.environ.get("MERSAD_STRICT_MODEL_VERIFICATION", "0").strip() == "1":
             raise
-    register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")
+    register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")    register_shared_engines(reader=reader, vyolo=vyolo, yolo=yolo, plate_model_path=a.plate_model or "")
     trucks_only = a.trucks_only and vyolo is not None
     yunet_p = resolve_resource_path(os.path.join("models", "yunet.onnx"))
     sface_p = resolve_resource_path(os.path.join("models", "sface.onnx"))
@@ -5256,6 +5249,22 @@ def load_verified_yolo_model(model_path, role="plate", min_bytes=1024, enforce_t
             _SHARED_ENGINES["temp_custom_yolo"] = mdl
             _SHARED_ENGINES["temp_custom_path"] = real_p
     return mdl
+
+
+def _load_optional_vehicle_yolo(model_path):
+    """Load the optional vehicle detector only through the trusted model gate; fail closed on every error."""
+    try:
+        return load_verified_yolo_model(
+            model_path,
+            role="vehicle",
+            min_bytes=MODEL_MIN_BYTES.get("yolov8n.pt", 6_000_000),
+            enforce_trusted=True,
+        )
+    except Exception as exc:
+        logger.error("Verified vehicle model unavailable; vehicle detection disabled (%s)", type(exc).__name__)
+        if os.environ.get("MERSAD_STRICT_MODEL_VERIFICATION", "0").strip() == "1":
+            raise
+        return None
 
 
 def _validate_safe_dataset_dir(dataset_path):
