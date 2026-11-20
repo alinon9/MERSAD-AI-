@@ -26,6 +26,8 @@ B. The 12 New Security, Resilience & Lifecycle Tests:
    18. LAB-SEC-10: Video processing timeout enforcement (`HTTP 504 Gateway Timeout` when exceeding deadline).
    19. LAB-SEC-11: Rapid start/stop lifecycle stability (multiple sequential controller cycles on ephemeral ports).
    20. LAB-SEC-12: Zero hanging processes, threads, or bound ports after server shutdown.
+   21. LAB-SEC-13: Unauthenticated GET / does not issue an auth cookie; cookie-only POST is rejected.
+   22. LAB-SEC-14: AI integration failures return a generic 502 without leaking exception details.
 """
 import io
 import json
@@ -39,6 +41,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from unittest import mock
 
 # Windows CI may expose a legacy console code page (for example cp1252), while
 # quality grades and API diagnostics intentionally contain Arabic text.
@@ -54,6 +57,7 @@ for _stream in (sys.stdout, sys.stderr):
 import cv2
 import numpy as np
 
+import lab_server
 from lab_server import LabServerController, get_process_telemetry, resolve_lab_asset
 from sim_engine import render_synthetic_camera_frame
 
@@ -124,7 +128,7 @@ def _create_synthetic_video_bytes(num_frames: int = 12, width: int = 320, height
 
 def run_all_tests():
     print("==================================================================")
-    print("  MERSAD LAB 1.0 (PREVIEW 0.1) — 20-Check Functional & Security Suite")
+    print("  MERSAD LAB 1.0 (PREVIEW 0.1) — 22-Check Functional & Security Suite")
     print("==================================================================")
 
     ctrl = LabServerController(host="127.0.0.1", port=0, token="lab_test_secret_token_2026", require_auth=False)
@@ -572,6 +576,78 @@ def run_all_tests():
         ok("LAB-SEC-12: Zero hanging processes/threads/ports on close", f"port {test_port} released, lingering_threads=0")
     except Exception as e:
         fail("LAB-SEC-12: Zero hanging processes/threads/ports on close", str(e))
+
+    # ----------------------------------------------------------------------
+    # 21. LAB-SEC-13: Unauthenticated root GET cannot bootstrap mutation auth via Cookie
+    # ----------------------------------------------------------------------
+    try:
+        cookie_ctrl = LabServerController(
+            host="127.0.0.1", port=0, token="lab_test_secret_token_2026", require_auth=False
+        )
+        cookie_ctrl.start()
+        try:
+            cookie_base = f"http://127.0.0.1:{cookie_ctrl.port}"
+            st_root, root_headers, _ = _http_req(f"{cookie_base}/")
+            issued_cookie = root_headers.get("Set-Cookie", "")
+            # Simulate a client that only possesses the cookie, even if it somehow knows
+            # the expected value. A state-changing request must still require a header.
+            cookie_only = issued_cookie.split(";", 1)[0] if issued_cookie else "mersad_lab_k=lab_test_secret_token_2026"
+            st_cookie_post, _, _ = _http_req(
+                f"{cookie_base}/api/cameras/cam1/mode",
+                method="POST",
+                data=json.dumps({"mode": "normal"}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lab-Token": "",
+                    "Cookie": cookie_only,
+                },
+            )
+            assert st_root == 200 and not issued_cookie and st_cookie_post == 401, (
+                f"root={st_root}, set_cookie={bool(issued_cookie)}, cookie_post={st_cookie_post}"
+            )
+            ok("LAB-SEC-13: No unauthenticated cookie bootstrap; cookie-only mutation rejected",
+               f"GET /={st_root}, Set-Cookie absent, cookie-only POST={st_cookie_post}")
+        finally:
+            cookie_ctrl.stop()
+    except Exception as e:
+        fail("LAB-SEC-13: No unauthenticated cookie bootstrap; cookie-only mutation rejected", str(e))
+
+    # ----------------------------------------------------------------------
+    # 22. LAB-SEC-14: AI integration errors do not expose raw exception content
+    # ----------------------------------------------------------------------
+    try:
+        error_ctrl = LabServerController(
+            host="127.0.0.1", port=0, token="lab_test_secret_token_2026", require_auth=False
+        )
+        error_ctrl.start()
+        try:
+            error_base = f"http://127.0.0.1:{error_ctrl.port}"
+            raw_marker = "RAW_EXCEPTION_SECRET_MUST_NOT_LEAK"
+            with mock.patch.object(
+                lab_server, "_validate_ai_connect_url",
+                return_value={"scheme": "http", "host": "127.0.0.1", "port": 8765, "pinned_ip": "127.0.0.1", "path": "/api/cameras/add"},
+            ), mock.patch.object(
+                lab_server, "_send_pinned_ai_request",
+                side_effect=RuntimeError(raw_marker),
+            ):
+                st_502, _, body_502 = _http_req(
+                    f"{error_base}/api/integration/connect_ai",
+                    method="POST",
+                    data=json.dumps({
+                        "ai_url": "http://127.0.0.1:8765",
+                        "ai_token": "test-ai-token",
+                        "cam_id": "cam1",
+                    }).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+            assert st_502 == 502 and raw_marker.encode("ascii") not in body_502
+            assert "تعذّر الاتصال بخادم مرصاد".encode("utf-8") in body_502
+            ok("LAB-SEC-14: Generic AI integration 502 response",
+               f"HTTP {st_502}; raw exception marker not present")
+        finally:
+            error_ctrl.stop()
+    except Exception as e:
+        fail("LAB-SEC-14: Generic AI integration 502 response", str(e))
 
     print("==================================================================")
     print(f"  TOTAL: {PASS} PASS, {FAIL} FAIL (Out of {PASS + FAIL} checks)")
