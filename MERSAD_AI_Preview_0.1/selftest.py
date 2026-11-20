@@ -5894,7 +5894,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 and cmp_data.get("phase2_comparison_status") == "BLOCKED"
                 and suites_js.get("original_lab", {}).get("status") == "BLOCKED"
                 and suites_js.get("cleanroom_lab", {}).get("status") == "PASS"
-                and suites_js.get("cleanroom_lab", {}).get("passed") == 20
+                and suites_js.get("cleanroom_lab", {}).get("passed") == 22
                 and "--require-cleanroom-pass" in ps1_txt_chk
                 and "--require-unblocked" not in ps1_txt_chk
             )
