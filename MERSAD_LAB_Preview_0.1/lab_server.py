@@ -51,7 +51,7 @@ MAX_MJPEG_STREAMS = 16
 
 # AUD-002: allowlisted, DNS-pinned LAB -> AI connection. No redirects are followed.
 _AI_MAX_RESPONSE_BYTES = 1024 * 1024
-_AI_LOCAL_ALLOWED_PORTS = {80, 443, 8765}
+_AI_LOCAL_ALLOWED_PORTS = {80, 443, 8000, 8765}
 _AI_REMOTE_ALLOWED_PORTS = {443, 8443, 8000, 8765}
 
 
@@ -490,7 +490,9 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             if "mersad_lab_k" in c:
                 c_tok = c["mersad_lab_k"].value
 
-        provided = h_tok or q_tok or c_tok
+        # State-changing requests must authenticate with an explicit header.
+        # Browser cookies and query-string tokens are never accepted for mutations.
+        provided = h_tok or q_tok or ("" if require_for_mutation else c_tok)
         expected = self.state.token
 
         if provided and not secrets.compare_digest(provided, expected):
@@ -534,7 +536,6 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(raw_html)))
-            self.send_header("Set-Cookie", f"mersad_lab_k={self.state.token}; HttpOnly; SameSite=Strict; Path=/")
             self._send_security_headers()
             self.end_headers()
             self.wfile.write(raw_html)
