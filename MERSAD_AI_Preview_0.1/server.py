@@ -457,7 +457,11 @@ class H(BaseHTTPRequestHandler):
                 res = {"ok": False, "error": "تعذّر معالجة الطلب"}
                 response_code = 500
             else:
-                response_code = 400 if isinstance(res, dict) and res.get("ok") is False else 200
+                # A handled business decision may validly return {"ok": false}
+                # while the HTTP request itself was processed successfully.
+                # Keep that application result as HTTP 200; malformed input is
+                # 400 and unexpected server exceptions are 500 (above).
+                response_code = 200
             self._json(res, code=response_code)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
