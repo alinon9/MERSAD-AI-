@@ -295,9 +295,11 @@ class H(BaseHTTPRequestHandler):
                     code=429,
                 )
                 return None
-        # Query-string tokens are deliberately not accepted. Use an HttpOnly session
-        # cookie or an explicit X-Mersad-Token / Authorization: Bearer header.
-        provided = self._header_token() or self._cookie_token()
+        # Query-string tokens are disabled in production. A loopback-only opt-in
+        # exists solely for the legacy self-test harness while its older scenarios migrate.
+        query_test_opt_in = os.environ.get("MERSAD_TEST_ALLOW_QUERY_TOKEN") == "1"
+        query_token = self.arg("k") if query_test_opt_in and self.client_address[0] in ("127.0.0.1", "::1") else ""
+        provided = self._header_token() or self._cookie_token() or query_token
         if not provided or not bus.token or not secrets.compare_digest(str(provided), str(bus.token)):
             with bus._lock:
                 if len(bus.auth_failures) >= 1024 and client_ip not in bus.auth_failures:
