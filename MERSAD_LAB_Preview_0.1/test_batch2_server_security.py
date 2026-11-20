@@ -107,5 +107,24 @@ class Batch2LabHostSecurityTests(unittest.TestCase):
             conn.close()
 
 
+    def test_non_loopback_bind_is_rejected_before_socket_creation(self):
+        with mock.patch.object(lab_server, "LabHTTPServer") as server_factory:
+            with self.assertRaises(ValueError):
+                lab_server.LabServerController(host="0.0.0.0", port=0, allow_lan=False)
+            server_factory.assert_not_called()
+
+    def test_explicit_lan_bind_forces_authentication(self):
+        fake_server = mock.MagicMock()
+        fake_server.server_address = ("0.0.0.0", 8090)
+        with mock.patch.object(lab_server, "LabHTTPServer", return_value=fake_server) as server_factory:
+            controller = lab_server.LabServerController(
+                host="0.0.0.0", port=8090, token="batch2-test-token",
+                require_auth=False, allow_lan=True,
+            )
+        self.assertTrue(controller.state.require_auth)
+        self.assertIs(controller.httpd, fake_server)
+        server_factory.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
