@@ -6,6 +6,10 @@ on:
       - fix/mersad-preview-0.2-release-hardening
   workflow_dispatch:
 
+concurrency:
+  group: mersad-batch1-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
