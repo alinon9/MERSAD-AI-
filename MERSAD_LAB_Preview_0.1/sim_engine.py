@@ -315,10 +315,26 @@ def _decode_video_worker(tmp_path: str, max_sampled_frames: int, deadline_monoto
         cap.release()
 
 
+def _has_supported_video_signature(raw_bytes: bytes) -> bool:
+    """Accept the MP4/ISO-BMFF and AVI/RIFF containers exposed by the LAB upload UI."""
+    if not isinstance(raw_bytes, (bytes, bytearray, memoryview)) or len(raw_bytes) < 12:
+        return False
+    data = bytes(raw_bytes)
+    if data[:4] == b"RIFF" and data[8:12] in (b"AVI ", b"AVIX"):
+        return True
+    if data[4:8] == b"ftyp":
+        return True
+    return False
+
+
 def analyze_video_bytes(raw_bytes: bytes, timeout_sec: float = 8.0, max_sampled_frames: int = 60, artificial_delay_per_frame: float = 0.0) -> dict:
-    """Safely write video bytes to an isolated temp file, analyze frames with a strict timeout, and guarantee temp cleanup."""
+    """Safely analyze MP4/AVI bytes; reject invalid container signatures before invoking native decoders."""
     if not raw_bytes or len(raw_bytes) < 32:
         return {"ok": False, "status_code": 400, "error": "ملف الفيديو فارغ أو صغير جداً"}
+    # Untrusted arbitrary bytes can make native multimedia probes spend a long
+    # time attempting format detection. The LAB UI advertises MP4 and AVI only.
+    if not _has_supported_video_signature(raw_bytes):
+        return {"ok": False, "status_code": 400, "error": "تنسيق الفيديو غير مدعوم أو ترويسة الملف غير صالحة"}
     fd, tmp_path = tempfile.mkstemp(prefix="mersad_lab_vid_", suffix=".avi")
     try:
         with os.fdopen(fd, "wb") as f:
