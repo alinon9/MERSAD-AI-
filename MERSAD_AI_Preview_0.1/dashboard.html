@@ -84,14 +84,14 @@ ul{margin:4px 0;padding-inline-start:18px}
 <section id="t-persons" hidden></section>
 <section id="t-insights" hidden>
 <div id="ins-demo-banner" class="notice" hidden style="border-color:var(--wn);background:#2b1d07;color:#fcd34d;font-weight:700">⚠️ تنبيه وضع المحاكاة التجريبية (Demo Mode): جميع المؤشرات والمسارات المعروضة أدناه تشمل بيانات محاكاة اصطناعية (src='demo') وليست رصداً ميدانياً حياً.</div>
-<div class="c"><div class="bar"><h2>حالة نموذج التعلّم</h2><label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer"><input type="checkbox" id="ins-demo-mode" onchange="toggleDemoMode(this.checked)"> وضع استعراض بيانات المحاكاة التجريبية (Demo Mode)</label><button onclick="insAct('train')">إعادة التدريب</button><button class="ok" onclick="insAct('seed')">توليد تاريخ تجريبي (30 يوماً)</button><button class="er" onclick="insAct('clear')">حذف البيانات التجريبية</button></div>
+<div class="c"><div class="bar"><h2>حالة نموذج التعلّم</h2><label style="display:flex;align-items:center;gap:6px;font-size:.82rem;cursor:pointer"><input type="checkbox" id="ins-demo-mode" data-action="toggle-demo-mode"> وضع استعراض بيانات المحاكاة التجريبية (Demo Mode)</label><button data-action="ins-train">إعادة التدريب</button><button class="ok" data-action="ins-seed">توليد تاريخ تجريبي (30 يوماً)</button><button class="er" data-action="ins-clear">حذف البيانات التجريبية</button></div>
 <div id="ins-st" class="mu">...</div><p class="mu">الوضع الافتراضي يعرض ويحلل البيانات الحية فقط (src='live'). عند توليد تاريخ تجريبي، فعّل «وضع استعراض بيانات المحاكاة التجريبية» لاستعراض مسارات وتوقعات المحاكاة دون خلطها بالرصد الحي.</p></div>
 <div class="c"><h2>توقّع حركة المرور خلال 24 ساعة القادمة (تحليل الأنماط والاتجاهات)</h2><div id="ins-fc"></div><div id="ins-pk" class="mu"></div></div>
-<div class="c"><div class="bar"><h2>تتبع المسارات والاتجاهات عبر الكاميرات</h2><input id="path-q" placeholder="أدخل رقم اللوحة الكامل أو الأرقام..." onkeydown="if(event.key==='Enter')tracePlate()"><button class="ok" onclick="tracePlate()">تتبع المسار</button></div>
+<div class="c"><div class="bar"><h2>تتبع المسارات والاتجاهات عبر الكاميرات</h2><input id="path-q" placeholder="أدخل رقم اللوحة الكامل أو الأرقام..." data-action="trace-enter"><button class="ok" data-action="trace-plate">تتبع المسار</button></div>
 <div id="path-res" style="margin-bottom:12px"></div>
 <div class="g"><div><h2 style="font-size:.88rem;color:var(--mu)">أبرز محاور واتجاهات الحركة بين الكاميرات</h2><div class="tw" id="ins-cor"></div></div>
 <div><h2 style="font-size:.88rem;color:var(--mu)">أحدث مسارات المركبات المرصودة</h2><div class="tw" id="ins-pt"></div></div></div></div>
-<div id="ins-cl-slot"><div class="c" id="cl-card-master"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button onclick="resetCameraLinkForm()">+ إضافة رابط كاميرات جديد</button><button class="ok" onclick="autoCalibrateCameraLinks()">⚡ معايرة تلقائية من السجلات</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportCameraLinks(this.files[0]);this.value=''"></label></div></div>
+<div id="ins-cl-slot"><div class="c" id="cl-card-master"><div class="bar"><h2>معايرة روابط الكاميرات — Camera Link Calibration</h2><div class="bt" style="margin:0"><button data-action="reset-camera-link">+ إضافة رابط كاميرات جديد</button><button class="ok" data-action="auto-calibrate-camera-links">⚡ معايرة تلقائية من السجلات</button><a class="btn" id="cl-export-json" href="/api/camera_links/export?fmt=json">تصدير JSON</a><a class="btn" id="cl-export-csv" href="/api/camera_links/export?fmt=csv">تصدير CSV</a><label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" data-action="import-camera-links"></label></div></div>
 <p class="mu">إدارة وحفظ أزمنة الانتقال الميدانية بين الكاميرات (وحدة التخزين المعيارية: الثانية). تُربط هذه المعايرة مباشرة بمحرك تتبع المسارات وكشف تعارض الانتقال وتقليل المطابقات الخاطئة.</p>
 <input type="hidden" id="cl-mode" value="upsert">
 <div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
@@ -108,11 +108,11 @@ ul{margin:4px 0;padding-inline-start:18px}
 <select id="cl-msrc" title="مصدر القياس" style="max-width:185px"><option value="manual">يدوي (تقدير المشغّل)</option><option value="field_data">مستمد من بيانات ميدانية</option><option value="computed_logs">محسوب من سجلات فعلية</option></select>
 <input id="cl-via" placeholder="كاميرا وسيطة (via)" style="max-width:140px">
 <input id="cl-notes" placeholder="ملاحظات إضافية..." style="min-width:180px;flex:1">
-<button class="ok" id="cl-save-btn" onclick="saveCameraLink()">حفظ المعايرة</button>
+<button class="ok" id="cl-save-btn" data-action="save-camera-link">حفظ المعايرة</button>
 </div>
 <div class="bar" style="margin-top:8px;gap:8px;justify-content:flex-start">
-<input id="cl-filter-q" placeholder="بحث بالكاميرا أو الملاحظات..." oninput="loadCameraLinks()" style="max-width:220px">
-<select id="cl-filter-status" onchange="loadCameraLinks()" style="max-width:210px"><option value="all">جميع الحالات</option><option value="complete">معايرة مكتملة فقط</option><option value="needs_data">تحتاج بيانات إضافية</option><option value="inferred">الروابط المستنتجة (قفزتان)</option><option value="explicit">الروابط المباشرة فقط</option></select>
+<input id="cl-filter-q" placeholder="بحث بالكاميرا أو الملاحظات..." data-action="load-camera-links" style="max-width:220px">
+<select id="cl-filter-status" data-action="load-camera-links" style="max-width:210px"><option value="all">جميع الحالات</option><option value="complete">معايرة مكتملة فقط</option><option value="needs_data">تحتاج بيانات إضافية</option><option value="inferred">الروابط المستنتجة (قفزتان)</option><option value="explicit">الروابط المباشرة فقط</option></select>
 </div>
 <div id="cl-msg" class="mu" style="margin:6px 0"></div>
 <div class="tw" id="cl-table"></div>
@@ -120,19 +120,19 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="c"><h2>أبرز الحالات الشاذة والاشتباهات المكتشفة (تتطلب مراجعة بشرية)</h2><div class="tw" id="ins-an"></div></div>
 </section>
 <section id="t-analytics" hidden>
-<div class="c"><div class="bar"><h2>مركز القيادة والتحليلات التشغيلية</h2><button class="ok" onclick="loadAnalytics()">تحديث البيانات</button><a class="btn" id="analytics-export" href="/api/analytics/export.csv">تصدير ملخص CSV</a></div><p class="mu">البيانات الحية فقط خلال آخر 24 ساعة مقارنةً بالـ24 ساعة السابقة. التوصيات قواعد تشغيلية واضحة وليست قرارات آلية.</p><div id="an-status" class="mu">جارٍ تحميل التحليلات...</div><div id="an-kpis" class="ribbon" style="margin:10px 0"></div></div>
+<div class="c"><div class="bar"><h2>مركز القيادة والتحليلات التشغيلية</h2><button class="ok" data-action="load-analytics">تحديث البيانات</button><a class="btn" id="analytics-export" href="/api/analytics/export.csv">تصدير ملخص CSV</a></div><p class="mu">البيانات الحية فقط خلال آخر 24 ساعة مقارنةً بالـ24 ساعة السابقة. التوصيات قواعد تشغيلية واضحة وليست قرارات آلية.</p><div id="an-status" class="mu">جارٍ تحميل التحليلات...</div><div id="an-kpis" class="ribbon" style="margin:10px 0"></div></div>
 <div class="g"><div class="c"><h2>اتجاه الرصد — آخر 24 ساعة</h2><div id="an-trend"></div><p id="an-period-compare" class="mu"></p></div><div class="c"><h2>توزيع فئات المركبات</h2><div id="an-classes"></div><h2 style="margin-top:18px">توزيع ثقة قراءة اللوحات</h2><div id="an-confidence"></div></div></div>
 <div class="c"><h2>مؤشرات صحة الكاميرات</h2><div class="tw" id="an-cameras"></div></div>
 <div class="c"><h2>ملخص التنبيهات والتوجيهات</h2><div id="an-alerts" class="ribbon"></div></div>
 <div class="c"><h2>التوصيات التشغيلية</h2><div id="an-recommendations"></div></div>
 </section>
 <section id="t-health" hidden>
-<div class="c"><div class="bar"><h2>موثوقية الكاميرات وسجل الانقطاع</h2><div class="bt" id="health-periods"><button data-period="24h" class="ok">24 ساعة</button><button data-period="7d">7 أيام</button><button data-period="30d">30 يومًا</button></div><a class="btn" id="health-export" href="/api/camera-health/export.csv?period=24h">تصدير CSV</a><button onclick="loadCameraHealth()">تحديث</button></div><p id="health-note" class="mu">تُحسب الموثوقية من فترات الحالة المرصودة فقط؛ لا تُفترض استمرارية الحالة خلال توقف التطبيق.</p><div id="health-summary" class="tw"></div></div>
+<div class="c"><div class="bar"><h2>موثوقية الكاميرات وسجل الانقطاع</h2><div class="bt" id="health-periods"><button data-period="24h" class="ok">24 ساعة</button><button data-period="7d">7 أيام</button><button data-period="30d">30 يومًا</button></div><a class="btn" id="health-export" href="/api/camera-health/export.csv?period=24h">تصدير CSV</a><button data-action="load-camera-health">تحديث</button></div><p id="health-note" class="mu">تُحسب الموثوقية من فترات الحالة المرصودة فقط؛ لا تُفترض استمرارية الحالة خلال توقف التطبيق.</p><div id="health-summary" class="tw"></div></div>
 <div class="c"><h2>الأحداث الأخيرة لتغير حالة الكاميرا</h2><div class="tw" id="health-events"></div></div>
 </section>
 <section id="t-calibration" hidden>
 <div class="c" id="rd-score-card">
-<div class="bar"><h2>مؤشر الجاهزية الهندسية والميدانية الشامل — System & Field Readiness Scorecard</h2><button onclick="loadReadinessReport()">تحديث مؤشر الجاهزية</button></div>
+<div class="bar"><h2>مؤشر الجاهزية الهندسية والميدانية الشامل — System & Field Readiness Scorecard</h2><button data-action="load-readiness">تحديث مؤشر الجاهزية</button></div>
 <div id="rd-score-box" class="mu">جارٍ فحص جاهزية الكود والأمن والبناء وأدوات المعايرة...</div>
 </div>
 <div id="cal-cl-slot"></div>
@@ -141,10 +141,10 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="c">
 <div class="bar"><h2>2. تقييم ومعايرة اللوحات اليمنية — Yemeni Plate Evaluation</h2>
 <div class="bt" style="margin:0">
-<button onclick="inspectEvalDataset()">فحص مجموعة البيانات</button>
-<button onclick="initFolderGroundTruth()">توليد ground_truth.csv لصور المجلد</button>
-<button class="ok" id="pe-start-btn" onclick="startPlateEval()">بدء التقييم الآلي</button>
-<button class="er" id="pe-cancel-btn" onclick="cancelPlateEval()" disabled>إلغاء التقييم الجاري</button>
+<button data-action="inspect-eval-dataset">فحص مجموعة البيانات</button>
+<button data-action="init-ground-truth">توليد ground_truth.csv لصور المجلد</button>
+<button class="ok" id="pe-start-btn" data-action="start-plate-eval">بدء التقييم الآلي</button>
+<button class="er" id="pe-cancel-btn" data-action="cancel-plate-eval" disabled>إلغاء التقييم الجاري</button>
 <a class="btn" id="pe-template-csv" href="/api/plate_eval/template?fmt=csv">تحميل قالب CSV</a>
 <a class="btn" id="pe-export-json" href="/api/plate_eval/export?fmt=json">تصدير JSON</a>
 <a class="btn" id="pe-export-csv" href="/api/plate_eval/export?fmt=csv">تصدير CSV</a>
@@ -152,14 +152,14 @@ ul{margin:4px 0;padding-inline-start:18px}
 <p class="mu">أجرِ التقييم المعياري لقراءة اللوحات اليمنية مباشرة من الواجهة دون الحاجة لكتابة أوامر في الطرفية (يستدعي نفس المحرك البرمجي لـ <code>--evaluate-plates</code> مع الفصل الصارم بين دقة اكتشاف اللوحة، ودقة قراءة المحارف والأرقام، والمطابقة الكاملة للوحة).</p>
 <div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">
 <input id="pe-dataset-path" placeholder="مسار مجلد مجموعة البيانات أو ملف ground_truth.csv..." style="min-width:260px;flex:1">
-<button onclick="browseEvalPath('folder','#pe-dataset-path')">اختيار مجلد محلي</button>
-<label class="btn">رفع صور + ground_truth.csv من المتصفح<input type="file" id="pe-upload-files" hidden multiple accept=".csv,.json,.jpg,.jpeg,.png,.bmp,.webp" onchange="uploadEvalDataset(this.files);this.value=''"></label>
+<button data-action="browse-eval-folder">اختيار مجلد محلي</button>
+<label class="btn">رفع صور + ground_truth.csv من المتصفح<input type="file" id="pe-upload-files" hidden multiple accept=".csv,.json,.jpg,.jpeg,.png,.bmp,.webp" data-action="upload-eval-dataset"></label>
 </div>
 <div class="bar" style="gap:8px;flex-wrap:wrap;justify-content:flex-start;margin-top:8px">
 <input id="pe-plate-model" placeholder="مسار نموذج مخصص للوحات اليمنية (.pt) اختياري — يكافئ --plate-model PATH" style="min-width:260px;flex:1">
-<button onclick="browseEvalPath('file','#pe-plate-model')">اختيار ملف نموذج (.pt)</button>
-<button onclick="validateEvalModel()">التحقق من توافق النموذج</button>
-<button class="ok" onclick="registerEvalModel()">اعتماد النموذج في السجل الموثوق</button>
+<button data-action="browse-eval-model">اختيار ملف نموذج (.pt)</button>
+<button data-action="validate-eval-model">التحقق من توافق النموذج</button>
+<button class="ok" data-action="register-eval-model">اعتماد النموذج في السجل الموثوق</button>
 <label style="display:flex;align-items:center;gap:6px;font-size:.84rem;cursor:pointer;padding:4px 8px;border:1px solid var(--ln);border-radius:8px;background:var(--pan2)"><input type="checkbox" id="pe-use-vyolo" checked> تفعيل كاشف المركبات (<code>--use-vehicle-detector</code>)</label>
 </div>
 <div id="pe-inspect-box" class="mu" style="margin:8px 0"></div>
@@ -175,10 +175,10 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="c">
 <div class="bar"><h2>3. تسجيل نتائج المعايرة اليدوية — Manual Field Calibration Registry</h2>
 <div class="bt" style="margin:0">
-<button onclick="resetManualCalForm()">+ قياس يدوي جديد</button>
+<button data-action="reset-manual-cal">+ قياس يدوي جديد</button>
 <a class="btn" id="fc-export-json" href="/api/field_calibrations/export?fmt=json">تصدير JSON</a>
 <a class="btn" id="fc-export-csv" href="/api/field_calibrations/export?fmt=csv">تصدير CSV</a>
-<label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" onchange="doImportManualCal(this.files[0]);this.value=''"></label>
+<label class="btn">استيراد JSON/CSV<input type="file" hidden accept=".json,.csv" data-action="import-manual-cal"></label>
 </div></div>
 <div id="fc-policy-banner" class="notice" style="border-color:var(--wn);margin-bottom:10px">⚠️ ضابط أساسي: جميع النتائج المسجلة في هذا القسم تُحفظ بوسم <b>«مدخلة يدوياً — غير متحقق منها آلياً»</b> ولا تُستخدم لرفع مؤشرات دقة نماذج الذكاء الاصطناعي الآلية.</div>
 <input type="hidden" id="fc-id" value="">
@@ -195,7 +195,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 <input id="fc-model" placeholder="النموذج المستخدم (أو رصد بشري)" style="max-width:185px">
 <input id="fc-operator" placeholder="اسم/رمز مدخل القياس" style="max-width:155px">
 <input id="fc-notes" placeholder="ملاحظات..." style="min-width:160px;flex:1">
-<button class="ok" id="fc-save-btn" onclick="saveManualCal()">حفظ القياس اليدوي</button>
+<button class="ok" id="fc-save-btn" data-action="save-manual-cal">حفظ القياس اليدوي</button>
 </div>
 <div id="fc-msg" class="mu" style="margin:6px 0"></div>
 <div class="tw" id="fc-table"></div>
@@ -204,9 +204,9 @@ ul{margin:4px 0;padding-inline-start:18px}
 </main></div></div>
 
 <dialog id="dlg"><h2 id="dlg-t" style="margin-top:0"></h2>
-<form id="dlg-f" onsubmit="return false"></form>
+<form id="dlg-f" ></form>
 <p id="dlg-e" style="color:var(--er)"></p>
-<div class="bt"><button class="ok" onclick="saveForm()">حفظ</button><button onclick="$('#dlg').close()">إلغاء</button></div></dialog>
+<div class="bt"><button class="ok" data-action="save-form">حفظ</button><button data-action="close-dialog">إلغاء</button></div></dialog>
 <div id="toast"></div>
 
 <script>
@@ -273,9 +273,9 @@ persons:{title:"سجل الأشخاص",key:"name",save:"/api/person",del:"/api/p
 
 function buildReg(kind){const C=CFG[kind];
  $("#t-"+kind).innerHTML=`<div class="c"><div class="bar"><h2>${C.title}</h2>
- <input id="q-${kind}" placeholder="بحث..." oninput="load('${kind}')">
- <button class="ok" onclick="openForm('${kind}')">+ إضافة يدوي</button>
- <label class="btn">استيراد Excel / CSV<input type="file" hidden accept=".xlsx,.xlsm,.csv" onchange="doImport('${kind}',this.files[0]);this.value=''"></label>
+ <input id="q-${kind}" placeholder="بحث..." data-action="registry-search" data-kind="${kind}">
+ <button class="ok" data-action="registry-open-form" data-kind="${kind}">+ إضافة يدوي</button>
+ <label class="btn">استيراد Excel / CSV<input type="file" hidden accept=".xlsx,.xlsm,.csv" data-action="registry-import" data-kind="${kind}"></label>
  <a class="btn" href="${qSep('/api/template?kind='+kind)}">تحميل القالب</a></div>
  <p class="mu">${C.hint}</p><div id="rep-${kind}" class="mu"></div><div class="tw" id="tb-${kind}"></div></div>`;load(kind)}
 async function load(kind){const q=$("#q-"+kind)?.value||"";
@@ -316,7 +316,7 @@ function drawAl(){
  $("#al").innerHTML=al.map(a=>{const noDisp=a.info_only||NO_DISP.includes(a.msg);
   return `<div class="al ${sev(a.msg)}"><div class="t">${esc(AR[a.msg]||a.msg)} ${a.repeat_count>1?`<span class="chip wn">تكرر الرصد ${+a.repeat_count} مرة</span>`:""}</div><img src="${qSep('/evidence/'+encodeURIComponent(a.img))}" alt="">
   <div>${a.msg.startsWith("FACE")?esc(a.subject):plate(a.subject)}</div><div class="mu">${esc(a.detail||"")}</div><div class="mu">${esc(a.cam)} · ${esc(a.ts)}</div>
-  <div class="bt">${noDisp?"":`<button class="ok" onclick="dec(${+a.id},'confirm')">تأكيد وتوجيه الدورية</button>`}<button onclick="dec(${+a.id},'ack')">تسجيل فقط</button><button onclick="dec(${+a.id},'dismiss')">تجاهل (تحقق خاطئ)</button></div></div>`}).join("")
+  <div class="bt">${noDisp?"":`<button class="ok" data-action="decision" data-id="${Number(a.id)}" data-choice="confirm">تأكيد وتوجيه الدورية</button>`}<button data-action="decision" data-id="${Number(a.id)}" data-choice="ack">تسجيل فقط</button><button data-action="decision" data-id="${Number(a.id)}" data-choice="dismiss">تجاهل (تحقق خاطئ)</button></div></div>`}).join("")
  ||'<p class="mu">لا توجد تنبيهات معلّقة. النظام لا يتخذ أي إجراء قسري بمفرده.</p>';
  document.title=(al.length?"("+al.length+") ":"")+"مرصاد AI"}
 function drawFdisp(){
@@ -325,7 +325,7 @@ function drawFdisp(){
   return `<div class="al mid"><div class="t">⚠️ توجيه لم يصل (#${+f.id}) — ${esc(AR[f.msg]||f.msg)}</div>
   <div>${f.msg.startsWith("FACE")?esc(f.subject):plate(f.subject)} · <span class="chip ${f.dispatch_status=='in_flight'||f.dispatch_status=='pending'||f.dispatch_status=='uncertain'?'wn':'er'}">${esc(stLbl)}</span></div>
   <div class="mu">${esc(f.last_error||"")} · ${esc(f.cam)} · ${esc(f.ts)}</div>
-  <div class="bt"><button class="ok" onclick="retryDisp(${+f.id})">إعادة الإرسال للدورية الآن</button></div></div>`}).join("")
+  <div class="bt"><button class="ok" data-action="retry-dispatch" data-id="${Number(f.id)}">إعادة الإرسال للدورية الآن</button></div></div>`}).join("")
  ||'<p class="mu">لا توجد توجيهات معلّقة أو فاشلة.</p>'}
 function drawFd(){$("#fd").innerHTML=fd.map(s=>`<div class="fd"><span>${esc(s.ts)} · ${plate(s.plate)} · ${esc(VT[s.vclass]||"—")} ${s.model?"· "+esc(s.model):""} ${s.match_note&&s.match_note!="مطابقة كاملة"?"· <span class='chip wn'>"+esc(s.match_note)+"</span>":""} · ${esc(s.cam)}${s.direction?" · <span class='mu'>"+esc(s.direction)+"</span>":""}</span><span>${s.status&&s.status!="normal"?chip(VS,s.status):""} <span class="mu">ثقة ${Math.round(s.conf*100)}%</span></span></div>`).join("")}
 async function dec(id,action){
@@ -427,7 +427,7 @@ async function loadCameraLinks(){
   const html=`<table><thead><tr><th>من كاميرا</th><th>إلى كاميرا</th><th>الحد الأدنى (ث)</th><th>الزمن المعتاد (ث)</th><th>الحد الأعلى (ث)</th><th>المسافة (م)</th><th>القياسات</th><th>مصدر القياس</th><th>المرور / التاريخ</th><th>الوسيط (via)</th><th>حالة اكتمال المعايرة</th><th>إجراء</th></tr></thead><tbody>${
    all.map(l=>{
     const stChip=l.inferred?'<span class="chip wn">مستنتج (قفزتان)</span>':l.calibration_status==="complete"?'<span class="chip ok">معايرة مكتملة</span>':l.calibrated?'<span class="chip wn">أساسية — تحتاج بيانات إضافية</span>':'<span class="chip mu">افتراضي غير معاير</span>';
-    return `<tr><td><b>${esc(l.from_cam)}</b></td><td><b>${esc(l.to_cam)}</b></td><td>${Number(l.min_sec)}</td><td>${Number(l.expected_sec)}</td><td>${l.max_sec?Number(l.max_sec):"—"}</td><td>${l.distance_m?Number(l.distance_m):"—"}</td><td>${l.observations_count||0}</td><td>${esc(l.measurement_source_ar||l.measurement_source||"—")}</td><td>${esc(l.traffic_condition_ar||"")}${l.calibration_date?" · "+esc(l.calibration_date):""}</td><td>${esc(l.via||"—")}</td><td>${stChip}</td><td>${l.inferred?"—":`<div class="act"><button data-fc="${esc(l.from_cam)}" data-tc="${esc(l.to_cam)}" onclick="editCameraLink(this.dataset.fc,this.dataset.tc)">تعديل</button><button class="er" data-fc="${esc(l.from_cam)}" data-tc="${esc(l.to_cam)}" onclick="delCameraLink(this.dataset.fc,this.dataset.tc)">حذف</button></div>`}</td></tr>`
+    return `<tr><td><b>${esc(l.from_cam)}</b></td><td><b>${esc(l.to_cam)}</b></td><td>${Number(l.min_sec)}</td><td>${Number(l.expected_sec)}</td><td>${l.max_sec?Number(l.max_sec):"—"}</td><td>${l.distance_m?Number(l.distance_m):"—"}</td><td>${l.observations_count||0}</td><td>${esc(l.measurement_source_ar||l.measurement_source||"—")}</td><td>${esc(l.traffic_condition_ar||"")}${l.calibration_date?" · "+esc(l.calibration_date):""}</td><td>${esc(l.via||"—")}</td><td>${stChip}</td><td>${l.inferred?"—":`<div class="act"><button data-fc="${esc(l.from_cam)}" data-tc="${esc(l.to_cam)}" data-action="edit-camera-link">تعديل</button><button class="er" data-fc="${esc(l.from_cam)}" data-tc="${esc(l.to_cam)}" data-action="delete-camera-link">حذف</button></div>`}</td></tr>`
    }).join("")
    ||'<tr><td colspan="12" class="mu">لا توجد روابط كاميرات معايرة مطابقة حالياً (تُستخدم القيمة الافتراضية 90 ثانية غير المعايرة).</td></tr>'
   }</tbody></table>`;
@@ -498,7 +498,7 @@ async function tracePlate(p){
   if(!r.ok){$("#path-res").innerHTML=`<span class="chip er">${esc(r.error)}</span>`;return}
   if(!r.found){
    if(r.has_demo_only){
-    $("#path-res").innerHTML=`<div class="notice" style="border-color:var(--wn)">${esc(r.demo_hint_ar||"هذه اللوحة موجودة في سجل المحاكاة التجريبي فقط.")} <button class="ok" onclick="toggleDemoMode(true)">تفعيل وضع استعراض المحاكاة التجريبية وعرض المسار</button></div>`;
+    $("#path-res").innerHTML=`<div class="notice" style="border-color:var(--wn)">${esc(r.demo_hint_ar||"هذه اللوحة موجودة في سجل المحاكاة التجريبي فقط.")} <button class="ok" data-action="toggle-demo-on">تفعيل وضع استعراض المحاكاة التجريبية وعرض المسار</button></div>`;
    }else{
     $("#path-res").innerHTML=`<p class="mu">لا توجد نقاط رصد حية مسجّلة للوحة <b>${esc(r.plate||q)}</b>.</p>`;
    }
@@ -866,7 +866,7 @@ async function loadManualCalibrations(){
   FC_CACHE=r.items||[];
   if($("#fc-policy-banner")&&r.policy_notice_ar)$("#fc-policy-banner").innerHTML="⚠️ "+esc(r.policy_notice_ar);
   box.innerHTML=`<table><thead><tr><th>#</th><th>التصنيف والاعتماد</th><th>بين الكاميرتين</th><th>زمن الانتقال اليدوي (ث)</th><th>الدقة اليدوية المقدرة</th><th>العينات (صحيحة/خاطئة)</th><th>مصدر القياس</th><th>التاريخ</th><th>النموذج / الأداة</th><th>المدخل</th><th>ملاحظات</th><th>إجراء</th></tr></thead><tbody>${
-   FC_CACHE.map(x=>`<tr><td>#${x.id}</td><td><span class="chip wn">${esc(x.verification_label_ar||"مدخلة يدوياً — غير متحقق منها")}</span></td><td>${x.from_cam||x.to_cam?`${esc(x.from_cam||"—")} ➔ ${esc(x.to_cam||"—")}`:"—"}</td><td>${x.transit_sec?Number(x.transit_sec)+" ث":"—"}</td><td>${x.measured_plate_accuracy!=null?x.measured_plate_accuracy+"%":"—"}</td><td>${x.samples_count||0} (${x.correct_reads||0}✓ / ${x.incorrect_reads||0}✗)</td><td>${esc(x.source_description)}</td><td>${esc(x.measurement_date)}</td><td>${esc(x.model_used)}</td><td>${esc(x.operator_name)}</td><td>${esc(x.notes||"—")}</td><td><div class="act"><button onclick="editManualCal(${+x.id})">تعديل</button><button class="er" onclick="delManualCal(${+x.id})">حذف</button></div></td></tr>`).join("")
+   FC_CACHE.map(x=>`<tr><td>#${x.id}</td><td><span class="chip wn">${esc(x.verification_label_ar||"مدخلة يدوياً — غير متحقق منها")}</span></td><td>${x.from_cam||x.to_cam?`${esc(x.from_cam||"—")} ➔ ${esc(x.to_cam||"—")}`:"—"}</td><td>${x.transit_sec?Number(x.transit_sec)+" ث":"—"}</td><td>${x.measured_plate_accuracy!=null?x.measured_plate_accuracy+"%":"—"}</td><td>${x.samples_count||0} (${x.correct_reads||0}✓ / ${x.incorrect_reads||0}✗)</td><td>${esc(x.source_description)}</td><td>${esc(x.measurement_date)}</td><td>${esc(x.model_used)}</td><td>${esc(x.operator_name)}</td><td>${esc(x.notes||"—")}</td><td><div class="act"><button data-action="edit-manual-cal" data-id="${Number(x.id)}">تعديل</button><button class="er" data-action="delete-manual-cal" data-id="${Number(x.id)}">حذف</button></div></td></tr>`).join("")
    ||'<tr><td colspan="12" class="mu">لا توجد قياسات معايرة يدوية مسجّلة بعد.</td></tr>'
   }</tbody></table>`;
  }catch(e){box.innerHTML=`<p class="mu">${esc(e.message)}</p>`}
