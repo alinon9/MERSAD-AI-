@@ -5231,20 +5231,57 @@ def run_stage15_forensic_remediation_tests():
         startup_end = startup_src.find("    register_shared_engines(reader=reader", startup_begin)
         startup_block = startup_src[startup_begin:startup_end] if startup_begin >= 0 and startup_end > startup_begin else ""
         aud003_no_raw_fallback = (
-            "load_verified_yolo_model(" in startup_block
+            "_load_optional_vehicle_yolo(" in startup_block
             and 'YOLO("yolov8n.pt")' not in startup_block
             and "YOLO('yolov8n.pt')" not in startup_block
         )
+
+        # The repository-root entry point must carry the same Batch 1 security fixes.
+        root_live_path = os.path.join(os.path.dirname(SRC), "mersad_live.py")
+        root_live_src = open(root_live_path, encoding="utf-8").read()
+        root_register_begin = root_live_src.find("def register_plate_model_api(")
+        root_register_end = root_live_src.find("\ndef verify_yolo_pt_file(", root_register_begin)
+        root_register_block = root_live_src[root_register_begin:root_register_end] if root_register_begin >= 0 and root_register_end > root_register_begin else ""
+        root_start_begin = root_live_src.find("    yolo = vyolo = None")
+        root_start_end = root_live_src.find("    register_shared_engines(reader=reader", root_start_begin)
+        root_start_block = root_live_src[root_start_begin:root_start_end] if root_start_begin >= 0 and root_start_end > root_start_begin else ""
+        root_aud004_hardened = (
+            "if not isinstance(allow_outside_copy, bool)" in root_register_block
+            and "if not isinstance(raw_allow_copy, bool)" in root_register_block
+            and "eff_allow_copy = allow_outside_copy and raw_allow_copy" in root_register_block
+        )
+        root_aud003_hardened = (
+            "_load_optional_vehicle_yolo(" in root_start_block
+            and "def _load_optional_vehicle_yolo(" in root_live_src
+            and 'YOLO("yolov8n.pt")' not in root_start_block
+            and "YOLO('yolov8n.pt')" not in root_start_block
+        )
+
+        # Runtime regression: invalid/untrusted vehicle checkpoint disables the detector,
+        # while explicit strict mode fails startup instead of silently continuing.
+        from unittest import mock as _mock
+        with _mock.patch.object(m, "load_verified_yolo_model", side_effect=ValueError("untrusted checkpoint")):
+            with _mock.patch.dict(os.environ, {"MERSAD_STRICT_MODEL_VERIFICATION": "0"}, clear=False):
+                runtime_fail_closed = m._load_optional_vehicle_yolo("untrusted.pt") is None
+            with _mock.patch.dict(os.environ, {"MERSAD_STRICT_MODEL_VERIFICATION": "1"}, clear=False):
+                try:
+                    m._load_optional_vehicle_yolo("untrusted.pt")
+                    runtime_strict_rejected = False
+                except ValueError as strict_exc:
+                    runtime_strict_rejected = str(strict_exc) == "untrusted checkpoint"
+
         check(
             "STAGE15-GAP01-MODEL-TRUST-BOUNDARY",
-            "AUD-003 startup uses only load_verified_yolo_model; AUD-004 prevents JSON permission escalation and rejects non-Boolean values",
+            "AUD-003 is fail-closed at runtime; root and Preview entry points both enforce the trusted YOLO gate; AUD-004 blocks JSON permission escalation",
             web_reg.get("ok") is False and web_reg.get("reason") == "outside_trusted_models_dir_blocked"
             and web_reg_escalation.get("ok") is False
             and web_reg_escalation.get("reason") == "outside_trusted_models_dir_blocked"
             and web_reg_string_bool.get("ok") is False
             and "Boolean" in web_reg_string_bool.get("error", "")
-            and aud003_no_raw_fallback,
-            (web_reg, web_reg_escalation, web_reg_string_bool, aud003_no_raw_fallback),
+            and aud003_no_raw_fallback and root_aud004_hardened and root_aud003_hardened
+            and runtime_fail_closed and runtime_strict_rejected,
+            (web_reg, web_reg_escalation, web_reg_string_bool, aud003_no_raw_fallback,
+             root_aud004_hardened, root_aud003_hardened, runtime_fail_closed, runtime_strict_rejected),
         )
     finally:
         shutil.rmtree(s15_dir, ignore_errors=True)
