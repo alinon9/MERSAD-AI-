@@ -144,7 +144,10 @@ class FakeCap:
             CAM_DROP_STATE["CAM2_failed_once"] = True
             time.sleep(0.015)
             return False, None
-        time.sleep(0.008)
+        # Pace reconnect-fixture frames so the main loop can consume them rather than
+        # overwriting the one-slot latest-frame buffer before the assertion samples STATUS.
+        frame_delay = 0.04 if self.src in ("cam_boot_offline1", "cam_fail4_recover") else 0.008
+        time.sleep(frame_delay)
         f = np.full((480, 640, 3), 90, np.uint8)
         f[10:20, 10:20] = 77                              # marker for bystander face crop
         cv2.rectangle(f, (200, 360), (440, 410), (255, 255, 255), -1)
