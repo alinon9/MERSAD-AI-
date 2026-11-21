@@ -447,6 +447,11 @@ def _validate_lab_bind_policy(host: str, allow_lan: bool, token: str = None) -> 
 class LabHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # Keep a short burst of incoming TCP connections queued so the upload
+    # semaphore can return deterministic HTTP 429 responses instead of the
+    # OS dropping excess connection attempts. Expensive upload work remains
+    # bounded independently by LabState.upload_semaphore.
+    request_queue_size = max(16, MAX_CONCURRENT_UPLOADS * 4)
 
     def __init__(self, server_address, RequestHandlerClass, lab_state: LabState):
         super().__init__(server_address, RequestHandlerClass)
