@@ -49,6 +49,19 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
     ai_token = "main_ep_tok_2026"
     lab_token = "lab_ep_tok_2026"
 
+    # The LAB server intentionally restricts loopback destinations to a small
+    # port allowlist. Add this test's ephemeral AI port for the duration of
+    # this integration test only; never weaken the production default policy.
+    old_allowed_local_ai_ports = os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS")
+    allowed_local_ai_ports = [
+        item.strip()
+        for item in (old_allowed_local_ai_ports or "").split(",")
+        if item.strip()
+    ]
+    if str(ai_port) not in allowed_local_ai_ports:
+        allowed_local_ai_ports.append(str(ai_port))
+    os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(allowed_local_ai_ports)
+
     lab_ctrl = ls.LabServerController(host="127.0.0.1", port=lab_port, token=lab_token).start()
     lab_port = lab_ctrl.port
 
@@ -262,6 +275,10 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             os.environ.pop("MERSAD_DATA_DIR", None)
         else:
             os.environ["MERSAD_DATA_DIR"] = old_data_dir
+        if old_allowed_local_ai_ports is None:
+            os.environ.pop("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", None)
+        else:
+            os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = old_allowed_local_ai_ports
         try:
             if getattr(ml, "db", None) is not None:
                 ml.db.close()
