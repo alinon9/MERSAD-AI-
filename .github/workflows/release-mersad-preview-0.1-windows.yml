@@ -151,7 +151,7 @@ jobs:
           Write-Host "[ORIGINAL LAB] Exact commit verified: $actualSha"
           Write-Host "[ORIGINAL LAB] Restored Python source files: $pythonFileCount"
 
-          python tools/compare_original_vs_cleanroom_lab.py --original-source $originalDir --preserve-original-dir $originalDir --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
+          python tools/compare_original_vs_cleanroom_lab.py --original-source $originalDir --preserve-original-dir $originalDir --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass --require-unblocked
           if ($LASTEXITCODE -ne 0) { throw "Clean-Room LAB verification failed in Phase 2 ($LASTEXITCODE)" }
 
           $reportPath = "reports_and_logs/original_vs_cleanroom_lab_comparison.json"
