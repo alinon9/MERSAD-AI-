@@ -21,7 +21,7 @@ if sys.modules.get("sklearn") is None and "sklearn" in sys.modules:
 SRC = os.path.dirname(os.path.abspath(__file__))
 WORK = tempfile.mkdtemp(prefix="mersad_selftest_")
 for f in os.listdir(SRC):
-    if f.endswith((".py", ".html", ".bat", ".md", ".txt", ".spec")) and f != "selftest.py":
+    if f.endswith((".py", ".html", ".js", ".bat", ".md", ".txt", ".spec")) and f != "selftest.py":
         shutil.copy(os.path.join(SRC, f), WORK)
 if os.path.isdir(os.path.join(SRC, ".github")):
     shutil.copytree(os.path.join(SRC, ".github"), os.path.join(WORK, ".github"), dirs_exist_ok=True)
