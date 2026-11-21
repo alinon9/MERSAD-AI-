@@ -123,15 +123,15 @@ class TestPR5CriticalRemediationV3(unittest.TestCase):
             "test_quality_upload_image",
             "test_quality_upload_video",
         ]
-        methods = "\\n".join(
-            f"    def {name}(self):\\n        self.assertTrue(True)"
+        methods = "\n".join(
+            f"    def {name}(self):\n        self.assertTrue(True)"
             for name in names
         )
         legacy_test = (
-            "import unittest\\n"
-            "class HistoricalOriginalLabTests(unittest.TestCase):\\n"
+            "import unittest\n"
+            "class HistoricalOriginalLabTests(unittest.TestCase):\n"
             + methods
-            + "\\nif __name__ == '__main__':\\n    unittest.main(verbosity=2)\\n"
+            + "\nif __name__ == '__main__':\n    unittest.main(verbosity=2)\n"
         )
 
         with tempfile.TemporaryDirectory(prefix="mersad_original_lab_unittest_") as tmp:
