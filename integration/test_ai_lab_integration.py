@@ -652,6 +652,21 @@ def main():
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_ep:
             s_ep.bind(("127.0.0.1", 0))
             ep_port = s_ep.getsockname()[1]
+
+        # The integrated main()-entrypoint scenario owns a second ephemeral
+        # AI port, distinct from the Phase 4 engine port above. Allow only this
+        # test-owned loopback port for the duration of Scenario 13; do not
+        # weaken the LAB production allowlist/defaults.
+        old_ep_allowed_local_ai_ports = os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS")
+        ep_allowed_local_ai_ports = [
+            item.strip()
+            for item in (old_ep_allowed_local_ai_ports or "").split(",")
+            if item.strip()
+        ]
+        if str(ep_port) not in ep_allowed_local_ai_ports:
+            ep_allowed_local_ai_ports.append(str(ep_port))
+        os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(ep_allowed_local_ai_ports)
+
         ep_token = "main_ep_int_token_2026"
         old_argv_int = sys.argv[:]
         sys.argv = [
@@ -765,6 +780,10 @@ def main():
             m.STOP_MAIN_EVENT.set()
             t_main_int.join(timeout=5.0)
             sys.argv = old_argv_int
+            if old_ep_allowed_local_ai_ports is None:
+                os.environ.pop("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", None)
+            else:
+                os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = old_ep_allowed_local_ai_ports
 
         tel = get_process_telemetry(t_suite_start)
         REPORT["telemetry"] = {
