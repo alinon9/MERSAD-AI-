@@ -87,25 +87,86 @@ jobs:
           python -X utf8 -u integration/evaluate_ai_models.py --require-real-models
           if ($LASTEXITCODE -ne 0) { throw "evaluate_ai_models.py --require-real-models failed ($LASTEXITCODE)" }
 
-      - name: Phase 2 — Extract Original MERSAD LAB (Commit ed7b8f727243da4878e547f08489af581c83291c if present) & Compare with Clean-Room LAB
+      - name: Phase 2 — Restore Original LAB archive, verify exact commit & compare with Clean-Room LAB
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            $actualSha = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
-            if ($actualSha -eq "ed7b8f727243da4878e547f08489af581c83291c") {
-              if (Test-Path "MERSAD_LAB_Original_ed7b8f72") { Remove-Item -Recurse -Force "MERSAD_LAB_Original_ed7b8f72" }
-              New-Item -ItemType Directory -Force -Path "MERSAD_LAB_Original_ed7b8f72" | Out-Null
-              git archive refs/remotes/origin/mersad-lab-orig | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
-              Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $actualSha -Encoding ASCII
-            }
-          } else {
-            Write-Host "[WARN] Branch build/mersad-lab-exe-20261031 not present on origin; recording Original LAB comparison as BLOCKED/NOT_TESTED."
-          }
           $ErrorActionPreference = "Stop"
-          python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
+          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig
+          if ($LASTEXITCODE -ne 0) { throw "Could not fetch the historical Original LAB branch" }
+
+          $actualSha = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
+          $expectedSha = "ed7b8f727243da4878e547f08489af581c83291c"
+          if ($actualSha -ne $expectedSha) {
+            throw "Original LAB ref mismatch: expected $expectedSha, got $actualSha"
+          }
+
+          # The historical commit stores the LAB source as nine base64 chunks.
+          # Reassemble and extract the real source archive before comparison.
+          $parts = @()
+          for ($i = 1; $i -le 9; $i++) {
+            $partPath = "ci/mersad_lab_source_part_{0:D2}.txt" -f $i
+            if (-not (Test-Path -LiteralPath $partPath -PathType Leaf)) {
+              throw "Missing Original LAB source chunk: $partPath"
+            }
+            $parts += (Get-Content -LiteralPath $partPath -Raw).Trim()
+          }
+          $base64 = $parts -join ""
+          if (($base64.Length % 4) -ne 0) {
+            throw "Invalid Original LAB archive base64 length: $($base64.Length)"
+          }
+          $zipBytes = [Convert]::FromBase64String($base64)
+          $zipPath = Join-Path $env:RUNNER_TEMP "mersad-lab-original-$actualSha.zip"
+          [IO.File]::WriteAllBytes($zipPath, $zipBytes)
+          $archiveSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLower()
+          Write-Host "[ORIGINAL LAB] Reassembled archive SHA-256: $archiveSha256"
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP "mersad-lab-original-extracted"
+          if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+
+          $restoredSource = Join-Path $extractRoot "MERSAD_LAB"
+          foreach ($required in @("lab_server.py", "test_lab.py", "index.html")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $restoredSource $required) -PathType Leaf)) {
+              throw "Restored Original LAB archive is incomplete: missing $required"
+            }
+          }
+
+          $originalDir = "MERSAD_LAB_Original_ed7b8f72"
+          if (Test-Path -LiteralPath $originalDir) {
+            Remove-Item -LiteralPath $originalDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $originalDir | Out-Null
+          Get-ChildItem -LiteralPath $restoredSource -Force | Copy-Item -Destination $originalDir -Recurse -Force
+          Set-Content -LiteralPath (Join-Path $originalDir "COMMIT_SHA.txt") -Value $actualSha -Encoding ASCII
+
+          $pythonFileCount = @(Get-ChildItem -LiteralPath $originalDir -Filter "*.py" -Recurse -File).Count
+          if ($pythonFileCount -lt 2) {
+            throw "Original LAB source restoration incomplete: expected Python sources, found $pythonFileCount"
+          }
+          Write-Host "[ORIGINAL LAB] Exact commit verified: $actualSha"
+          Write-Host "[ORIGINAL LAB] Restored Python source files: $pythonFileCount"
+
+          python tools/compare_original_vs_cleanroom_lab.py --original-source $originalDir --preserve-original-dir $originalDir --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
           if ($LASTEXITCODE -ne 0) { throw "Clean-Room LAB verification failed in Phase 2 ($LASTEXITCODE)" }
+
+          $reportPath = "reports_and_logs/original_vs_cleanroom_lab_comparison.json"
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            throw "Phase 2 comparison JSON report was not generated"
+          }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          if ($report.commit_verification.verified -ne $true) {
+            throw "Phase 2 did not verify the exact historical Original LAB commit"
+          }
+          if ($report.independent_test_suites.cleanroom_lab.status -ne "PASS") {
+            throw "Clean-Room LAB suite did not pass"
+          }
+          Write-Host "[PHASE2] Original commit verified: $($report.commit_verification.detected_commit)"
+          Write-Host "[PHASE2] Original LAB suite: $($report.independent_test_suites.original_lab.status) ($($report.independent_test_suites.original_lab.passed)/$($report.independent_test_suites.original_lab.total))"
+          Write-Host "[PHASE2] Clean-Room LAB suite: $($report.independent_test_suites.cleanroom_lab.status) ($($report.independent_test_suites.cleanroom_lab.passed)/$($report.independent_test_suites.cleanroom_lab.total))"
+          Write-Host "[PHASE2] Overall comparison status: $($report.phase2_comparison_status)"
 
       - name: Phase 3A — Run Full AI (234) & LAB (20) Test Suites
         shell: pwsh
