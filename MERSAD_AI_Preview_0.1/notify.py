@@ -97,11 +97,31 @@ class UncertainDeliveryError(RuntimeError):
 
 # [MERSAD-PR5-FIND003-NOREDIRECT]
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Reject HTTP redirects so Telegram credentials cannot be forwarded."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    """Reject every redirect status so Telegram credentials cannot be forwarded."""
+    def _raise_blocked_redirect(self, req, fp, code, msg, headers):
         raise urllib.error.HTTPError(
             req.full_url, code, f"HTTP redirect blocked ({code})", headers, fp
         )
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self._raise_blocked_redirect(req, fp, code, msg, headers)
+
+    # Explicit status handlers avoid urllib platform/version differences in
+    # which 303/307/308 are dispatched through the base class aliases.
+    def http_error_301(self, req, fp, code, msg, headers):
+        self._raise_blocked_redirect(req, fp, code, msg, headers)
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        self._raise_blocked_redirect(req, fp, code, msg, headers)
+
+    def http_error_303(self, req, fp, code, msg, headers):
+        self._raise_blocked_redirect(req, fp, code, msg, headers)
+
+    def http_error_307(self, req, fp, code, msg, headers):
+        self._raise_blocked_redirect(req, fp, code, msg, headers)
+
+    def http_error_308(self, req, fp, code, msg, headers):
+        self._raise_blocked_redirect(req, fp, code, msg, headers)
 
 
 def _call(method, fields=None, files=None, timeout=15, retries=2):
