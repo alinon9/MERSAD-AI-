@@ -1,7 +1,7 @@
 """Tiny dependency-free web server: live MJPEG video (per-camera support) + Server-Sent Events + registry & path-tracking API.
 Supports HttpOnly session cookie (with 302 redirect on first ?k=TOKEN visit to strip token from URL)
 while retaining full backward compatibility with ?k=TOKEN query parameters."""
-import http.cookies, ipaddress, json, logging, os, queue, re, secrets, socket, ssl, sys, threading, time
+import gzip, http.cookies, ipaddress, json, logging, os, queue, re, secrets, socket, ssl, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
@@ -260,7 +260,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
             )
             self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
@@ -310,6 +310,14 @@ class H(BaseHTTPRequestHandler):
                     return
                 with open(resolve_dashboard_path("dashboard.html"), "rb") as f:
                     self._send(f.read())
+            elif p == "/dashboard.js":
+                try:
+                    with open(resolve_dashboard_path("dashboard.js"), "rb") as f:
+                        dashboard_js = f.read()
+                except FileNotFoundError:
+                    with open(resolve_dashboard_path("dashboard.js.gz"), "rb") as f:
+                        dashboard_js = gzip.decompress(f.read())
+                self._send(dashboard_js, "application/javascript; charset=utf-8")
             elif p == "/stream.mjpg": self.stream(self.arg("cam"))
             elif p == "/events": self.events()
             elif p == "/api/ping": self._json({"ok": True, "ts": time.time()})

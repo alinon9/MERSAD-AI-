@@ -95,6 +95,15 @@ class UncertainDeliveryError(RuntimeError):
     pass
 
 
+# [MERSAD-PR5-FIND003-NOREDIRECT]
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject HTTP redirects so Telegram credentials cannot be forwarded."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url, code, f"HTTP redirect blocked ({code})", headers, fp
+        )
+
+
 def _call(method, fields=None, files=None, timeout=15, retries=2):
     tok = os.getenv("TELEGRAM_TOKEN", "").strip()
     if not tok:
@@ -106,7 +115,8 @@ def _call(method, fields=None, files=None, timeout=15, retries=2):
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, body, {"Content-Type": ct})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            opener = urllib.request.build_opener(_NoRedirectHandler())
+            with opener.open(req, timeout=timeout) as resp:
                 raw = resp.read()
             res = json.loads(raw)
             if not res.get("ok", True):
@@ -118,6 +128,10 @@ def _call(method, fields=None, files=None, timeout=15, retries=2):
             return res
         except urllib.error.HTTPError as he:
             last_err = he
+            try:
+                he.close()
+            except Exception:
+                pass
             if he.code == 429 and attempt < retries:
                 time.sleep(0.5 * (attempt + 1))
                 continue

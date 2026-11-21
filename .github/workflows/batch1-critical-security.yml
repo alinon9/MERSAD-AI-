@@ -30,6 +30,13 @@ jobs:
           python-version: "3.11"
           architecture: "x64"
 
+      - name: Restore dashboard.js from compressed source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -c "import gzip; from pathlib import Path; p=Path('MERSAD_AI_Preview_0.1/dashboard.js.gz'); Path('MERSAD_AI_Preview_0.1/dashboard.js').write_bytes(gzip.decompress(p.read_bytes()))"
+          if ($LASTEXITCODE -ne 0) { throw "dashboard.js decompression failed ($LASTEXITCODE)" }
+
       - name: Install minimal production-test dependencies
         shell: pwsh
         run: |
@@ -72,6 +79,15 @@ jobs:
           $env:PYTHONUTF8 = "1"
           python -X utf8 -u MERSAD_AI_Preview_0.1\test_batch2_security.py -v 2>&1 | Tee-Object artifacts\batch1-logs\test_batch2_ai_security.py.log
           if ($LASTEXITCODE -ne 0) { throw "Batch 2 AI security tests failed ($LASTEXITCODE)" }
+
+      - name: PR #5 Critical Remediation Regression (FIND-001/002/003)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          $env:MERSAD_REPO_ROOT = "."
+          python -X utf8 -W error -u MERSAD_AI_Preview_0.1\test_pr5_critical_remediation.py -v 2>&1 | Tee-Object artifacts\batch1-logs\test_pr5_critical_remediation.py.log
+          if ($LASTEXITCODE -ne 0) { throw "PR #5 remediation tests failed ($LASTEXITCODE)" }
 
       - name: MERSAD AI self-test (standard)
         shell: pwsh
