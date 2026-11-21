@@ -105,10 +105,12 @@ jobs:
           $parts = @()
           for ($i = 1; $i -le 9; $i++) {
             $partPath = "ci/mersad_lab_source_part_{0:D2}.txt" -f $i
-            if (-not (Test-Path -LiteralPath $partPath -PathType Leaf)) {
-              throw "Missing Original LAB source chunk: $partPath"
+            $gitPath = "refs/remotes/origin/mersad-lab-orig:$partPath"
+            $chunkLines = @(git show $gitPath)
+            if ($LASTEXITCODE -ne 0 -or $chunkLines.Count -eq 0) {
+              throw "Could not read Original LAB source chunk from historical commit: $gitPath"
             }
-            $parts += (Get-Content -LiteralPath $partPath -Raw).Trim()
+            $parts += (($chunkLines -join "")).Trim()
           }
           $base64 = $parts -join ""
           if (($base64.Length % 4) -ne 0) {
