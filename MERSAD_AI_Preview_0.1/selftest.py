@@ -5883,7 +5883,9 @@ def run_patched_v7_1_and_preview_0_1_tests():
 
         # 30. PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE (BUG-07 Regression): Phase 2 records BLOCKED honestly without aborting Windows build before Phase 3B
         cmp_tool = os.path.join(os.path.dirname(SRC), "tools", "compare_original_vs_cleanroom_lab.py")
-        orig_placeholder = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Original_ed7b8f72")
+        # Use a guaranteed-missing path to test the documented non-blocking fallback,
+        # even when CI has restored the authentic Original LAB beside the project.
+        orig_placeholder = os.path.join(d, "MERSAD_LAB_Original_MISSING")
         clean_lab_dir = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Preview_0.1")
         p2_ok = True
         p2_detail = {}

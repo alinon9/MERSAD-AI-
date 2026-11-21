@@ -733,6 +733,49 @@ class LabRequestHandler(BaseHTTPRequestHandler):
             return None
         return self.rfile.read(clen) if clen > 0 else b""
 
+    def _reject_concurrent_upload(self, max_bytes: int):
+        """Drain a bounded rejected upload before replying, avoiding client-side TCP resets."""
+        if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+            return self._json(
+                {"ok": False, "error": "الرفع المجزأ غير مدعوم"},
+                code=400,
+            )
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            self.close_connection = True
+            return self._json({"ok": False, "error": "ترويسة Content-Length غير صالحة"}, code=400)
+        if content_length < 0:
+            self.close_connection = True
+            return self._json({"ok": False, "error": "حجم الطلب غير صالح"}, code=400)
+        if content_length > max_bytes:
+            self.close_connection = True
+            return self._json(
+                {"ok": False, "error": f"حجم الملف يتجاوز الحد الأقصى المسموح ({max_bytes} بايت)", "max_bytes": max_bytes},
+                code=413,
+            )
+
+        remaining = content_length
+        try:
+            while remaining:
+                chunk = self.rfile.read(min(64 * 1024, remaining))
+                if not chunk:
+                    self.close_connection = True
+                    return
+                remaining -= len(chunk)
+        except (OSError, TimeoutError):
+            self.close_connection = True
+            return
+
+        # The upload body is fully consumed. Close this connection after sending
+        # the bounded overload result so the client can reliably read HTTP 429.
+        self.close_connection = True
+        return self._json(
+            {"ok": False, "error": "تم تجاوز الحد الأقصى لعمليات الرفع المتزامنة (Too Many Concurrent Uploads)"},
+            code=429,
+        )
+
     def _extract_upload_bytes(self, raw_body: bytes) -> bytes:
         ctype = (self.headers.get("Content-Type") or "").strip()
         if "multipart/form-data" in ctype.lower():
@@ -817,7 +860,7 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         # 3. Image quality upload: /api/analyze/image or /api/upload/image or /upload/image
         if path in ("/api/analyze/image", "/api/upload/image", "/upload/image"):
             if not self.state.upload_semaphore.acquire(blocking=False):
-                return self._json({"ok": False, "error": "تم تجاوز الحد الأقصى لعمليات الرفع المتزامنة (Too Many Concurrent Uploads)"}, code=429)
+                return self._reject_concurrent_upload(self.state.max_image_bytes)
             try:
                 with self.state._lock:
                     self.state.active_uploads += 1
@@ -836,7 +879,7 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         # 4. Video quality upload: /api/analyze/video or /api/upload/video or /upload/video
         if path in ("/api/analyze/video", "/api/upload/video", "/upload/video"):
             if not self.state.upload_semaphore.acquire(blocking=False):
-                return self._json({"ok": False, "error": "تم تجاوز الحد الأقصى لعمليات الرفع المتزامنة (Too Many Concurrent Uploads)"}, code=429)
+                return self._reject_concurrent_upload(self.state.max_video_bytes)
             try:
                 with self.state._lock:
                     self.state.active_uploads += 1

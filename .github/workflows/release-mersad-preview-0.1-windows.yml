@@ -170,7 +170,7 @@ jobs:
           Write-Host "[PHASE2] Clean-Room LAB suite: $($report.independent_test_suites.cleanroom_lab.status) ($($report.independent_test_suites.cleanroom_lab.passed)/$($report.independent_test_suites.cleanroom_lab.total))"
           Write-Host "[PHASE2] Overall comparison status: $($report.phase2_comparison_status)"
 
-      - name: Phase 3A — Run Full AI (234) & LAB (20) Test Suites
+      - name: Phase 3A — Run Full AI (234) & LAB (22) Test Suites
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
