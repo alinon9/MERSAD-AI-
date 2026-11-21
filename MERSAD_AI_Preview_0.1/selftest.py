@@ -647,10 +647,12 @@ def run_security_lan_and_multiprocess_tests():
           req_txt.count("==") >= 6 and m.ZOO_COMMIT in m.ZOO and len(m.MODEL_SHA256) == 3 and len(m.EASYOCR_SHA256) >= 3
           and "opencv-python-headless" in setup_txt)
 
-    # UI contract check
+    # UI contract check — static markup and delegated behavior live in separate assets.
     html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
-    check("UI", "dashboard.html uses safe data-p attribute and includes 'توجيهات لم تصل للدوريات' & camera switcher",
-          'data-p="${esc(p)}"' in html and "توجيهات لم تصل للدوريات" in html and "cam-sw" in html
+    js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dashboard_ui_source = html + "\n" + js
+    check("UI", "dashboard uses safe data-p attribute, dispatch guidance, and camera switcher",
+          'data-p="${esc(p)}"' in dashboard_ui_source and "توجيهات لم تصل للدوريات" in dashboard_ui_source and "cam-sw" in dashboard_ui_source
           and 'data-t="analytics"' in html and 'id="t-health"' in html)
 
     # Build script & RUN_LAN.bat check
@@ -2174,12 +2176,15 @@ def run_v7_1_audit_regression_tests():
     finally:
         shutil.rmtree(vm_dir, ignore_errors=True)
 
-    # 2. V7.1-DASH-EXPORT-TOKEN: Verify dashboard.html binds #analytics-export with qSep('/api/analytics/export.csv')
+    # 2. V7.1-DASH-EXPORT-TOKEN: External JS keeps CSV export same-origin and credential-free.
     dash_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
     has_an_export_id = 'id="analytics-export"' in dash_html
-    has_qsep_bind = 'qSep("/api/analytics/export.csv")' in dash_html or "qSep('/api/analytics/export.csv')" in dash_html
-    check("V7.1-DASH-EXPORT-TOKEN", "dashboard.html binds #analytics-export href with qSep('/api/analytics/export.csv') for cookie-less auth",
-          has_an_export_id and has_qsep_bind, (has_an_export_id, has_qsep_bind))
+    has_qsep_bind = 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dash_js
+    uses_cookie_auth = 'const qSep=u=>u;' in dash_js and "?k=" not in dash_js
+    check("V7.1-DASH-EXPORT-TOKEN", "dashboard CSV export uses same-origin cookie auth without query-token URLs",
+          has_an_export_id and has_qsep_bind and uses_cookie_auth,
+          (has_an_export_id, has_qsep_bind, uses_cookie_auth))
 
     # 3. V7.1-PACKAGING-HARDENING: Verify mersad_ai.spec, BUILD_EXE.bat, and windows-build.yml exclude unused tracker/tensorboard/cdflib submodules and disable auto-install
     spec_txt = open(os.path.join(WORK, "mersad_ai.spec"), encoding="utf-8").read()
@@ -3234,33 +3239,26 @@ def run_stage4_gap_regression_tests():
         reg_mod.init(m.db, m.DBL, m.log, m.refresh_known, db_path=m.DB_PATH)
         shutil.rmtree(gap13_dir, ignore_errors=True)
 
-    # 4. STAGE4-GAP14: Verify dashboard.html handles HTTP 401/403 session expiry & network disconnect explicitly + passes node --check
+    # 4. STAGE4-GAP14: Verify HTTP 401/403 session expiry & network disconnect in the external dashboard asset.
     dash_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dash_source = dash_html + "\n" + dash_js
     has_rjson_403 = (
-        "async function rJson(" in dash_html
-        and "r.status===401||r.status===403" in dash_html
-        and "انتهت الجلسة أو رمز الدخول غير صالح" in dash_html
-        and "انقطع الاتصال بالخادم — جاري إعادة المحاولة..." in dash_html
+        "async function rJson(" in dash_source
+        and "r.status===401||r.status===403" in dash_source
+        and "انتهت الجلسة أو رمز الدخول غير صالح" in dash_source
+        and "انقطع الاتصال بالخادم — جاري إعادة المحاولة..." in dash_source
         and 'id="st-txt"' in dash_html
-        and ".dot.bad" in dash_html
+        and ".dot.bad" in dash_source
     )
-    js_start = dash_html.find("<script>")
-    js_end = dash_html.rfind("</script>")
-    js_code = dash_html[js_start + len("<script>"):js_end] if (js_start != -1 and js_end != -1) else ""
-    js_tmp = os.path.join(WORK, "_check_dash_stage4.js")
-    with open(js_tmp, "w", encoding="utf-8") as jf:
-        jf.write(js_code)
+    js_path = os.path.join(WORK, "dashboard.js")
     node_bin = shutil.which("node")
     node_ok = True
     node_err = ""
     if node_bin:
-        np_res = subprocess.run([node_bin, "--check", js_tmp], capture_output=True, text=True, timeout=30)
+        np_res = subprocess.run([node_bin, "--check", js_path], capture_output=True, text=True, timeout=30)
         node_ok = (np_res.returncode == 0)
         node_err = np_res.stderr
-    try:
-        os.remove(js_tmp)
-    except OSError:
-        pass
     check("STAGE4-GAP14", "dashboard.html detects HTTP 401/403 session expiry & connection loss in #st/#st-txt and passes JS syntax check",
           has_rjson_403 and node_ok, (has_rjson_403, node_ok, node_err))
 
@@ -3505,19 +3503,17 @@ def run_stage6_gap_regression_tests():
           len(unlocked_hits) == 0 and len(g02_errs) == 0,
           (unlocked_hits, g02_errs))
 
-    # 3. STAGE6-GAP03: Verify dashboard.html passes cam:CUR_CAM||undefined to /api/enroll and displays m.error & m.warning in enroll SSE
-    dash_03 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    # 3. STAGE6-GAP03: Verify enrollment behavior in the external dashboard asset.
+    dash_03_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_03_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dash_03 = dash_03_html + "\n" + dash_03_js
     has_cam_in_enroll = 'post("/api/enroll",{id:b.dataset.id||undefined,ref:b.dataset.r||"",name:b.dataset.n,cam:CUR_CAM||undefined})' in dash_03
     has_err_warn_sse = 'm.n<0?(m.error||"انتهت المهلة: لم يظهر وجه"):m.warning?("⚠️ "+m.warning)' in dash_03
-    js_s = dash_03[dash_03.find("<script>") + 8:dash_03.rfind("</script>")]
-    js_f = os.path.join(WORK, "_check_dash_stage6.js")
-    open(js_f, "w", encoding="utf-8").write(js_s)
+    js_f = os.path.join(WORK, "dashboard.js")
     node_b = shutil.which("node")
     node_03_ok = True
     if node_b:
         node_03_ok = (subprocess.run([node_b, "--check", js_f], capture_output=True, text=True, timeout=30).returncode == 0)
-    try: os.remove(js_f)
-    except OSError: pass
     check("STAGE6-GAP03", "dashboard.html passes cam:CUR_CAM||undefined to /api/enroll, displays m.error & m.warning, and passes node --check",
           has_cam_in_enroll and has_err_warn_sse and node_03_ok,
           (has_cam_in_enroll, has_err_warn_sse, node_03_ok))
@@ -3755,7 +3751,7 @@ def run_stage8_final_hardening_tests():
     # 4. STAGE8-OBS04: Verify server.py returns structured JSON on HTTP 400 / 413 and reads bus.post under bus._lock
     srv_src_04 = open(os.path.join(WORK, "server.py"), encoding="utf-8").read()
     has_lock_post = "with bus._lock:\n                    post_fn = bus.post.get(p)" in srv_src_04
-    dash_src_04 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_src_04 = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
     has_rjson_parse = "const j=await r.json();if(j&&j.error)errMsg=j.error" in dash_src_04
 
     srv_04 = srv_mod.ThreadingHTTPServer(("127.0.0.1", 0), srv_mod.H)
@@ -3790,8 +3786,8 @@ def run_stage8_final_hardening_tests():
           and resp_400.status == 400 and body_400.get("ok") is False,
           (has_lock_post, has_rjson_parse, resp_413.status, body_413, resp_400.status, body_400))
 
-    # 5. STAGE8-OBS05: Verify all async functions in dashboard.html have try/catch and pass node --check
-    dash_src_05 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    # 5. STAGE8-OBS05: Verify all async functions in the external dashboard.js asset have try/catch and pass node --check.
+    dash_src_05 = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
     required_snippets = [
         "async function saveForm(){try{",
         "async function doImport(kind,file){if(!file)return;const rep=$(\"#rep-\"+kind);rep.textContent=\"جارٍ الاستيراد...\";\n try{",
@@ -3804,7 +3800,7 @@ def run_stage8_final_hardening_tests():
         "async function insAct(a){\n $(\"#ins-st\").textContent=\"جارٍ التنفيذ...\";\n try{",
     ]
     missing_try = [s for s in required_snippets if s not in dash_src_05]
-    js_s05 = dash_src_05[dash_src_05.find("<script>") + 8:dash_src_05.rfind("</script>")]
+    js_s05 = dash_src_05
     js_f05 = os.path.join(WORK, "_check_dash_stage8.js")
     open(js_f05, "w", encoding="utf-8").write(js_s05)
     node_b05 = shutil.which("node")
@@ -4678,24 +4674,20 @@ def run_stage12_security_and_eval_integrity_tests():
         (browse_fn_imports_tk, busy_res, sub_dlg.returncode, sub_dlg_json),
     )
 
-    # 6. STAGE12-DOC-PARITY: Verify dashboard.html JS syntax via node --check and Stage 12 new metric labels in UI
+    # 6. STAGE12-DOC-PARITY: Verify separated evaluation metric labels across HTML + external JS and syntax-check dashboard.js.
     dash_html_12 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_js_12 = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dash_ui_12 = dash_html_12 + "\n" + dash_js_12
     has_5_metrics_ui = (
-        "detection_f1" in dash_html_12
-        and "end_to_end_exact_match_rate" in dash_html_12
-        and "cropped_ocr_exact_match_rate" in dash_html_12
+        "detection_f1" in dash_ui_12
+        and "end_to_end_exact_match_rate" in dash_ui_12
+        and "cropped_ocr_exact_match_rate" in dash_ui_12
     )
-    js_blocks = re.findall(r"<script[^>]*>(.*?)</script>", dash_html_12, flags=re.S)
-    js_tmp = os.path.join(tempfile.gettempdir(), f"mersad_s12_dash_{os.getpid()}.js")
-    try:
-        with open(js_tmp, "w", encoding="utf-8") as jf:
-            jf.write("\n".join(js_blocks))
-        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=30)
-        js_ok = (node_chk.returncode == 0)
-    finally:
-        if os.path.exists(js_tmp):
-            try: os.remove(js_tmp)
-            except OSError: pass
+    node_chk = subprocess.run(
+        ["node", "--check", os.path.join(WORK, "dashboard.js")],
+        capture_output=True, text=True, timeout=30
+    )
+    js_ok = (node_chk.returncode == 0)
 
     check(
         "STAGE12-DOC-PARITY",
@@ -4858,7 +4850,9 @@ def run_stage13_complete_audit_closure_tests():
         b_exp_c = r_exp_c.read().decode("utf-8-sig")
         c_exp_c.close()
 
-        dash_13 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+        dash_13_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+        dash_13_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+        dash_13 = dash_13_html + "\n" + dash_13_js
         has_dynamic_mount = (
             "function mountCameraLinksCard(" in dash_13
             and 'id="cal-cl-slot"' in dash_13
@@ -5688,8 +5682,15 @@ def run_patched_v7_1_and_preview_0_1_tests():
             cv2.VideoCapture = original_capture
         check("V7-RTSP-TIMEOUTS", "RTSP/HTTP opens use bounded FFmpeg timeouts; local camera indices remain compatible", net_ok and local_ok, (cap_calls[0][1:] if cap_calls else [], cap_calls[-1] if cap_calls else []))
 
-        dashboard_source = open(os.path.join(SRC, "dashboard.html"), encoding="utf-8").read()
-        check("V7-CSV-AUTH-LINK", "analytics CSV export anchor gets the same query-token helper as authenticated API calls", 'id="analytics-export"' in dashboard_source and 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dashboard_source)
+        dashboard_html = open(os.path.join(SRC, "dashboard.html"), encoding="utf-8").read()
+        dashboard_js = open(os.path.join(SRC, "dashboard.js"), encoding="utf-8").read()
+        csv_cookie_auth = (
+            'id="analytics-export"' in dashboard_html
+            and 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dashboard_js
+            and "const qSep=u=>u;" in dashboard_js
+            and "?k=" not in dashboard_js
+        )
+        check("V7-CSV-AUTH-LINK", "analytics CSV export uses same-origin cookie authentication without query-token URLs", csv_cookie_auth)
 
         # --- 13..24: 12 New PREVIEW 0.1 Remediation & Integration Self-Tests ---
         # 13. PREVIEW01-FACE-INTERVAL (AI-BUG-01 / GAP-002): FACE_DETECT_INTERVAL respected when 0 faces present
