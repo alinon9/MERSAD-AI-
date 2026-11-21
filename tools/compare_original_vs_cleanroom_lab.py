@@ -405,7 +405,11 @@ def main():
         f"- **سبب الحالة:** {commit_verification['reason']}",
         f"- **الحالة الكلية للمرحلة الثانية (Phase 2 Overall Status):** **`{overall_phase2_status}`**",
         "",
-        "> **قاعدة صارمة:** نظراً لعدم توفر أرشيف الالتزام `ed7b8f727243da4878e547f08489af581c83291c` في بيئة الفحص الحالية دون اتصال بـ GitHub، فإن حالة المقارنة تُصنف رسمياً **`BLOCKED`** ولا يُسمح باعتبار المقارنة ناجحة (`PASS`) حتى استعادة الالتزام المحدد وتشغيل هذه الأداة عليه.",
+        (
+            f"> **حالة المقارنة المرجعية:** تم التحقق من الالتزام `{TARGET_ORIGINAL_COMMIT}` وتشغيل اختبارات النسخة الأصلية: `{orig_suite['status']}` ({orig_suite['passed']}/{orig_suite['total']} PASS)."
+            if orig_verified and orig_suite.get("status") == "PASS"
+            else f"> **حالة المقارنة المرجعية:** **{overall_phase2_status}** — {commit_verification['reason']} حالة اختبارات النسخة الأصلية: `{orig_suite.get('status')}` ({orig_suite.get('passed', 0)}/{orig_suite.get('total', 0)} PASS)."
+        ),
         "",
         "## 2. نتائج الاختبارات الوظيفية والأمنية المستقلة (Independent Functional & Security Suites)",
         "",
