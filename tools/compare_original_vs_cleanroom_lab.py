@@ -44,13 +44,13 @@ HISTORICAL_ORIGINAL_LAB_TEST_IDS = {
 
 def parse_historical_original_lab_unittest_output(output: str) -> dict | None:
     """Parse the archived LAB's original unittest runner and map its 8 core tests to LAB-01..LAB-08."""
-    ran_match = re.search(r"(?m)^Ran\\s+(\\d+)\\s+tests?\\s+in\\s+", output)
+    ran_match = re.search(r"(?m)^Ran\s+(\d+)\s+tests?\s+in\s+", output)
     if not ran_match:
         return None
 
     checks = []
     case_pattern = re.compile(
-        r"^\\s*(test_[A-Za-z0-9_]+)\\s+\\([^)]*\\)\\s+\\.\\.\\.\\s+(ok|FAIL|ERROR|skipped(?:\\s+.*)?)\\s*$"
+        r"^\s*(test_[A-Za-z0-9_]+)\s+\([^)]*\)\s+\.\.\.\s+(ok|FAIL|ERROR|skipped(?:\s+.*)?)\s*$"
     )
     for line in output.splitlines():
         match = case_pattern.match(line.strip())
@@ -287,7 +287,7 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
             )
         else:
             for line in out.splitlines():
-                m_chk = re.search(r"\\[(PASS|FAIL)\\]\\s+([A-Z0-9\\-]+):\\s+(.+)", line)
+                m_chk = re.search(r"\[(PASS|FAIL)\]\s+([A-Z0-9\-]+):\s+(.+)", line)
                 if m_chk:
                     checks.append({
                         "status": m_chk.group(1),
