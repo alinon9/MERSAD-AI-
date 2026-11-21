@@ -105,6 +105,53 @@ class TestPR5CriticalRemediationV3(unittest.TestCase):
     def read(self,name):
         return (AI_DIR/name).read_text(encoding="utf-8")
 
+
+    def test_historical_original_lab_unittest_output_maps_all_eight_core_checks(self):
+        compare_path = REPO_ROOT / "tools" / "compare_original_vs_cleanroom_lab.py"
+        spec = importlib.util.spec_from_file_location("mersad_compare_lab_test", compare_path)
+        self.assertIsNotNone(spec)
+        compare = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(compare)
+
+        names = [
+            "test_camera_render_returns_valid_jpeg",
+            "test_camera_streams_emit_mjpeg",
+            "test_health_endpoint",
+            "test_invalid_camera_mode_rejected",
+            "test_offline_camera_returns_expected_503",
+            "test_opencv_ffmpeg_reads_virtual_camera_like_mersad",
+            "test_quality_upload_image",
+            "test_quality_upload_video",
+        ]
+        methods = "\\n".join(
+            f"    def {name}(self):\\n        self.assertTrue(True)"
+            for name in names
+        )
+        legacy_test = (
+            "import unittest\\n"
+            "class HistoricalOriginalLabTests(unittest.TestCase):\\n"
+            + methods
+            + "\\nif __name__ == '__main__':\\n    unittest.main(verbosity=2)\\n"
+        )
+
+        with tempfile.TemporaryDirectory(prefix="mersad_original_lab_unittest_") as tmp:
+            lab_dir = Path(tmp)
+            (lab_dir / "test_lab.py").write_text(legacy_test, encoding="utf-8")
+            result = compare.run_independent_lab_functional_and_security_suite(
+                lab_dir, "Original_LAB_ed7b8f72"
+            )
+
+        self.assertEqual(result["status"], "PASS", result)
+        self.assertEqual(result["format"], "unittest")
+        self.assertEqual(result["passed"], 8)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["skipped"], 0)
+        self.assertEqual(result["total"], 8)
+        self.assertEqual(
+            {item["id"] for item in result["checks"]},
+            {"LAB-01", "LAB-02", "LAB-03", "LAB-04", "LAB-05", "LAB-06", "LAB-07", "LAB-08"},
+        )
+
     def test_find001_html_attributes_rejected_but_js_properties_allowed(self):
         self.assertEqual(find_html_event_attributes('<button onclick="run()">X</button>'),[("button","onclick","run()")])
         self.assertEqual(find_html_event_attributes('$("#x").onclick = fn; es.onerror = fn; fr.onload = fn; fr.onerror = fn;'),[])

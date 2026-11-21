@@ -30,6 +30,66 @@ from pathlib import Path
 TARGET_ORIGINAL_COMMIT = "ed7b8f727243da4878e547f08489af581c83291c"
 TARGET_ORIGINAL_BRANCH = "build/mersad-lab-exe-20261031"
 
+HISTORICAL_ORIGINAL_LAB_TEST_IDS = {
+    "test_camera_render_returns_valid_jpeg": "LAB-01",
+    "test_camera_streams_emit_mjpeg": "LAB-02",
+    "test_health_endpoint": "LAB-03",
+    "test_invalid_camera_mode_rejected": "LAB-04",
+    "test_offline_camera_returns_expected_503": "LAB-05",
+    "test_opencv_ffmpeg_reads_virtual_camera_like_mersad": "LAB-06",
+    "test_quality_upload_image": "LAB-07",
+    "test_quality_upload_video": "LAB-08",
+}
+
+
+def parse_historical_original_lab_unittest_output(output: str) -> dict | None:
+    """Parse the archived LAB's original unittest runner and map its 8 core tests to LAB-01..LAB-08."""
+    ran_match = re.search(r"(?m)^Ran\\s+(\\d+)\\s+tests?\\s+in\\s+", output)
+    if not ran_match:
+        return None
+
+    checks = []
+    case_pattern = re.compile(
+        r"^\\s*(test_[A-Za-z0-9_]+)\\s+\\([^)]*\\)\\s+\\.\\.\\.\\s+(ok|FAIL|ERROR|skipped(?:\\s+.*)?)\\s*$"
+    )
+    for line in output.splitlines():
+        match = case_pattern.match(line.strip())
+        if not match:
+            continue
+        test_name, raw_status = match.groups()
+        mapped_id = HISTORICAL_ORIGINAL_LAB_TEST_IDS.get(test_name, "LEGACY-UNMAPPED")
+        status_token = raw_status.split(None, 1)[0]
+        status = "PASS" if status_token == "ok" else ("SKIP" if status_token == "skipped" else "FAIL")
+        checks.append({
+            "status": status,
+            "id": mapped_id,
+            "detail": test_name if mapped_id != "LEGACY-UNMAPPED" else f"Unmapped historical test: {test_name}",
+        })
+
+    ran = int(ran_match.group(1))
+    passed = sum(1 for item in checks if item["status"] == "PASS")
+    failed = sum(1 for item in checks if item["status"] == "FAIL")
+    skipped = sum(1 for item in checks if item["status"] == "SKIP")
+    observed_ids = [item["id"] for item in checks]
+    expected_ids = set(HISTORICAL_ORIGINAL_LAB_TEST_IDS.values())
+    complete = (
+        ran == len(HISTORICAL_ORIGINAL_LAB_TEST_IDS)
+        and len(checks) == ran
+        and len(set(observed_ids)) == len(HISTORICAL_ORIGINAL_LAB_TEST_IDS)
+        and set(observed_ids) == expected_ids
+    )
+    return {
+        "format": "unittest",
+        "ran": ran,
+        "complete": complete,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "checks": checks,
+    }
+
+
+
 
 def sha256_file(p: Path) -> str:
     h = hashlib.sha256()
@@ -197,31 +257,70 @@ def run_independent_lab_functional_and_security_suite(lab_dir: Path, label: str)
         )
         out = (proc.stdout or "") + "\n" + (proc.stderr or "")
         checks = []
-        for line in out.splitlines():
-            m_chk = re.search(r"\[(PASS|FAIL)\]\s+([A-Z0-9\-]+):\s+(.+)", line)
-            if m_chk:
-                checks.append({
-                    "status": m_chk.group(1),
-                    "id": m_chk.group(2),
-                    "detail": m_chk.group(3).strip(),
-                })
-        passed = sum(1 for c in checks if c["status"] == "PASS")
-        failed = sum(1 for c in checks if c["status"] == "FAIL")
-        if label == "CleanRoom_LAB_Preview_0.1":
-            # The release gate is exactly 20 independent checks; a truncated or
-            # partially skipped suite must not pass merely because it has no FAIL lines.
-            status = "PASS" if (proc.returncode == 0 and passed == 22 and failed == 0 and len(checks) == 22) else "FAIL"
+        skipped = 0
+        suite_format = "id_checks"
+        historical_summary = None
+
+        if label != "CleanRoom_LAB_Preview_0.1":
+            historical_summary = parse_historical_original_lab_unittest_output(out)
+
+        if historical_summary is not None:
+            suite_format = historical_summary["format"]
+            checks = historical_summary["checks"]
+            passed = historical_summary["passed"]
+            failed = historical_summary["failed"]
+            skipped = historical_summary["skipped"]
+            total = historical_summary["ran"]
+            status = (
+                "PASS"
+                if proc.returncode == 0
+                and historical_summary["complete"]
+                and passed == len(HISTORICAL_ORIGINAL_LAB_TEST_IDS)
+                and failed == 0
+                and skipped == 0
+                else "FAIL"
+            )
+            reason = None if status == "PASS" else (
+                "Historical unittest suite was incomplete or had failures/skips: "
+                f"ran={total}, parsed={len(checks)}, passed={passed}, failed={failed}, skipped={skipped}, "
+                f"complete={historical_summary['complete']}."
+            )
         else:
-            status = "PASS" if (proc.returncode == 0 and passed > 0 and failed == 0) else "FAIL"
+            for line in out.splitlines():
+                m_chk = re.search(r"\\[(PASS|FAIL)\\]\\s+([A-Z0-9\\-]+):\\s+(.+)", line)
+                if m_chk:
+                    checks.append({
+                        "status": m_chk.group(1),
+                        "id": m_chk.group(2),
+                        "detail": m_chk.group(3).strip(),
+                    })
+            passed = sum(1 for c in checks if c["status"] == "PASS")
+            failed = sum(1 for c in checks if c["status"] == "FAIL")
+            skipped = sum(1 for c in checks if c["status"] == "SKIP")
+            total = len(checks)
+            if label == "CleanRoom_LAB_Preview_0.1":
+                # Clean-Room release gate remains exactly 22 independent checks.
+                # A truncated or partially skipped suite must never pass.
+                status = "PASS" if (
+                    proc.returncode == 0 and passed == 22 and failed == 0
+                    and skipped == 0 and len(checks) == 22
+                ) else "FAIL"
+            else:
+                status = "PASS" if (proc.returncode == 0 and passed > 0 and failed == 0 and skipped == 0) else "FAIL"
+            reason = None if status == "PASS" else "Output did not satisfy the expected complete test-suite format."
+
         return {
             "label": label,
             "executed": True,
             "status": status,
             "exit_code": proc.returncode,
+            "format": suite_format,
             "passed": passed,
             "failed": failed,
-            "total": len(checks),
+            "skipped": skipped,
+            "total": total,
             "checks": checks,
+            "reason": reason,
             "raw_output_tail": out.splitlines()[-25:],
         }
     except Exception as e:

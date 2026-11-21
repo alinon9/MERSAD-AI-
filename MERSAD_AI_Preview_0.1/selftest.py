@@ -5907,11 +5907,19 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 and "--require-cleanroom-pass" in ps1_txt_chk
                 and "--require-unblocked" not in ps1_txt_chk
             )
+            cleanroom_suite = suites_js.get("cleanroom_lab", {})
             p2_detail = {
                 "exit_code": proc_cmp.returncode,
                 "phase2_comparison_status": cmp_data.get("phase2_comparison_status"),
                 "original_status": suites_js.get("original_lab", {}).get("status"),
-                "cleanroom_passed": suites_js.get("cleanroom_lab", {}).get("passed"),
+                "cleanroom_passed": cleanroom_suite.get("passed"),
+                "cleanroom_failed": cleanroom_suite.get("failed"),
+                "cleanroom_skipped": cleanroom_suite.get("skipped"),
+                "cleanroom_failed_checks": [
+                    {"id": item.get("id"), "detail": item.get("detail")}
+                    for item in cleanroom_suite.get("checks", [])
+                    if item.get("status") != "PASS"
+                ],
             }
         check("PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
               "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",
