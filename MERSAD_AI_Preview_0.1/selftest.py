@@ -5886,6 +5886,10 @@ def run_patched_v7_1_and_preview_0_1_tests():
         # Use a guaranteed-missing path to test the documented non-blocking fallback,
         # even when CI has restored the authentic Original LAB beside the project.
         orig_placeholder = os.path.join(d, "MERSAD_LAB_Original_MISSING")
+        # Isolate the preservation directory too: the real CI Phase 2 has already
+        # restored Original LAB there, and the comparator intentionally reuses it
+        # when --preserve-original-dir points at that existing verified copy.
+        preserve_placeholder = os.path.join(d, "MERSAD_LAB_Preserve_MISSING")
         clean_lab_dir = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Preview_0.1")
         p2_ok = True
         p2_detail = {}
@@ -5893,8 +5897,10 @@ def run_patched_v7_1_and_preview_0_1_tests():
             tmp_md = os.path.join(d, "cmp_out.md")
             tmp_js = os.path.join(d, "cmp_out.json")
             proc_cmp = subprocess.run(
-                [sys.executable, cmp_tool, "--original-source", orig_placeholder, "--cleanroom-dir", clean_lab_dir,
-                 "--output-md", tmp_md, "--output-json", tmp_js, "--require-cleanroom-pass"],
+                [sys.executable, cmp_tool, "--original-source", orig_placeholder,
+                 "--preserve-original-dir", preserve_placeholder,
+                 "--cleanroom-dir", clean_lab_dir, "--output-md", tmp_md,
+                 "--output-json", tmp_js, "--require-cleanroom-pass"],
                 capture_output=True, text=True, timeout=60
             )
             cmp_data = json.loads(open(tmp_js, encoding="utf-8").read()) if os.path.isfile(tmp_js) else {}
