@@ -329,13 +329,13 @@ def main():
             f"{lab_base}/api/integration/connect_ai",
             method="POST",
             payload={"ai_url": ai_base, "ai_token": ai_srv.bus.token, "cam_id": "cam1", "cam_name": "LAB_CAM1"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         st_c2, d_c2 = _http_json(
             f"{lab_base}/api/integration/connect_ai",
             method="POST",
             payload={"ai_url": ai_base, "ai_token": ai_srv.bus.token, "cam_id": "cam2", "cam_name": "LAB_CAM2"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         w1_spawned = d_c1.get("ai_response", {}).get("worker_spawned") is True
         w2_spawned = d_c2.get("ai_response", {}).get("worker_spawned") is True
@@ -368,7 +368,7 @@ def main():
             f"{lab_base}/api/cameras/cam2/mode",
             method="POST",
             payload={"mode": "offline"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         if st_cam2_pause != 200 or d_cam2_pause.get("ok") is not True:
             raise RuntimeError(f"Could not isolate primary OCR camera from LAB_CAM2: {st_cam2_pause} {d_cam2_pause}")
@@ -502,7 +502,7 @@ def main():
             f"{lab_base}/api/cameras/cam2/mode",
             method="POST",
             payload={"mode": "normal"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         cam2_ready = _wait_until(
             lambda: (
@@ -516,7 +516,7 @@ def main():
         )
         _, cams_pre_off = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
         cam2_frames_pre_off = cams_pre_off.get("cameras", {}).get("LAB_CAM2", {}).get("frames", 0)
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "offline"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "offline"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         def _check_cam1_disconnected():
             _, cd = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
@@ -527,7 +527,7 @@ def main():
             return None
 
         disc_res = _wait_until(_check_cam1_disconnected, timeout_sec=6.0, poll_sec=0.1)
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         def _check_cam1_reconnected():
             _, cd = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
@@ -550,19 +550,19 @@ def main():
 
         # Scenario 11 (INT-E2E-06 & INT-E2E-07): Stream health telemetry, safe dynamic camera removal, engine stop & restart
         m._CAM_QUALITY_STATE.pop("LAB_CAM1", None)
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "frozen"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "frozen"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
         froz_res = _wait_until(
             lambda: (lambda cd: cd["cameras"]["LAB_CAM1"] if "FROZEN_STREAM" in cd.get("cameras", {}).get("LAB_CAM1", {}).get("issues", []) else None)(_http_json(f"{ai_base}/api/cameras", headers=ai_headers)[1]),
             timeout_sec=5.0,
             poll_sec=0.1,
         )
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "occluded"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "occluded"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
         occ_res = _wait_until(
             lambda: (lambda cd: cd["cameras"]["LAB_CAM1"] if "CAMERA_OCCLUDED_OR_DARK" in cd.get("cameras", {}).get("LAB_CAM1", {}).get("issues", []) else None)(_http_json(f"{ai_base}/api/cameras", headers=ai_headers)[1]),
             timeout_sec=5.0,
             poll_sec=0.1,
         )
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         # Safe removal of active camera LAB_CAM2 via HTTP POST /api/cameras/remove (verifying BUG-02 fix)
         st_rem, d_rem = _http_json(f"{ai_base}/api/cameras/remove", method="POST", payload={"name": "LAB_CAM2"}, headers=ai_headers)
@@ -650,7 +650,7 @@ def main():
                 f"{lab_base}/api/integration/connect_ai",
                 method="POST",
                 payload={"ai_url": f"http://127.0.0.1:{ep_port}", "ai_token": ep_token, "cam_id": "cam2", "cam_name": "LAB_DYN_CAM2"},
-                headers={"Origin": lab_base},
+                headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
             )
             ai_r1 = d_c1.get("ai_response", {}) if isinstance(d_c1, dict) else {}
             st_dyn2 = m._ACTIVE_CAM_STATES.get("LAB_DYN_CAM2")
@@ -692,7 +692,7 @@ def main():
                 f"{lab_base}/api/integration/connect_ai",
                 method="POST",
                 payload={"ai_url": f"http://127.0.0.1:{ep_port}", "ai_token": ep_token, "cam_id": "cam3", "cam_name": "LAB_DYN_CAM3"},
-                headers={"Origin": lab_base},
+                headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
             )
             ai_r2 = d_c2.get("ai_response", {}) if isinstance(d_c2, dict) else {}
             st_dyn3 = m._ACTIVE_CAM_STATES.get("LAB_DYN_CAM3")
