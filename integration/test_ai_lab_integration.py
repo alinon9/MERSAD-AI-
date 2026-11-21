@@ -300,8 +300,23 @@ def main():
     ai_thread = threading.Thread(target=ai_httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     ai_thread.start()
     ai_headers = {"X-Mersad-Token": ai_srv.bus.token, "Origin": ai_base}
+    old_allowed_local_ai_ports = os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS")
 
     try:
+        # The LAB server deliberately allows only a small set of loopback AI
+        # ports by default. This integration test binds AI to an ephemeral port,
+        # so allow exactly that test-owned port for the duration of this run.
+        # Keep the production allowlist unchanged and restore the environment in
+        # the finally block below.
+        allowed_local_ai_ports = [
+            item.strip()
+            for item in (old_allowed_local_ai_ports or "").split(",")
+            if item.strip()
+        ]
+        if str(ai_port) not in allowed_local_ai_ports:
+            allowed_local_ai_ports.append(str(ai_port))
+        os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(allowed_local_ai_ports)
+
         # Scenario 1: Start MERSAD AI server, database & token auth guard
         st_unauth, _ = _http_json(f"{ai_base}/api/stats")
         st_auth, d_auth = _http_json(f"{ai_base}/api/stats", headers=ai_headers)
@@ -754,6 +769,10 @@ def main():
         except Exception:
             pass
         lab_ctrl.stop()
+        if old_allowed_local_ai_ports is None:
+            os.environ.pop("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", None)
+        else:
+            os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = old_allowed_local_ai_ports
         try:
             if m.db:
                 m.db.close()
