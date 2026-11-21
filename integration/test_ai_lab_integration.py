@@ -297,6 +297,20 @@ def main():
     ai_httpd = ai_srv.ThreadingHTTPServer(("127.0.0.1", 0), ai_srv.H)
     ai_port = ai_httpd.server_address[1]
     ai_base = f"http://127.0.0.1:{ai_port}"
+    # The AI HTTP server deliberately binds port 0 for test isolation. The LAB
+    # connector rejects arbitrary loopback ports by default, so explicitly
+    # allow only this test-owned ephemeral port in this process. Preserve the
+    # documented defaults and any caller-provided local ports.
+    allowed_local_ports = {"80", "443", "8000", "8765"}
+    allowed_local_ports.update(
+        item.strip()
+        for item in os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", "").split(",")
+        if item.strip()
+    )
+    allowed_local_ports.add(str(ai_port))
+    os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(
+        sorted(allowed_local_ports, key=int)
+    )
     ai_thread = threading.Thread(target=ai_httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     ai_thread.start()
     ai_headers = {"X-Mersad-Token": ai_srv.bus.token, "Origin": ai_base}
@@ -359,7 +373,13 @@ def main():
             "Add virtual cameras LAB_CAM1 & LAB_CAM2 via m.wire() -> spawn real AI reader & inference threads (INT-E2E-01)",
             "PASS" if (st_c1 == 200 and st_c2 == 200 and w1_spawned and w2_spawned) else "FAIL",
             pipeline_cat,
-            f"LAB_CAM1 worker_spawned={w1_spawned}, LAB_CAM2 worker_spawned={w2_spawned}",
+            (
+                f"HTTP statuses=({st_c1},{st_c2}); "
+                f"LAB_CAM1 worker_spawned={w1_spawned} error="
+                f"{d_c1.get('error') or d_c1.get('ai_response', {}).get('error') or 'none'}; "
+                f"LAB_CAM2 worker_spawned={w2_spawned} error="
+                f"{d_c2.get('error') or d_c2.get('ai_response', {}).get('error') or 'none'}"
+            ),
         )
 
         # Scenario 4: Stream live MJPEG test video from MERSAD LAB
