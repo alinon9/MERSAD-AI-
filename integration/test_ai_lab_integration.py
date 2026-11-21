@@ -472,9 +472,16 @@ def main():
         time.sleep(1.2)
         _, stats_after_dedup = _http_json(f"{ai_base}/api/stats", headers=ai_headers)
         f_after = stats_after_dedup.get("cameras", {}).get("LAB_CAM1", {}).get("frames", 0)
+        # Count only the exact canonical wanted-plate alert. The OCR candidate
+        # "عدن-012345" is a distinct extra-leading-zero reading, not the exact
+        # plate "عدن-12345"; substring matching incorrectly counted both.
         wanted_alerts_cam1 = [
             a for a in ai_srv.bus.alerts
-            if a.get("cam") == "LAB_CAM1" and "12345" in str(a.get("subject", ""))
+            if (
+                a.get("cam") == "LAB_CAM1"
+                and a.get("msg") == "VEHICLE: WANTED"
+                and str(a.get("subject", "")).strip() == "عدن-12345"
+            )
         ]
         ok_e2e_03 = (f_after > f_before + 3) and (len(wanted_alerts_cam1) == 1)
         record(
