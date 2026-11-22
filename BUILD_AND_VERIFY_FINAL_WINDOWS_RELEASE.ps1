@@ -79,6 +79,13 @@ Assert-ExitCode "pip install pinned requirements"
 & $pip uninstall -y opencv-python-headless
 & $pip install --force-reinstall --no-deps opencv-python==4.11.0.86
 Assert-ExitCode "enforce GUI opencv-python==4.11.0.86"
+
+Write-Host "[Security] Restoring dashboard.js and running the DOM-XSS/CSP closure audit..."
+& $py -c "import gzip; from pathlib import Path; p=Path('MERSAD_AI_Preview_0.1/dashboard.js.gz'); Path('MERSAD_AI_Preview_0.1/dashboard.js').write_bytes(gzip.decompress(p.read_bytes()))"
+Assert-ExitCode "restore dashboard.js from pinned gzip source"
+& $py "MERSAD_AI_Preview_0.1\security_closure_audit.py" --report "reports_and_logs\security_closure_dom_xss_report.json"
+Assert-ExitCode "security_closure_audit.py (DOM-XSS/CSP/Trusted Types)"
+
 & $py "MERSAD_AI_Preview_0.1\check_install.py" --verify-pip-deps
 Assert-ExitCode "check_install.py --verify-pip-deps"
 
