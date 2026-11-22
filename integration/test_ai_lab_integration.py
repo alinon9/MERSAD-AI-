@@ -607,7 +607,7 @@ def main():
         _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         # Safe removal of active camera LAB_CAM2 via HTTP POST /api/cameras/remove (verifying BUG-02 fix)
-        st_rem, d_rem = _http_json(f"{ai_base}/api/cameras/remove", method="POST", payload={"name": "LAB_CAM2"}, headers=ai_headers)
+        # Camera removal intentionally allows up to 10s for bounded reader/inference shutdown (4s + 6s); keep the HTTP client deadline above that server-side bound.\n        st_rem, d_rem = _http_json(f"{ai_base}/api/cameras/remove", method="POST", payload={"name": "LAB_CAM2"}, headers=ai_headers, timeout=15.0)
 
         engine.stop(timeout=4.0)
         verify_before = m.verify()
