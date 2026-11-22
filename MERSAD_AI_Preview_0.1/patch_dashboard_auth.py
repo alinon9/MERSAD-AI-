@@ -66,8 +66,12 @@ checks = {
 }
 remaining = [name for name, match in checks.items() if match]
 if remaining:
-    # Avoid logging any actual credential value; source snippets are code-only.
-    raise SystemExit("FAIL: dashboard.js still contains legacy query-token logic: " + ", ".join(remaining))
+    # This reports only a short source-code context, never a runtime credential.
+    literal = re.search(r"[?&]k=", source, re.IGNORECASE)
+    context = ""
+    if literal:
+        context = repr(source[max(0, literal.start() - 160):min(len(source), literal.end() + 220)])
+    raise SystemExit("FAIL: dashboard.js still contains legacy query-token logic: " + ", ".join(remaining) + " " + context)
 if len(identity_pattern.findall(source)) != 1:
     raise SystemExit("FAIL: dashboard.js does not contain exactly one qSep identity helper.")
 
