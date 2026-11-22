@@ -60,20 +60,32 @@ jobs:
           if ($entries.Count -eq 0) { throw "Checksum manifest has no entries" }
 
           $rootPrefix = $root.TrimEnd("\") + "\"
+          Set-Content -LiteralPath "acceptance-results.md" -Value "# MERSAD Phase 2 — Acceptance diagnostics" -Encoding UTF8
           $manifested = 0
           $actualFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object {
             $_.FullName -ne $manifestPath
           })
+          $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
           foreach ($file in $actualFiles) {
             $relative = $file.FullName.Substring($rootPrefix.Length)
             if (-not $entries.ContainsKey($relative)) {
               throw "Unmanifested file found in package: $relative"
             }
+            [void]$seen.Add($relative)
             $actualHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($actualHash -ne $entries[$relative]) {
               throw "SHA-256 mismatch: $relative (expected $($entries[$relative]), got $actualHash)"
             }
             $manifested++
+          }
+          $missing = @($entries.Keys | Where-Object { -not $seen.Contains($_) })
+          if ($missing.Count -gt 0) {
+            Write-Host "[DIAGNOSTIC] Manifest entries absent from the downloaded Artifact:"
+            foreach ($relative in $missing) {
+              Write-Host "[MISSING] $relative"
+              Add-Content -LiteralPath "acceptance-results.md" -Value "- MISSING FROM ARTIFACT: $relative"
+            }
+            throw "Artifact is missing $($missing.Count) file(s) listed in its SHA-256 manifest. See diagnostics above."
           }
           if ($manifested -ne $entries.Count) {
             throw "Manifest/file count mismatch: manifest=$($entries.Count), verified=$manifested"
