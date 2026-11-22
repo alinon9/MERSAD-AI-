@@ -31,10 +31,9 @@ _os.environ["ULTRALYTICS_AUTOINSTALL"] = "false"
 _EXCLUDED_SUBMODULES = (
     "ultralytics.trackers",
     "torch.utils.tensorboard",
-    "scipy.special._cdflib",
 )
 
-for pkg in ("easyocr", "ultralytics"):
+for pkg in ("easyocr", "ultralytics", "scipy"):
     try:
         tmp_ret = collect_all(pkg)
         datas += tmp_ret[0]
@@ -60,7 +59,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["opencv-python-headless", "ultralytics.trackers", "torch.utils.tensorboard", "scipy.special._cdflib", "tensorboard", "lap", "lapx"],
+    excludes=["opencv-python-headless", "ultralytics.trackers", "torch.utils.tensorboard", "tensorboard", "lap", "lapx"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
