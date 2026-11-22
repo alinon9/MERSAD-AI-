@@ -338,11 +338,38 @@ jobs:
           Copy-Item -Path "MERSAD_LAB_Preview_0.1\dist\portable\MERSAD_LAB_Portable_x64.zip" -Destination "$finalOut\Installers_and_Portable\MERSAD_LAB_Portable_x64.zip" -Force
           Copy-Item -Path "MERSAD_LAB_Preview_0.1\dist\installer\MERSAD_LAB_Setup_x64.exe" -Destination "$finalOut\Installers_and_Portable\MERSAD_LAB_Setup_x64.exe" -Force
 
-          Get-ChildItem -Path $finalOut -Recurse -File | ForEach-Object {
-            $h = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower()
-            $rel = $_.FullName.Substring((Resolve-Path $finalOut).Path.Length + 1)
-            "$h  $rel"
-          } | Set-Content -Path "$finalOut\SHA256SUMS_WINDOWS_FINAL.txt" -Encoding UTF8
+          $manifestPath = Join-Path $finalOut "SHA256SUMS_WINDOWS_FINAL.txt"
+          $finalRoot = (Resolve-Path -LiteralPath $finalOut).Path
+          $manifestRows = [Collections.Generic.List[string]]::new()
+          $manifestPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+          $filesToHash = @(Get-ChildItem -LiteralPath $finalOut -Recurse -Force -File | Where-Object {
+            -not [string]::Equals($_.FullName, $manifestPath, [StringComparison]::OrdinalIgnoreCase)
+          })
+          foreach ($file in $filesToHash) {
+            $relative = [IO.Path]::GetRelativePath($finalRoot, $file.FullName).Replace('\', '/')
+            if (-not $manifestPaths.Add($relative)) {
+              throw "Duplicate path while generating SHA-256 manifest: $relative"
+            }
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            [void]$manifestRows.Add("$hash  $relative")
+          }
+
+          $requiredManifestPaths = @(
+            "MERSAD_AI/MERSAD_AI.exe",
+            "MERSAD_LAB/MERSAD_LAB.exe",
+            "Installers_and_Portable/MERSAD_AI_Portable_x64.zip",
+            "Installers_and_Portable/MERSAD_LAB_Portable_x64.zip",
+            "Installers_and_Portable/MERSAD_LAB_Setup_x64.exe"
+          )
+          foreach ($requiredPath in $requiredManifestPaths) {
+            if (-not $manifestPaths.Contains($requiredPath)) {
+              throw "SHA-256 manifest generation omitted a required release file: $requiredPath"
+            }
+          }
+          if ($manifestRows.Count -lt 100) {
+            throw "SHA-256 manifest generation produced too few entries: $($manifestRows.Count)"
+          }
+          $manifestRows | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
       - name: Upload MERSAD_PREVIEW_0.1_FINAL Artifact
         uses: actions/upload-artifact@v4
@@ -381,11 +408,12 @@ jobs:
               throw "Malformed SHA-256 manifest row: $line"
             }
             $expected = $manifestMatch.Groups[1].Value.ToLowerInvariant()
-            $relative = $manifestMatch.Groups[2].Value.Trim().Replace('/', '\')
+            $relative = $manifestMatch.Groups[2].Value.Trim().Replace('\', '/')
             if (-not $seen.Add($relative)) {
               throw "Duplicate path in SHA-256 manifest: $relative"
             }
-            $fullPath = [IO.Path]::GetFullPath((Join-Path $root $relative))
+            $relativeForJoin = $relative.Replace('/', '\')
+            $fullPath = [IO.Path]::GetFullPath((Join-Path $root $relativeForJoin))
             if (-not $fullPath.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
               throw "Path traversal detected in SHA-256 manifest: $relative"
             }
