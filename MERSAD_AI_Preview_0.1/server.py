@@ -258,9 +258,13 @@ class H(BaseHTTPRequestHandler):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
+            if isinstance(self.connection, ssl.SSLSocket):
+                self.send_header("Strict-Transport-Security", "max-age=31536000")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; "
+                "form-action 'self'; frame-ancestors 'none'",
             )
             self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
