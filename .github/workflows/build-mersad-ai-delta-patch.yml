@@ -62,7 +62,7 @@ jobs:
             # --verify-models regenerates this signed/trusted model manifest as part
             # of its successful self-check. Validate it semantically after that check,
             # not by comparing it to the pre-verification bytes.
-            if ($rel.Replace('/', '\\') -ieq 'models\\.trusted_models.json') {
+            if ($rel.Replace('/', '\') -ieq 'models\.trusted_models.json') {
               try {
                 $trustedManifest = Get-Content -LiteralPath $patchedPath -Raw | ConvertFrom-Json
                 if ($null -eq $trustedManifest) { throw "Trusted model manifest is empty." }
