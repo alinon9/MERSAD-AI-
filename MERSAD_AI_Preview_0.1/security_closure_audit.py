@@ -238,6 +238,13 @@ def main() -> int:
             if re.search(r"[?&]k=", source, re.IGNORECASE):
                 report["legacy_query_token_references"].append(label)
 
+        if report["legacy_query_token_references"]:
+            report["errors"].append(
+                "First-party browser JavaScript must not append session tokens to query URLs; use same-origin cookies"
+            )
+        if "const qSep=u=>u;" not in ai_js:
+            report["errors"].append("AI dashboard does not use the identity qSep helper for cookie-only authentication")
+
         report["checks"]["ai_dashboard_js_bytes"] = len(ai_js.encode("utf-8"))
         report["checks"]["lab_js_bytes"] = len(lab_js.encode("utf-8"))
         report["checks"]["dompurify_version"] = "3.4.18"
@@ -255,7 +262,7 @@ def main() -> int:
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[SECURITY CLOSURE] Status: {report['status']}")
     print(f"[SECURITY CLOSURE] Inline event handlers/scripts: {sum(len(x.get('inline_event_handlers', [])) + len(x.get('inline_script_start_lines', [])) for x in report['checks'].values() if isinstance(x, dict))}")
-    print(f"[SECURITY CLOSURE] DOM HTML insertion sinks for manual review: {len(report['dom_html_sinks'])}")
+    print(f"[SECURITY CLOSURE] DOM HTML insertion sinks: {report.get('checks', {}).get('dom_sink_protection', {}).get('total_dynamic_html_sinks', len(report['dom_html_sinks']))} (guarded={report.get('checks', {}).get('dom_sink_protection', {}).get('sanitized_innerhtml_sinks', 0)}, unprotected={report.get('checks', {}).get('dom_sink_protection', {}).get('unprotected_sink_count', 0)})")
     print(f"[SECURITY CLOSURE] Dynamic eval/Function findings: {len(report['unsafe_dynamic_code'])}")
     for finding in report["dom_html_sinks"][:40]:
         print(f"[DOM-SINK] {finding['path']}:{finding['line']} {finding['sink']} :: {finding['context']}")
