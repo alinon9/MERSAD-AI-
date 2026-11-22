@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Remove legacy query-token propagation from the browser dashboard.
-
-The server may continue accepting ?k= for external legacy clients during the
-migration window, but the first-party dashboard must rely on the HttpOnly
-same-origin session cookie established by the initial redirect.
-"""
+"""Remove legacy query-token propagation from the first-party browser dashboard."""
 from __future__ import annotations
 
 import re
@@ -16,53 +11,64 @@ if not DASHBOARD.is_file():
 
 source = DASHBOARD.read_text(encoding="utf-8")
 
-# Remove the whole declaration beginning with K=. The source is minified, and
-# Q may be declared in the same const statement; matching to that statement's
-# semicolon intentionally removes both values in one operation.
-capture_pattern = re.compile(
-    r"""(?:const|let|var)\s+K\s*=\s*new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*["']k["']\s*\)[^;]*;""",
-    re.MULTILINE,
+# Remove the complete declaration statement containing the legacy read of
+# location.search["k"]. This handles minifier changes in whitespace and in
+# whether K and Q are declared together or in a comma-separated const chain.
+capture_read = re.compile(
+    r"""new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*["']k["']\s*\)""",
+    re.IGNORECASE,
 )
-capture_matches = list(capture_pattern.finditer(source))
-if len(capture_matches) == 1:
-    declaration = capture_matches[0].group(0)
-    if "Q=" not in declaration.replace(" ", "") and "Q =" not in declaration:
-        raise SystemExit("FAIL: K declaration found but Q query-token construction was not in the same statement.")
-    if "?k=" not in declaration or "encodeURIComponent(K)" not in declaration:
-        raise SystemExit("FAIL: K declaration did not match the expected legacy query-token construction.")
-    source = capture_pattern.sub("", source, count=1)
-    print("[AUTH] Removed legacy K/Q session-token capture from the browser URL.")
-elif len(capture_matches) > 1:
-    raise SystemExit(f"FAIL: found {len(capture_matches)} legacy K query-token declarations.")
+reads = list(capture_read.finditer(source))
+if len(reads) > 1:
+    raise SystemExit(f"FAIL: found {len(reads)} reads of the browser k query parameter.")
 
-# Any expression-bodied qSep helper is replaced with an identity URL helper.
-qsep_pattern = re.compile(r"""(?:const|let|var)\s+qSep\s*=\s*u\s*=>[^;]*;""", re.MULTILINE)
-identity_pattern = re.compile(r"""const\s+qSep\s*=\s*u\s*=>\s*u\s*;""")
+for match in reversed(reads):
+    pos = match.start()
+    boundary = max(source.rfind(";", 0, pos), source.rfind("\n", 0, pos))
+    declaration_matches = list(
+        re.finditer(r"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=", source[boundary + 1:pos])
+    )
+    if not declaration_matches:
+        raise SystemExit("FAIL: found a query-token read but could not identify its containing variable declaration.")
+    start = boundary + 1 + declaration_matches[-1].start()
+    end = source.find(";", match.end())
+    if end < 0:
+        raise SystemExit("FAIL: query-token declaration has no terminating semicolon.")
+    statement = source[start:end + 1]
+    if "URLSearchParams" not in statement or ".get" not in statement:
+        raise SystemExit("FAIL: refusing to remove an unexpected JavaScript statement around the query-token read.")
+    source = source[:start] + source[end + 1:]
+    print("[AUTH] Removed the complete declaration that read the session token from location.search.")
+
+# qSep may already have been made identity by a previous source edit. If it
+# still appends Q/K, replace the entire expression-bodied declaration.
+qsep_pattern = re.compile(r"""\b(?:const|let|var)\s+qSep\s*=\s*u\s*=>[^;]*;""", re.MULTILINE)
+identity_pattern = re.compile(r"""\bconst\s+qSep\s*=\s*u\s*=>\s*u\s*;""")
 qsep_matches = list(qsep_pattern.finditer(source))
 if len(qsep_matches) == 1:
     source = qsep_pattern.sub("const qSep=u=>u;", source, count=1)
-    print("[AUTH] Replaced qSep with identity URL handling.")
+    print("[AUTH] qSep now preserves URLs without appending credentials.")
 elif len(qsep_matches) > 1:
     raise SystemExit(f"FAIL: found {len(qsep_matches)} qSep declarations.")
 elif len(identity_pattern.findall(source)) == 1:
-    print("[AUTH] qSep already uses identity URLs.")
+    print("[AUTH] qSep already uses identity URL handling.")
 else:
     raise SystemExit("FAIL: qSep declaration was not found; refusing to patch unknown dashboard source.")
 
 DASHBOARD.write_text(source, encoding="utf-8", newline="")
 source = DASHBOARD.read_text(encoding="utf-8")
 
-legacy_markers = (
-    re.search(r"[?&]k=", source, re.IGNORECASE),
-    re.search(r"new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*['\"]k['\"]", source, re.IGNORECASE),
-    re.search(r"encodeURIComponent\s*\(\s*K\s*\)", source),
-    re.search(r"\b(?:const|let|var)\s+Q\s*=\s*K\s*\?", source),
-)
-if any(legacy_markers):
-    pos = source.lower().find("?k=")
-    context = source[max(0, pos - 180):pos + 220] if pos >= 0 else "token-capture marker remains without literal ?k="
-    raise SystemExit(f"FAIL: dashboard.js still contains query-token capture/propagation: {context!r}")
+checks = {
+    "literal query token": re.search(r"[?&]k=", source, re.IGNORECASE),
+    "location.search token read": capture_read.search(source),
+    "token URL encoding": re.search(r"encodeURIComponent\s*\(\s*K\s*\)", source),
+    "legacy Q construction": re.search(r"\b(?:const|let|var)\s+Q\s*=\s*K\s*\?", source),
+}
+remaining = [name for name, match in checks.items() if match]
+if remaining:
+    # Avoid logging any actual credential value; source snippets are code-only.
+    raise SystemExit("FAIL: dashboard.js still contains legacy query-token logic: " + ", ".join(remaining))
 if len(identity_pattern.findall(source)) != 1:
     raise SystemExit("FAIL: dashboard.js does not contain exactly one qSep identity helper.")
 
-print("[AUTH] PASS: browser dashboard uses same-origin session cookies and emits no session-token query URLs.")
+print("[AUTH] PASS: first-party dashboard uses same-origin cookies and never reads or appends a session token in query URLs.")
