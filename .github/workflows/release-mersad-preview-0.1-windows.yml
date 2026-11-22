@@ -348,12 +348,12 @@ jobs:
           }
 
           foreach ($line in $manifestLines) {
-            if ($line -notmatch '^([A-Fa-f0-9]{64})\s{2}(.+)
-) {
+            $manifestMatch = [regex]::Match($line, '^([A-Fa-f0-9]{64})\s{2}(.+)')
+            if (-not $manifestMatch.Success -or $manifestMatch.Length -ne $line.Length) {
               throw "Malformed SHA-256 manifest row: $line"
             }
-            $expected = $Matches[1].ToLowerInvariant()
-            $relative = $Matches[2].Trim().Replace('/', '\')
+            $expected = $manifestMatch.Groups[1].Value.ToLowerInvariant()
+            $relative = $manifestMatch.Groups[2].Value.Trim().Replace('/', '\')
             if (-not $seen.Add($relative)) {
               throw "Duplicate path in SHA-256 manifest: $relative"
             }
