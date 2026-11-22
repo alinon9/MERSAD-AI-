@@ -187,6 +187,7 @@ class MersadBatch2SecurityTests(unittest.TestCase):
         self.assertIn("object-src 'none'", csp)
         self.assertIn("base-uri 'self'", csp)
         self.assertIn("form-action 'self'", csp)
+        self.assertIn("trusted-types mersad-ui-html dompurify", csp)
 
     def test_root_and_preview_dashboards_are_identical_and_have_no_inline_handlers(self):
         preview_dir = Path(__file__).resolve().parent
@@ -198,6 +199,8 @@ class MersadBatch2SecurityTests(unittest.TestCase):
         scripts = re.findall(r"<script\b([^>]*)>([\s\S]*?)</script>", root_html, flags=re.IGNORECASE)
         self.assertTrue(scripts)
         self.assertTrue(all(re.search(r"\bsrc\s*=", attrs, flags=re.IGNORECASE) and not body.strip() for attrs, body in scripts))
+        script_sources = [re.search(r'\bsrc\s*=\s*["\']([^"\']+)["\']', attrs, flags=re.IGNORECASE).group(1) for attrs, _body in scripts]
+        self.assertEqual(script_sources[:3], ["/purify.min.js", "/dompurify-guard.js", "/dashboard.js"])
         root_server = (repo_root / "server.py").read_text(encoding="utf-8")
         preview_server = (preview_dir / "server.py").read_text(encoding="utf-8")
         self.assertIn("script-src 'self'", root_server)
@@ -212,6 +215,18 @@ class MersadBatch2SecurityTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("javascript", headers.get("Content-Type", "").lower())
         self.assertGreater(len(body), 1000)
+
+    def test_dompurify_and_guard_assets_are_served_same_origin(self):
+        for path, marker in (
+            ("/purify.min.js", "DOMPurify 3.4.18"),
+            ("/dompurify-guard.js", "MERSAD_DOM_XSS_GUARD"),
+        ):
+            status, headers, body = self.request(
+                path, headers={"X-Mersad-Token": "batch2-server-test-secret"}
+            )
+            self.assertEqual(status, 200, path)
+            self.assertIn("javascript", headers.get("Content-Type", "").lower())
+            self.assertIn(marker.encode("utf-8"), body, path)
 
     def test_telegram_remote_http_is_rejected(self):
         with mock.patch.dict(
