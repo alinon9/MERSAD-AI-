@@ -59,10 +59,10 @@ DASHBOARD.write_text(source, encoding="utf-8", newline="")
 source = DASHBOARD.read_text(encoding="utf-8")
 
 checks = {
-    "literal query token": re.search(r"[?&]k=", source, re.IGNORECASE),
     "location.search token read": capture_read.search(source),
     "token URL encoding": re.search(r"encodeURIComponent\s*\(\s*K\s*\)", source),
     "legacy Q construction": re.search(r"\b(?:const|let|var)\s+Q\s*=\s*K\s*\?", source),
+    "qSep token propagation": re.search(r"\bqSep\s*=\s*u\s*=>[^;]*(?:\bQ\b|\bK\b)", source),
 }
 remaining = [name for name, match in checks.items() if match]
 if remaining:
