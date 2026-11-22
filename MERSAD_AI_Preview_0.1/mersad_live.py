@@ -6688,6 +6688,26 @@ def build_readiness_report():
     }
 
 
+def verify_runtime_deps_cli():
+    """Exercise bundled NumPy/SciPy/scikit-learn native extensions without starting cameras or network services."""
+    import numpy as _np
+    import scipy as _scipy
+    from scipy.linalg import solve as _scipy_solve
+    from scipy.special import expit as _scipy_expit
+    from sklearn.ensemble import IsolationForest as _IsolationForest
+
+    matrix = _np.asarray([[1.0, 2.0], [2.0, 1.0], [8.0, 9.0], [9.0, 8.0]], dtype=_np.float64)
+    solved = _scipy_solve(_np.asarray([[3.0, 0.0], [0.0, 2.0]]), _np.asarray([6.0, 4.0]))
+    probabilities = _scipy_expit(_np.asarray([-1.0, 0.0, 1.0], dtype=_np.float64))
+    model = _IsolationForest(n_estimators=8, contamination=0.25, random_state=0).fit(matrix)
+    scores = model.decision_function(matrix)
+    if not _np.allclose(solved, _np.asarray([2.0, 2.0])) or not _np.all(_np.isfinite(probabilities)) or not _np.all(_np.isfinite(scores)):
+        raise RuntimeError("Scientific runtime smoke test returned invalid numeric results")
+    print(f"[RUNTIME-DEPS] NumPy {_np.__version__}; SciPy {_scipy.__version__}; scikit-learn import/fit PASS")
+    print("[RUNTIME-DEPS] scipy.linalg, scipy.special, and IsolationForest native paths PASS")
+    return 0
+
+
 def verify_models_cli(as_json=False):
     """Verify all bundled/installed AI model weights (YuNet, SFace, YOLOv8n, EasyOCR ar+en) without requiring internet access."""
     import check_install as _chk
@@ -6738,6 +6758,8 @@ if __name__ == "__main__":
                     print(f"  [{v_pil['score_pct']:5.1f}%] {v_pil['label_ar']} ({v_pil['status']})")
                 print("======================================================================")
             sys.exit(0 if rep_r.get("overall_engineering_readiness_pct") == 100.0 else 1)
+        elif "--verify-runtime-deps" in sys.argv:
+            sys.exit(verify_runtime_deps_cli())
         elif "--verify-models" in sys.argv:
             sys.exit(verify_models_cli(as_json="--json" in sys.argv))
         elif "--evaluate-plates" in sys.argv:
