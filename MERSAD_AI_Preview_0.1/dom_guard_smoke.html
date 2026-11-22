@@ -14,9 +14,9 @@
       "use strict";
       const target = document.getElementById("target");
       const payload = [
-        '<img src="x" onerror="document.body.dataset.domGuard='FAIL'">',
-        '<svg onload="document.body.dataset.domGuard='FAIL'"><script>document.body.dataset.domGuard='FAIL'<\/script></svg>',
-        '<a id="bad-link" href="javascript:document.body.dataset.domGuard='FAIL'">unsafe</a>',
+        '<img src="x" onerror="document.body.dataset.domGuard=&#39;FAIL&#39;">',
+        '<svg onload="document.body.dataset.domGuard=&#39;FAIL&#39;"><script>document.body.dataset.domGuard=&#39;FAIL&#39;<\/script></svg>',
+        '<a id="bad-link" href="javascript:document.body.dataset.domGuard=&#39;FAIL&#39;">unsafe</a>',
         '<b id="safe-bold">safe content</b>'
       ].join("");
       try {
