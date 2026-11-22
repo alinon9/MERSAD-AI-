@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - "qa/release-acceptance-20261122"
-    paths:
-      - ".github/workflows/mersad-release-acceptance.yml"
   workflow_dispatch:
 
 permissions:
