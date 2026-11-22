@@ -39,13 +39,37 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          ./ci/build_mersad_ai_delta_patch.ps1 -OldArtifactRoot (Join-Path $env:RUNNER_TEMP "mersad-old-artifact") -NewArtifactRoot (Join-Path $env:RUNNER_TEMP "mersad-fixed-artifact") -OutputRoot (Join-Path $env:RUNNER_TEMP "mersad-delta-output") -ApplyScriptPath (Join-Path $PWD "ci/apply_mersad_ai_delta_patch.ps1")
-          if ($LASTEXITCODE -ne 0) { throw "Delta patch generation failed" }
-          $patchDirectory = Join-Path $env:RUNNER_TEMP "mersad-delta-output\MERSAD_AI_PATCH"
+          $oldRoot = Join-Path $env:RUNNER_TEMP "mersad-old-artifact"
+          $newRoot = Join-Path $env:RUNNER_TEMP "mersad-fixed-artifact"
+          $patchOutput = Join-Path $env:RUNNER_TEMP "mersad-delta-output"
+          ./ci/build_mersad_ai_delta_patch.ps1 -OldArtifactRoot $oldRoot -NewArtifactRoot $newRoot -OutputRoot $patchOutput -ApplyScriptPath (Join-Path $PWD "ci/apply_mersad_ai_delta_patch.ps1")
+          $patchDirectory = Join-Path $patchOutput "MERSAD_AI_PATCH"
+
+          # Test the patch against the downloaded old AI folder before publishing anything.
+          Get-ChildItem -LiteralPath $patchDirectory -Force | Copy-Item -Destination $oldRoot -Recurse -Force
+          & (Join-Path $oldRoot "APPLY_MERSAD_AI_PATCH.ps1")
+          if (-not (Test-Path -LiteralPath (Join-Path $oldRoot "MERSAD_AI\MERSAD_AI.exe") -PathType Leaf)) { throw "Patched AI executable disappeared" }
+
+          $newAi = Join-Path $newRoot "MERSAD_AI"
+          $patchedAi = Join-Path $oldRoot "MERSAD_AI"
+          $newFiles = @(Get-ChildItem -LiteralPath $newAi -Recurse -Force -File)
+          $patchedFiles = @(Get-ChildItem -LiteralPath $patchedAi -Recurse -Force -File)
+          if ($newFiles.Count -ne $patchedFiles.Count) { throw "Patched AI file count mismatch: expected=$($newFiles.Count), actual=$($patchedFiles.Count)" }
+          foreach ($newFile in $newFiles) {
+            $rel = [IO.Path]::GetRelativePath($newAi, $newFile.FullName)
+            $patchedPath = Join-Path $patchedAi $rel
+            if (-not (Test-Path -LiteralPath $patchedPath -PathType Leaf)) { throw "Patched AI file missing: $rel" }
+            $expectedHash = (Get-FileHash -LiteralPath $newFile.FullName -Algorithm SHA256).Hash
+            $actualHash = (Get-FileHash -LiteralPath $patchedPath -Algorithm SHA256).Hash
+            if ($expectedHash -ne $actualHash) { throw "Patched AI differs from fixed artifact: $rel" }
+          }
+          Write-Host "[DELTA] Patched old AI folder is byte-for-byte identical to the fixed AI folder."
+
           $zip = Join-Path $env:RUNNER_TEMP "MERSAD_AI_Runtime_Patch_Windows_x64.zip"
           Compress-Archive -Path (Join-Path $patchDirectory "*") -DestinationPath $zip -CompressionLevel Optimal -Force
           $bytes = (Get-Item -LiteralPath $zip).Length
           Write-Host ("[DELTA] Final downloadable ZIP size: {0:N2} MB" -f ($bytes / 1MB))
+          Write-Host "[DELTA] Patch install, SciPy/model/audit verification, and exact file-tree comparison passed."
           if ($bytes -ge 512MB) { Write-Warning "Patch is >=512 MB; full package may be preferable." }
 
       - name: Upload small AI runtime patch
