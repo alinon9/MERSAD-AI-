@@ -23,7 +23,7 @@ jobs:
         with:
           name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
           run-id: 44947549714
-          github-token: \${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: artifact
 
       - name: Verify package layout and every internal SHA-256
