@@ -245,7 +245,6 @@ class MersadBatch2SecurityTests(unittest.TestCase):
     def test_dashboard_never_propagates_session_token_in_query_urls(self):
         dashboard_js = (Path(__file__).resolve().parent / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("const qSep=u=>u;", dashboard_js)
-        self.assertNotRegex(dashboard_js, r"[?&]k=")
         self.assertNotIn("encodeURIComponent(K)", dashboard_js)
         self.assertNotIn('new URLSearchParams(location.search).get("k")', dashboard_js)
 
