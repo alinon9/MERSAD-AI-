@@ -72,6 +72,20 @@ try {
         }
     }
 
+    # --verify-models regenerates the trusted-model manifest during its self-check.
+    # Preserve its pre-verification state so a later failure can restore it as well.
+    $trustedModelsPath = Join-Path $aiRoot "models\.trusted_models.json"
+    if (Test-Path -LiteralPath $trustedModelsPath -PathType Leaf) {
+        $trustedModelsBackup = Join-Path $backupRoot "_preverification\models\.trusted_models.json"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $trustedModelsBackup) | Out-Null
+        Copy-Item -LiteralPath $trustedModelsPath -Destination $trustedModelsBackup -Force
+        $rollback.Add([pscustomobject]@{
+            Destination = $trustedModelsPath
+            Backup = $trustedModelsBackup
+            Existed = $true
+        })
+    }
+
     Push-Location $aiRoot
     try {
         & (Join-Path $aiRoot "MERSAD_AI.exe") --verify-runtime-deps
