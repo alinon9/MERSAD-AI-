@@ -4,6 +4,7 @@ import contextlib
 import io
 import os
 import re
+import ssl
 from pathlib import Path
 import tempfile
 import threading
@@ -151,6 +152,38 @@ class MersadBatch2SecurityTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "TLS"):
                 mersad_server.start_server(port=0, host="0.0.0.0")
+
+    def test_lan_startup_loads_tls12_and_wraps_listener(self):
+        with tempfile.TemporaryDirectory(prefix="mersad_batch2_tls_") as tmp:
+            cert = os.path.join(tmp, "ai-test-cert.pem")
+            key = os.path.join(tmp, "ai-test-key.pem")
+            token_file = os.path.join(tmp, "session.token")
+            with open(cert, "w", encoding="ascii") as handle:
+                handle.write("test-certificate-placeholder")
+            with open(key, "w", encoding="ascii") as handle:
+                handle.write("test-private-key-placeholder")
+            context = mock.Mock()
+            context.wrap_socket.side_effect = lambda raw_socket, server_side: raw_socket
+            env = {
+                "MERSAD_TLS_CERT": cert,
+                "MERSAD_TLS_KEY": key,
+                "MERSAD_ALLOWED_HOSTS": "192.0.2.10",
+                "MERSAD_TOKEN_FILE": token_file,
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("server.get_lan_ip", return_value="192.0.2.10"):
+                    with mock.patch("server.ssl.SSLContext", return_value=context):
+                        with contextlib.redirect_stdout(io.StringIO()) as output:
+                            srv = mersad_server.start_server(port=0, host="0.0.0.0")
+                try:
+                    self.assertEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+                    context.load_cert_chain.assert_called_once_with(certfile=cert, keyfile=key)
+                    context.wrap_socket.assert_called_once()
+                    self.assertEqual(context.wrap_socket.call_args.kwargs, {"server_side": True})
+                    self.assertIn("https://192.0.2.10:", output.getvalue())
+                    self.assertTrue(os.path.isfile(token_file))
+                finally:
+                    mersad_server.stop_server(srv)
 
     def test_loopback_startup_does_not_print_session_secret_and_stops_cleanly(self):
         with tempfile.TemporaryDirectory(prefix="mersad_batch2_") as tmp:
