@@ -34,6 +34,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           python -c "import gzip; from pathlib import Path; p=Path('MERSAD_AI_Preview_0.1/dashboard.js.gz'); Path('MERSAD_AI_Preview_0.1/dashboard.js').write_bytes(gzip.decompress(p.read_bytes()))"
           if ($LASTEXITCODE -ne 0) { throw "dashboard.js decompression failed ($LASTEXITCODE)" }
+          python -X utf8 MERSAD_AI_Preview_0.1\security_closure_audit.py --report reports_and_logs\security_closure_dom_xss_report.json
+          if ($LASTEXITCODE -ne 0) { throw "DOM-XSS/CSP closure audit failed ($LASTEXITCODE)" }
 
       - name: Install Pinned Windows x64 Dependencies & Verify Inno Setup 6
         shell: pwsh
@@ -275,6 +277,8 @@ jobs:
             $pInst = Start-Process -FilePath $setupExe -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"$arabicInstallDir`"") -Wait -PassThru
             if ($pInst.ExitCode -ne 0) { throw "MERSAD_LAB_Setup_x64.exe install failed ($($pInst.ExitCode))" }
             if (-not (Test-Path -LiteralPath "$arabicInstallDir\MERSAD_LAB.exe")) { throw "Installed MERSAD_LAB.exe missing" }
+            if (-not (Test-Path -LiteralPath "$arabicInstallDir\index.html")) { throw "Installed LAB index.html missing" }
+            if (-not (Test-Path -LiteralPath "$arabicInstallDir\lab.js")) { throw "Installed LAB lab.js missing" }
 
             & "$arabicInstallDir\MERSAD_LAB.exe" --port 0 --self-check
             if ($LASTEXITCODE -ne 0) { throw "Installed MERSAD_LAB.exe --self-check failed ($LASTEXITCODE)" }
