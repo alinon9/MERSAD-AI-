@@ -1,5 +1,9 @@
 name: Build & Verify MERSAD PREVIEW 0.1 Final Windows x64 Release
 
+concurrency:
+  group: mersad-preview-release-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
