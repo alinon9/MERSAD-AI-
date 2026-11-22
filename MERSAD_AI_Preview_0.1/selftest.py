@@ -21,7 +21,7 @@ if sys.modules.get("sklearn") is None and "sklearn" in sys.modules:
 SRC = os.path.dirname(os.path.abspath(__file__))
 WORK = tempfile.mkdtemp(prefix="mersad_selftest_")
 for f in os.listdir(SRC):
-    if f.endswith((".py", ".html", ".bat", ".md", ".txt", ".spec")) and f != "selftest.py":
+    if f.endswith((".py", ".html", ".js", ".bat", ".md", ".txt", ".spec")) and f != "selftest.py":
         shutil.copy(os.path.join(SRC, f), WORK)
 if os.path.isdir(os.path.join(SRC, ".github")):
     shutil.copytree(os.path.join(SRC, ".github"), os.path.join(WORK, ".github"), dirs_exist_ok=True)
@@ -34,7 +34,8 @@ for k, v in {
     "TELEGRAM_TOKEN": "SECRET_BOT_TOKEN_999",
     "TELEGRAM_CHAT_ID": "-100",
     "TELEGRAM_PATROL_CHAT_ID": "-200",
-    "TELEGRAM_API": "http://127.0.0.1:8780"
+    "TELEGRAM_API": "http://127.0.0.1:8780",
+    "MERSAD_ALLOW_INSECURE_TELEGRAM_TEST": "1",
 }.items():
     os.environ[k] = v
 
@@ -143,7 +144,10 @@ class FakeCap:
             CAM_DROP_STATE["CAM2_failed_once"] = True
             time.sleep(0.015)
             return False, None
-        time.sleep(0.008)
+        # Pace reconnect-fixture frames so the main loop can consume them rather than
+        # overwriting the one-slot latest-frame buffer before the assertion samples STATUS.
+        frame_delay = 0.04 if self.src in ("cam_boot_offline1", "cam_fail4_recover") else 0.008
+        time.sleep(frame_delay)
         f = np.full((480, 640, 3), 90, np.uint8)
         f[10:20, 10:20] = 77                              # marker for bystander face crop
         cv2.rectangle(f, (200, 360), (440, 410), (255, 255, 255), -1)
@@ -646,10 +650,12 @@ def run_security_lan_and_multiprocess_tests():
           req_txt.count("==") >= 6 and m.ZOO_COMMIT in m.ZOO and len(m.MODEL_SHA256) == 3 and len(m.EASYOCR_SHA256) >= 3
           and "opencv-python-headless" in setup_txt)
 
-    # UI contract check
+    # UI contract check — static markup and delegated behavior live in separate assets.
     html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
-    check("UI", "dashboard.html uses safe data-p attribute and includes 'توجيهات لم تصل للدوريات' & camera switcher",
-          'data-p="${esc(p)}"' in html and "توجيهات لم تصل للدوريات" in html and "cam-sw" in html
+    js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dashboard_ui_source = html + "\n" + js
+    check("UI", "dashboard uses safe data-p attribute, dispatch guidance, and camera switcher",
+          'data-p="${esc(p)}"' in dashboard_ui_source and "توجيهات لم تصل للدوريات" in dashboard_ui_source and "cam-sw" in dashboard_ui_source
           and 'data-t="analytics"' in html and 'id="t-health"' in html)
 
     # Build script & RUN_LAN.bat check
@@ -685,15 +691,16 @@ def run_security_lan_and_multiprocess_tests():
 
         srv_lan = ThreadingHTTPServer(("0.0.0.0", 8792), srv_mod.H)
         threading.Thread(target=srv_lan.serve_forever, daemon=True).start()
-        lan_200 = False
+        lan_denied = False
         try:
-            resp = urllib.request.urlopen(f"http://{lan_ip}:8792/api/verify?k={m.bus.token}", timeout=2.0)
-            lan_200 = (resp.status == 200 and b"Audit chain OK" in resp.read())
+            urllib.request.urlopen(f"http://{lan_ip}:8792/api/verify?k={m.bus.token}", timeout=2.0)
+        except urllib.error.HTTPError as he:
+            lan_denied = he.code == 403
         except Exception:
-            lan_200 = False
+            lan_denied = False
         srv_lan.shutdown()
-        check("P1-J", f"with wire() initialized: 127.0.0.1 serves 200 on loopback & refuses connection on LAN IP ({lan_ip}), while 0.0.0.0 serves 200 on LAN IP",
-              loopback_ok and lan_refused and lan_200, (loopback_ok, lan_refused, lan_200))
+        check("P1-J", f"loopback works; wildcard binding rejects unlisted LAN Host header ({lan_ip}) by default",
+              loopback_ok and lan_refused and lan_denied, (loopback_ok, lan_refused, lan_denied))
     else:
         skip_check("P1-J", "LAN IP binding check", "No non-loopback LAN interface IP available in container")
 
@@ -735,6 +742,7 @@ def run_security_lan_and_multiprocess_tests():
             "TELEGRAM_TOKEN": "TOK_MP_TEST",
             "TELEGRAM_CHAT_ID": "-100",
             "TELEGRAM_API": "http://127.0.0.1:8780",
+            "MERSAD_ALLOW_INSECURE_TELEGRAM_TEST": "1",
         }
         init_code = (
             f"import os, sys; sys.path.insert(0, {repr(WORK)})\n"
@@ -990,7 +998,7 @@ def run_multicam_loop_tests():
 # 5. END-TO-END INTEGRATION & ROUND 1/2/3 WORKFLOW DRIVER
 # ==============================================================================
 def post(p, b, tok="t"):
-    req = urllib.request.Request(U + p + f"?k={tok}", json.dumps(b).encode("utf-8"), method="POST")
+    req = urllib.request.Request(U + p + f"?k={tok}", json.dumps(b).encode("utf-8"), headers={"X-Mersad-Token": tok}, method="POST")
     return json.loads(urllib.request.urlopen(req).read())
 
 def get(p, tok="t"):
@@ -2171,12 +2179,15 @@ def run_v7_1_audit_regression_tests():
     finally:
         shutil.rmtree(vm_dir, ignore_errors=True)
 
-    # 2. V7.1-DASH-EXPORT-TOKEN: Verify dashboard.html binds #analytics-export with qSep('/api/analytics/export.csv')
+    # 2. V7.1-DASH-EXPORT-TOKEN: External JS keeps CSV export same-origin and credential-free.
     dash_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
     has_an_export_id = 'id="analytics-export"' in dash_html
-    has_qsep_bind = 'qSep("/api/analytics/export.csv")' in dash_html or "qSep('/api/analytics/export.csv')" in dash_html
-    check("V7.1-DASH-EXPORT-TOKEN", "dashboard.html binds #analytics-export href with qSep('/api/analytics/export.csv') for cookie-less auth",
-          has_an_export_id and has_qsep_bind, (has_an_export_id, has_qsep_bind))
+    has_qsep_bind = 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dash_js
+    uses_cookie_auth = 'const qSep=u=>u;' in dash_js and "?k=" not in dash_js
+    check("V7.1-DASH-EXPORT-TOKEN", "dashboard CSV export uses same-origin cookie auth without query-token URLs",
+          has_an_export_id and has_qsep_bind and uses_cookie_auth,
+          (has_an_export_id, has_qsep_bind, uses_cookie_auth))
 
     # 3. V7.1-PACKAGING-HARDENING: Verify mersad_ai.spec, BUILD_EXE.bat, and windows-build.yml exclude unused tracker/tensorboard/cdflib submodules and disable auto-install
     spec_txt = open(os.path.join(WORK, "mersad_ai.spec"), encoding="utf-8").read()
@@ -2642,7 +2653,7 @@ def run_stage2_gap_regression_tests():
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{cl_port}{path}?k={m.bus.token}",
                     data=json.dumps(body).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "X-Mersad-Token": m.bus.token},
                     method="POST"
                 )
                 return json.loads(urllib.request.urlopen(req, timeout=3.0).read())
@@ -3231,33 +3242,26 @@ def run_stage4_gap_regression_tests():
         reg_mod.init(m.db, m.DBL, m.log, m.refresh_known, db_path=m.DB_PATH)
         shutil.rmtree(gap13_dir, ignore_errors=True)
 
-    # 4. STAGE4-GAP14: Verify dashboard.html handles HTTP 401/403 session expiry & network disconnect explicitly + passes node --check
+    # 4. STAGE4-GAP14: Verify HTTP 401/403 session expiry & network disconnect in the external dashboard asset.
     dash_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dash_source = dash_html + "\n" + dash_js
     has_rjson_403 = (
-        "async function rJson(" in dash_html
-        and "r.status===401||r.status===403" in dash_html
-        and "انتهت الجلسة أو رمز الدخول غير صالح" in dash_html
-        and "انقطع الاتصال بالخادم — جاري إعادة المحاولة..." in dash_html
+        "async function rJson(" in dash_source
+        and "r.status===401||r.status===403" in dash_source
+        and "انتهت الجلسة أو رمز الدخول غير صالح" in dash_source
+        and "انقطع الاتصال بالخادم — جاري إعادة المحاولة..." in dash_source
         and 'id="st-txt"' in dash_html
-        and ".dot.bad" in dash_html
+        and ".dot.bad" in dash_source
     )
-    js_start = dash_html.find("<script>")
-    js_end = dash_html.rfind("</script>")
-    js_code = dash_html[js_start + len("<script>"):js_end] if (js_start != -1 and js_end != -1) else ""
-    js_tmp = os.path.join(WORK, "_check_dash_stage4.js")
-    with open(js_tmp, "w", encoding="utf-8") as jf:
-        jf.write(js_code)
+    js_path = os.path.join(WORK, "dashboard.js")
     node_bin = shutil.which("node")
     node_ok = True
     node_err = ""
     if node_bin:
-        np_res = subprocess.run([node_bin, "--check", js_tmp], capture_output=True, text=True, timeout=30)
+        np_res = subprocess.run([node_bin, "--check", js_path], capture_output=True, text=True, timeout=30)
         node_ok = (np_res.returncode == 0)
         node_err = np_res.stderr
-    try:
-        os.remove(js_tmp)
-    except OSError:
-        pass
     check("STAGE4-GAP14", "dashboard.html detects HTTP 401/403 session expiry & connection loss in #st/#st-txt and passes JS syntax check",
           has_rjson_403 and node_ok, (has_rjson_403, node_ok, node_err))
 
@@ -3502,19 +3506,17 @@ def run_stage6_gap_regression_tests():
           len(unlocked_hits) == 0 and len(g02_errs) == 0,
           (unlocked_hits, g02_errs))
 
-    # 3. STAGE6-GAP03: Verify dashboard.html passes cam:CUR_CAM||undefined to /api/enroll and displays m.error & m.warning in enroll SSE
-    dash_03 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    # 3. STAGE6-GAP03: Verify enrollment behavior in the external dashboard asset.
+    dash_03_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_03_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dash_03 = dash_03_html + "\n" + dash_03_js
     has_cam_in_enroll = 'post("/api/enroll",{id:b.dataset.id||undefined,ref:b.dataset.r||"",name:b.dataset.n,cam:CUR_CAM||undefined})' in dash_03
     has_err_warn_sse = 'm.n<0?(m.error||"انتهت المهلة: لم يظهر وجه"):m.warning?("⚠️ "+m.warning)' in dash_03
-    js_s = dash_03[dash_03.find("<script>") + 8:dash_03.rfind("</script>")]
-    js_f = os.path.join(WORK, "_check_dash_stage6.js")
-    open(js_f, "w", encoding="utf-8").write(js_s)
+    js_f = os.path.join(WORK, "dashboard.js")
     node_b = shutil.which("node")
     node_03_ok = True
     if node_b:
         node_03_ok = (subprocess.run([node_b, "--check", js_f], capture_output=True, text=True, timeout=30).returncode == 0)
-    try: os.remove(js_f)
-    except OSError: pass
     check("STAGE6-GAP03", "dashboard.html passes cam:CUR_CAM||undefined to /api/enroll, displays m.error & m.warning, and passes node --check",
           has_cam_in_enroll and has_err_warn_sse and node_03_ok,
           (has_cam_in_enroll, has_err_warn_sse, node_03_ok))
@@ -3752,7 +3754,7 @@ def run_stage8_final_hardening_tests():
     # 4. STAGE8-OBS04: Verify server.py returns structured JSON on HTTP 400 / 413 and reads bus.post under bus._lock
     srv_src_04 = open(os.path.join(WORK, "server.py"), encoding="utf-8").read()
     has_lock_post = "with bus._lock:\n                    post_fn = bus.post.get(p)" in srv_src_04
-    dash_src_04 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_src_04 = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
     has_rjson_parse = "const j=await r.json();if(j&&j.error)errMsg=j.error" in dash_src_04
 
     srv_04 = srv_mod.ThreadingHTTPServer(("127.0.0.1", 0), srv_mod.H)
@@ -3762,6 +3764,7 @@ def run_stage8_final_hardening_tests():
         conn_413 = http.client.HTTPConnection("127.0.0.1", port_04, timeout=5)
         conn_413.putrequest("POST", f"/api/vehicle?k={m.bus.token}")
         conn_413.putheader("Content-Type", "application/json")
+        conn_413.putheader("X-Mersad-Token", m.bus.token)
         conn_413.putheader("Content-Length", str(srv_mod.MAX_UPLOAD + 1024))
         conn_413.endheaders()
         resp_413 = conn_413.getresponse()
@@ -3771,6 +3774,7 @@ def run_stage8_final_hardening_tests():
         conn_400 = http.client.HTTPConnection("127.0.0.1", port_04, timeout=5)
         conn_400.putrequest("POST", f"/api/vehicle?k={m.bus.token}")
         conn_400.putheader("Content-Type", "application/json")
+        conn_400.putheader("X-Mersad-Token", m.bus.token)
         conn_400.putheader("Content-Length", "invalid_len")
         conn_400.endheaders()
         resp_400 = conn_400.getresponse()
@@ -3785,8 +3789,8 @@ def run_stage8_final_hardening_tests():
           and resp_400.status == 400 and body_400.get("ok") is False,
           (has_lock_post, has_rjson_parse, resp_413.status, body_413, resp_400.status, body_400))
 
-    # 5. STAGE8-OBS05: Verify all async functions in dashboard.html have try/catch and pass node --check
-    dash_src_05 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    # 5. STAGE8-OBS05: Verify all async functions in the external dashboard.js asset have try/catch and pass node --check.
+    dash_src_05 = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
     required_snippets = [
         "async function saveForm(){try{",
         "async function doImport(kind,file){if(!file)return;const rep=$(\"#rep-\"+kind);rep.textContent=\"جارٍ الاستيراد...\";\n try{",
@@ -3799,7 +3803,7 @@ def run_stage8_final_hardening_tests():
         "async function insAct(a){\n $(\"#ins-st\").textContent=\"جارٍ التنفيذ...\";\n try{",
     ]
     missing_try = [s for s in required_snippets if s not in dash_src_05]
-    js_s05 = dash_src_05[dash_src_05.find("<script>") + 8:dash_src_05.rfind("</script>")]
+    js_s05 = dash_src_05
     js_f05 = os.path.join(WORK, "_check_dash_stage8.js")
     open(js_f05, "w", encoding="utf-8").write(js_s05)
     node_b05 = shutil.which("node")
@@ -3912,7 +3916,7 @@ def run_stage9_complete_polish_tests():
         c_get404.close()
 
         c_post404 = http.client.HTTPConnection("127.0.0.1", port_03, timeout=5)
-        c_post404.request("POST", f"/api/nonexistent_route?k={m.bus.token}", body=b"{}", headers={"Content-Type": "application/json", "Content-Length": "2"})
+        c_post404.request("POST", f"/api/nonexistent_route?k={m.bus.token}", body=b"{}", headers={"Content-Type": "application/json", "Content-Length": "2", "X-Mersad-Token": m.bus.token})
         r_post404 = c_post404.getresponse()
         b_post404 = json.loads(r_post404.read().decode("utf-8"))
         c_post404.close()
@@ -4305,7 +4309,7 @@ def run_stage11_field_calibration_and_eval_tests():
                 {"name": "u1.jpg", "content_base64": b64_img},
             ]
         }).encode("utf-8")
-        conn_u.request("POST", f"/api/plate_eval/upload_dataset?k={m.bus.token}", body=body_u, headers={"Content-Type": "application/json", "Content-Length": str(len(body_u))})
+        conn_u.request("POST", f"/api/plate_eval/upload_dataset?k={m.bus.token}", body=body_u, headers={"Content-Type": "application/json", "Content-Length": str(len(body_u)), "X-Mersad-Token": m.bus.token})
         resp_u = json.loads(conn_u.getresponse().read().decode("utf-8"))
         conn_u.close()
 
@@ -4673,24 +4677,20 @@ def run_stage12_security_and_eval_integrity_tests():
         (browse_fn_imports_tk, busy_res, sub_dlg.returncode, sub_dlg_json),
     )
 
-    # 6. STAGE12-DOC-PARITY: Verify dashboard.html JS syntax via node --check and Stage 12 new metric labels in UI
+    # 6. STAGE12-DOC-PARITY: Verify separated evaluation metric labels across HTML + external JS and syntax-check dashboard.js.
     dash_html_12 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    dash_js_12 = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+    dash_ui_12 = dash_html_12 + "\n" + dash_js_12
     has_5_metrics_ui = (
-        "detection_f1" in dash_html_12
-        and "end_to_end_exact_match_rate" in dash_html_12
-        and "cropped_ocr_exact_match_rate" in dash_html_12
+        "detection_f1" in dash_ui_12
+        and "end_to_end_exact_match_rate" in dash_ui_12
+        and "cropped_ocr_exact_match_rate" in dash_ui_12
     )
-    js_blocks = re.findall(r"<script[^>]*>(.*?)</script>", dash_html_12, flags=re.S)
-    js_tmp = os.path.join(tempfile.gettempdir(), f"mersad_s12_dash_{os.getpid()}.js")
-    try:
-        with open(js_tmp, "w", encoding="utf-8") as jf:
-            jf.write("\n".join(js_blocks))
-        node_chk = subprocess.run(["node", "--check", js_tmp], capture_output=True, text=True, timeout=30)
-        js_ok = (node_chk.returncode == 0)
-    finally:
-        if os.path.exists(js_tmp):
-            try: os.remove(js_tmp)
-            except OSError: pass
+    node_chk = subprocess.run(
+        ["node", "--check", os.path.join(WORK, "dashboard.js")],
+        capture_output=True, text=True, timeout=30
+    )
+    js_ok = (node_chk.returncode == 0)
 
     check(
         "STAGE12-DOC-PARITY",
@@ -4853,7 +4853,9 @@ def run_stage13_complete_audit_closure_tests():
         b_exp_c = r_exp_c.read().decode("utf-8-sig")
         c_exp_c.close()
 
-        dash_13 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+        dash_13_html = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+        dash_13_js = open(os.path.join(WORK, "dashboard.js"), encoding="utf-8").read()
+        dash_13 = dash_13_html + "\n" + dash_13_js
         has_dynamic_mount = (
             "function mountCameraLinksCard(" in dash_13
             and 'id="cal-cl-slot"' in dash_13
@@ -5683,8 +5685,15 @@ def run_patched_v7_1_and_preview_0_1_tests():
             cv2.VideoCapture = original_capture
         check("V7-RTSP-TIMEOUTS", "RTSP/HTTP opens use bounded FFmpeg timeouts; local camera indices remain compatible", net_ok and local_ok, (cap_calls[0][1:] if cap_calls else [], cap_calls[-1] if cap_calls else []))
 
-        dashboard_source = open(os.path.join(SRC, "dashboard.html"), encoding="utf-8").read()
-        check("V7-CSV-AUTH-LINK", "analytics CSV export anchor gets the same query-token helper as authenticated API calls", 'id="analytics-export"' in dashboard_source and 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dashboard_source)
+        dashboard_html = open(os.path.join(SRC, "dashboard.html"), encoding="utf-8").read()
+        dashboard_js = open(os.path.join(SRC, "dashboard.js"), encoding="utf-8").read()
+        csv_cookie_auth = (
+            'id="analytics-export"' in dashboard_html
+            and 'analyticsExport.href=qSep("/api/analytics/export.csv")' in dashboard_js
+            and "const qSep=u=>u;" in dashboard_js
+            and "?k=" not in dashboard_js
+        )
+        check("V7-CSV-AUTH-LINK", "analytics CSV export uses same-origin cookie authentication without query-token URLs", csv_cookie_auth)
 
         # --- 13..24: 12 New PREVIEW 0.1 Remediation & Integration Self-Tests ---
         # 13. PREVIEW01-FACE-INTERVAL (AI-BUG-01 / GAP-002): FACE_DETECT_INTERVAL respected when 0 faces present
@@ -5874,7 +5883,13 @@ def run_patched_v7_1_and_preview_0_1_tests():
 
         # 30. PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE (BUG-07 Regression): Phase 2 records BLOCKED honestly without aborting Windows build before Phase 3B
         cmp_tool = os.path.join(os.path.dirname(SRC), "tools", "compare_original_vs_cleanroom_lab.py")
-        orig_placeholder = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Original_ed7b8f72")
+        # Use a guaranteed-missing path to test the documented non-blocking fallback,
+        # even when CI has restored the authentic Original LAB beside the project.
+        orig_placeholder = os.path.join(d, "MERSAD_LAB_Original_MISSING")
+        # Isolate the preservation directory too: the real CI Phase 2 has already
+        # restored Original LAB there, and the comparator intentionally reuses it
+        # when --preserve-original-dir points at that existing verified copy.
+        preserve_placeholder = os.path.join(d, "MERSAD_LAB_Preserve_MISSING")
         clean_lab_dir = os.path.join(os.path.dirname(SRC), "MERSAD_LAB_Preview_0.1")
         p2_ok = True
         p2_detail = {}
@@ -5882,8 +5897,10 @@ def run_patched_v7_1_and_preview_0_1_tests():
             tmp_md = os.path.join(d, "cmp_out.md")
             tmp_js = os.path.join(d, "cmp_out.json")
             proc_cmp = subprocess.run(
-                [sys.executable, cmp_tool, "--original-source", orig_placeholder, "--cleanroom-dir", clean_lab_dir,
-                 "--output-md", tmp_md, "--output-json", tmp_js, "--require-cleanroom-pass"],
+                [sys.executable, cmp_tool, "--original-source", orig_placeholder,
+                 "--preserve-original-dir", preserve_placeholder,
+                 "--cleanroom-dir", clean_lab_dir, "--output-md", tmp_md,
+                 "--output-json", tmp_js, "--require-cleanroom-pass"],
                 capture_output=True, text=True, timeout=60
             )
             cmp_data = json.loads(open(tmp_js, encoding="utf-8").read()) if os.path.isfile(tmp_js) else {}
@@ -5898,11 +5915,19 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 and "--require-cleanroom-pass" in ps1_txt_chk
                 and "--require-unblocked" not in ps1_txt_chk
             )
+            cleanroom_suite = suites_js.get("cleanroom_lab", {})
             p2_detail = {
                 "exit_code": proc_cmp.returncode,
                 "phase2_comparison_status": cmp_data.get("phase2_comparison_status"),
                 "original_status": suites_js.get("original_lab", {}).get("status"),
-                "cleanroom_passed": suites_js.get("cleanroom_lab", {}).get("passed"),
+                "cleanroom_passed": cleanroom_suite.get("passed"),
+                "cleanroom_failed": cleanroom_suite.get("failed"),
+                "cleanroom_skipped": cleanroom_suite.get("skipped"),
+                "cleanroom_failed_checks": [
+                    {"id": item.get("id"), "detail": item.get("detail")}
+                    for item in cleanroom_suite.get("checks", [])
+                    if item.get("status") != "PASS"
+                ],
             }
         check("PREVIEW01-PHASE2-NONBLOCKING-BUILD-PIPELINE",
               "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",

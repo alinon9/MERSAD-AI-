@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Launch the frozen Windows MERSAD_AI.exe and verify authenticated /dashboard.js."""
+from __future__ import annotations
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: windows_frozen_dashboard_smoke.py path\\to\\MERSAD_AI.exe", file=sys.stderr)
+        return 2
+    exe = Path(sys.argv[1]).resolve()
+    if not exe.is_file():
+        raise FileNotFoundError(exe)
+    asset = exe.parent / "dashboard.js"
+    if not asset.is_file():
+        raise FileNotFoundError(f"Frozen distribution is missing {asset}")
+
+    token = "PR5_FROZEN_SMOKE_TOKEN_2026"
+    port = 18765
+    with tempfile.TemporaryDirectory(prefix="mersad_pr5_frozen_smoke_") as data_dir:
+        log_path = Path(data_dir) / "frozen_server.log"
+        env = os.environ.copy()
+        env.update({
+            "MERSAD_TOKEN": token,
+            "MERSAD_DATA_DIR": data_dir,
+            "TELEGRAM_TOKEN": "",
+            "TELEGRAM_CHAT_ID": "",
+            "PYTHONUTF8": "1",
+        })
+        with log_path.open("wb") as log:
+            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            proc = subprocess.Popen(
+                [str(exe), "--host", "127.0.0.1", "--port", str(port),
+                 "--no-window", "--no-telegram-listener", "--allow-degraded-preview",
+                 "--device", "cpu", "--no-vehicles"],
+                cwd=str(exe.parent), env=env, stdout=log, stderr=subprocess.STDOUT,
+                creationflags=flags,
+            )
+            try:
+                deadline = time.monotonic() + 75
+                last_error = None
+                while time.monotonic() < deadline:
+                    if proc.poll() is not None:
+                        break
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/dashboard.js",
+                        headers={"X-Mersad-Token": token, "Host": f"127.0.0.1:{port}"},
+                    )
+                    try:
+                        with urllib.request.urlopen(req, timeout=2) as response:
+                            body = response.read()
+                            ctype = response.headers.get("Content-Type", "")
+                            nosniff = response.headers.get("X-Content-Type-Options", "")
+                            if response.status != 200:
+                                raise RuntimeError(f"unexpected HTTP status: {response.status}")
+                            if "javascript" not in ctype.lower():
+                                raise RuntimeError(f"unexpected Content-Type: {ctype}")
+                            if nosniff.lower() != "nosniff":
+                                raise RuntimeError(f"missing nosniff header: {nosniff}")
+                            if b"MERSAD-PR5-FIND001-DELEGATION-V3" not in body:
+                                raise RuntimeError("served dashboard.js does not contain V3 delegation marker")
+                            print(f"PASS: frozen EXE served /dashboard.js ({len(body)} bytes; {ctype}; nosniff={nosniff})")
+                            return 0
+                    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+                        last_error = exc
+                        time.sleep(1)
+                log.flush()
+                log_text = log_path.read_text(encoding="utf-8", errors="replace")
+                raise RuntimeError(
+                    f"Frozen EXE did not serve /dashboard.js before timeout; process_exit={proc.poll()} "
+                    f"last_http_error={last_error!r}\n--- frozen server log ---\n{log_text[-12000:]}"
+                )
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        raise SystemExit(1)

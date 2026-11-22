@@ -297,11 +297,40 @@ def main():
     ai_httpd = ai_srv.ThreadingHTTPServer(("127.0.0.1", 0), ai_srv.H)
     ai_port = ai_httpd.server_address[1]
     ai_base = f"http://127.0.0.1:{ai_port}"
+    # The AI HTTP server deliberately binds port 0 for test isolation. The LAB
+    # connector rejects arbitrary loopback ports by default, so explicitly
+    # allow only this test-owned ephemeral port in this process. Preserve the
+    # documented defaults and any caller-provided local ports.
+    allowed_local_ports = {"80", "443", "8000", "8765"}
+    allowed_local_ports.update(
+        item.strip()
+        for item in os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", "").split(",")
+        if item.strip()
+    )
+    allowed_local_ports.add(str(ai_port))
+    os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(
+        sorted(allowed_local_ports, key=int)
+    )
     ai_thread = threading.Thread(target=ai_httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     ai_thread.start()
     ai_headers = {"X-Mersad-Token": ai_srv.bus.token, "Origin": ai_base}
+    old_allowed_local_ai_ports = os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS")
 
     try:
+        # The LAB server deliberately allows only a small set of loopback AI
+        # ports by default. This integration test binds AI to an ephemeral port,
+        # so allow exactly that test-owned port for the duration of this run.
+        # Keep the production allowlist unchanged and restore the environment in
+        # the finally block below.
+        allowed_local_ai_ports = [
+            item.strip()
+            for item in (old_allowed_local_ai_ports or "").split(",")
+            if item.strip()
+        ]
+        if str(ai_port) not in allowed_local_ai_ports:
+            allowed_local_ai_ports.append(str(ai_port))
+        os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(allowed_local_ai_ports)
+
         # Scenario 1: Start MERSAD AI server, database & token auth guard
         st_unauth, _ = _http_json(f"{ai_base}/api/stats")
         st_auth, d_auth = _http_json(f"{ai_base}/api/stats", headers=ai_headers)
@@ -329,13 +358,13 @@ def main():
             f"{lab_base}/api/integration/connect_ai",
             method="POST",
             payload={"ai_url": ai_base, "ai_token": ai_srv.bus.token, "cam_id": "cam1", "cam_name": "LAB_CAM1"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         st_c2, d_c2 = _http_json(
             f"{lab_base}/api/integration/connect_ai",
             method="POST",
             payload={"ai_url": ai_base, "ai_token": ai_srv.bus.token, "cam_id": "cam2", "cam_name": "LAB_CAM2"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         w1_spawned = d_c1.get("ai_response", {}).get("worker_spawned") is True
         w2_spawned = d_c2.get("ai_response", {}).get("worker_spawned") is True
@@ -344,7 +373,13 @@ def main():
             "Add virtual cameras LAB_CAM1 & LAB_CAM2 via m.wire() -> spawn real AI reader & inference threads (INT-E2E-01)",
             "PASS" if (st_c1 == 200 and st_c2 == 200 and w1_spawned and w2_spawned) else "FAIL",
             pipeline_cat,
-            f"LAB_CAM1 worker_spawned={w1_spawned}, LAB_CAM2 worker_spawned={w2_spawned}",
+            (
+                f"HTTP statuses=({st_c1},{st_c2}); "
+                f"LAB_CAM1 worker_spawned={w1_spawned} error="
+                f"{d_c1.get('error') or d_c1.get('ai_response', {}).get('error') or 'none'}; "
+                f"LAB_CAM2 worker_spawned={w2_spawned} error="
+                f"{d_c2.get('error') or d_c2.get('ai_response', {}).get('error') or 'none'}"
+            ),
         )
 
         # Scenario 4: Stream live MJPEG test video from MERSAD LAB
@@ -368,7 +403,7 @@ def main():
             f"{lab_base}/api/cameras/cam2/mode",
             method="POST",
             payload={"mode": "offline"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         if st_cam2_pause != 200 or d_cam2_pause.get("ok") is not True:
             raise RuntimeError(f"Could not isolate primary OCR camera from LAB_CAM2: {st_cam2_pause} {d_cam2_pause}")
@@ -437,9 +472,16 @@ def main():
         time.sleep(1.2)
         _, stats_after_dedup = _http_json(f"{ai_base}/api/stats", headers=ai_headers)
         f_after = stats_after_dedup.get("cameras", {}).get("LAB_CAM1", {}).get("frames", 0)
+        # Count only the exact canonical wanted-plate alert. The OCR candidate
+        # "عدن-012345" is a distinct extra-leading-zero reading, not the exact
+        # plate "عدن-12345"; substring matching incorrectly counted both.
         wanted_alerts_cam1 = [
             a for a in ai_srv.bus.alerts
-            if a.get("cam") == "LAB_CAM1" and "12345" in str(a.get("subject", ""))
+            if (
+                a.get("cam") == "LAB_CAM1"
+                and a.get("msg") == "VEHICLE: WANTED"
+                and str(a.get("subject", "")).strip() == "عدن-12345"
+            )
         ]
         ok_e2e_03 = (f_after > f_before + 3) and (len(wanted_alerts_cam1) == 1)
         record(
@@ -502,7 +544,7 @@ def main():
             f"{lab_base}/api/cameras/cam2/mode",
             method="POST",
             payload={"mode": "normal"},
-            headers={"Origin": lab_base},
+            headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
         )
         cam2_ready = _wait_until(
             lambda: (
@@ -516,7 +558,7 @@ def main():
         )
         _, cams_pre_off = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
         cam2_frames_pre_off = cams_pre_off.get("cameras", {}).get("LAB_CAM2", {}).get("frames", 0)
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "offline"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "offline"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         def _check_cam1_disconnected():
             _, cd = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
@@ -527,7 +569,7 @@ def main():
             return None
 
         disc_res = _wait_until(_check_cam1_disconnected, timeout_sec=6.0, poll_sec=0.1)
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         def _check_cam1_reconnected():
             _, cd = _http_json(f"{ai_base}/api/cameras", headers=ai_headers)
@@ -550,19 +592,19 @@ def main():
 
         # Scenario 11 (INT-E2E-06 & INT-E2E-07): Stream health telemetry, safe dynamic camera removal, engine stop & restart
         m._CAM_QUALITY_STATE.pop("LAB_CAM1", None)
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "frozen"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "frozen"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
         froz_res = _wait_until(
             lambda: (lambda cd: cd["cameras"]["LAB_CAM1"] if "FROZEN_STREAM" in cd.get("cameras", {}).get("LAB_CAM1", {}).get("issues", []) else None)(_http_json(f"{ai_base}/api/cameras", headers=ai_headers)[1]),
             timeout_sec=5.0,
             poll_sec=0.1,
         )
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "occluded"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "occluded"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
         occ_res = _wait_until(
             lambda: (lambda cd: cd["cameras"]["LAB_CAM1"] if "CAMERA_OCCLUDED_OR_DARK" in cd.get("cameras", {}).get("LAB_CAM1", {}).get("issues", []) else None)(_http_json(f"{ai_base}/api/cameras", headers=ai_headers)[1]),
             timeout_sec=5.0,
             poll_sec=0.1,
         )
-        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base})
+        _http_json(f"{lab_base}/api/cameras/cam1/mode", method="POST", payload={"mode": "normal"}, headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"})
 
         # Safe removal of active camera LAB_CAM2 via HTTP POST /api/cameras/remove (verifying BUG-02 fix)
         st_rem, d_rem = _http_json(f"{ai_base}/api/cameras/remove", method="POST", payload={"name": "LAB_CAM2"}, headers=ai_headers)
@@ -617,6 +659,21 @@ def main():
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_ep:
             s_ep.bind(("127.0.0.1", 0))
             ep_port = s_ep.getsockname()[1]
+
+        # The integrated main()-entrypoint scenario owns a second ephemeral
+        # AI port, distinct from the Phase 4 engine port above. Allow only this
+        # test-owned loopback port for the duration of Scenario 13; do not
+        # weaken the LAB production allowlist/defaults.
+        old_ep_allowed_local_ai_ports = os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS")
+        ep_allowed_local_ai_ports = [
+            item.strip()
+            for item in (old_ep_allowed_local_ai_ports or "").split(",")
+            if item.strip()
+        ]
+        if str(ep_port) not in ep_allowed_local_ai_ports:
+            ep_allowed_local_ai_ports.append(str(ep_port))
+        os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(ep_allowed_local_ai_ports)
+
         ep_token = "main_ep_int_token_2026"
         old_argv_int = sys.argv[:]
         sys.argv = [
@@ -650,7 +707,7 @@ def main():
                 f"{lab_base}/api/integration/connect_ai",
                 method="POST",
                 payload={"ai_url": f"http://127.0.0.1:{ep_port}", "ai_token": ep_token, "cam_id": "cam2", "cam_name": "LAB_DYN_CAM2"},
-                headers={"Origin": lab_base},
+                headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
             )
             ai_r1 = d_c1.get("ai_response", {}) if isinstance(d_c1, dict) else {}
             st_dyn2 = m._ACTIVE_CAM_STATES.get("LAB_DYN_CAM2")
@@ -692,7 +749,7 @@ def main():
                 f"{lab_base}/api/integration/connect_ai",
                 method="POST",
                 payload={"ai_url": f"http://127.0.0.1:{ep_port}", "ai_token": ep_token, "cam_id": "cam3", "cam_name": "LAB_DYN_CAM3"},
-                headers={"Origin": lab_base},
+                headers={"Origin": lab_base, "X-Lab-Token": "lab_final_int_2026"},
             )
             ai_r2 = d_c2.get("ai_response", {}) if isinstance(d_c2, dict) else {}
             st_dyn3 = m._ACTIVE_CAM_STATES.get("LAB_DYN_CAM3")
@@ -730,6 +787,10 @@ def main():
             m.STOP_MAIN_EVENT.set()
             t_main_int.join(timeout=5.0)
             sys.argv = old_argv_int
+            if old_ep_allowed_local_ai_ports is None:
+                os.environ.pop("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", None)
+            else:
+                os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = old_ep_allowed_local_ai_ports
 
         tel = get_process_telemetry(t_suite_start)
         REPORT["telemetry"] = {
@@ -754,6 +815,10 @@ def main():
         except Exception:
             pass
         lab_ctrl.stop()
+        if old_allowed_local_ai_ports is None:
+            os.environ.pop("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", None)
+        else:
+            os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = old_allowed_local_ai_ports
         try:
             if m.db:
                 m.db.close()

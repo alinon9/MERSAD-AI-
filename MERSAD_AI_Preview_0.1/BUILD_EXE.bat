@@ -14,6 +14,15 @@ call setup.bat || (
     exit /b 1
 )
 
+if not exist "dashboard.js" (
+    echo [INFO] Restoring dashboard.js from compressed source...
+    venv\Scripts\python.exe -c "import gzip; from pathlib import Path; Path('dashboard.js').write_bytes(gzip.decompress(Path('dashboard.js.gz').read_bytes()))" || (
+        echo [ERROR] Could not restore dashboard.js from dashboard.js.gz.
+        pause
+        exit /b 1
+    )
+)
+
 echo [1/6] Running strict installation ^& model verification...
 venv\Scripts\python.exe check_install.py --strict || (
     echo.
@@ -55,6 +64,13 @@ REM   --exclude-module scipy.special._cdflib --exclude-module tensorboard --excl
 venv\Scripts\pyinstaller.exe --noconfirm --clean mersad_ai.spec > build_pyinstaller.log 2>&1 || (
     echo [ERROR] PyInstaller build failed. Last lines of build_pyinstaller.log:
     powershell -NoProfile -Command "Get-Content build_pyinstaller.log -Tail 35" 2>nul
+    pause
+    exit /b 1
+)
+
+REM [MERSAD-PR5-DASHBOARD-JS-PACKAGING-V3]
+if not exist "dist\MERSAD_AI\dashboard.js" (
+    echo [ERROR] dashboard.js is missing from the frozen distribution!
     pause
     exit /b 1
 )

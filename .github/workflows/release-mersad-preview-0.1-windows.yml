@@ -7,6 +7,7 @@ on:
       - "release/mersad-preview-0.1*"
       - "fix/preview-0.1-*"
       - "fix/easyocr-windows-utf8-*"
+      - "security/batch2-server-hardening-20261120"
 
 permissions:
   contents: read
@@ -25,6 +26,13 @@ jobs:
         with:
           python-version: "3.11"
           architecture: "x64"
+
+      - name: Restore dashboard.js from compressed source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -c "import gzip; from pathlib import Path; p=Path('MERSAD_AI_Preview_0.1/dashboard.js.gz'); Path('MERSAD_AI_Preview_0.1/dashboard.js').write_bytes(gzip.decompress(p.read_bytes()))"
+          if ($LASTEXITCODE -ne 0) { throw "dashboard.js decompression failed ($LASTEXITCODE)" }
 
       - name: Install Pinned Windows x64 Dependencies & Verify Inno Setup 6
         shell: pwsh
@@ -79,27 +87,90 @@ jobs:
           python -X utf8 -u integration/evaluate_ai_models.py --require-real-models
           if ($LASTEXITCODE -ne 0) { throw "evaluate_ai_models.py --require-real-models failed ($LASTEXITCODE)" }
 
-      - name: Phase 2 — Extract Original MERSAD LAB (Commit ed7b8f727243da4878e547f08489af581c83291c if present) & Compare with Clean-Room LAB
+      - name: Phase 2 — Restore Original LAB archive, verify exact commit & compare with Clean-Room LAB
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            $actualSha = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
-            if ($actualSha -eq "ed7b8f727243da4878e547f08489af581c83291c") {
-              if (Test-Path "MERSAD_LAB_Original_ed7b8f72") { Remove-Item -Recurse -Force "MERSAD_LAB_Original_ed7b8f72" }
-              New-Item -ItemType Directory -Force -Path "MERSAD_LAB_Original_ed7b8f72" | Out-Null
-              git archive refs/remotes/origin/mersad-lab-orig | tar -x -C "MERSAD_LAB_Original_ed7b8f72"
-              Set-Content -Path "MERSAD_LAB_Original_ed7b8f72\COMMIT_SHA.txt" -Value $actualSha -Encoding ASCII
-            }
-          } else {
-            Write-Host "[WARN] Branch build/mersad-lab-exe-20261031 not present on origin; recording Original LAB comparison as BLOCKED/NOT_TESTED."
-          }
           $ErrorActionPreference = "Stop"
-          python tools/compare_original_vs_cleanroom_lab.py --original-source "MERSAD_LAB_Original_ed7b8f72" --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass
+          git fetch origin build/mersad-lab-exe-20261031:refs/remotes/origin/mersad-lab-orig
+          if ($LASTEXITCODE -ne 0) { throw "Could not fetch the historical Original LAB branch" }
+
+          $actualSha = (git rev-parse refs/remotes/origin/mersad-lab-orig).Trim().ToLower()
+          $expectedSha = "ed7b8f727243da4878e547f08489af581c83291c"
+          if ($actualSha -ne $expectedSha) {
+            throw "Original LAB ref mismatch: expected $expectedSha, got $actualSha"
+          }
+
+          # The historical commit stores the LAB source as nine base64 chunks.
+          # Reassemble and extract the real source archive before comparison.
+          $parts = @()
+          for ($i = 1; $i -le 9; $i++) {
+            $partPath = "ci/mersad_lab_source_part_{0:D2}.txt" -f $i
+            $gitPath = "refs/remotes/origin/mersad-lab-orig:$partPath"
+            $chunkLines = @(git show $gitPath)
+            if ($LASTEXITCODE -ne 0 -or $chunkLines.Count -eq 0) {
+              throw "Could not read Original LAB source chunk from historical commit: $gitPath"
+            }
+            $parts += (($chunkLines -join "")).Trim()
+          }
+          $base64 = $parts -join ""
+          if (($base64.Length % 4) -ne 0) {
+            throw "Invalid Original LAB archive base64 length: $($base64.Length)"
+          }
+          $zipBytes = [Convert]::FromBase64String($base64)
+          $zipPath = Join-Path $env:RUNNER_TEMP "mersad-lab-original-$actualSha.zip"
+          [IO.File]::WriteAllBytes($zipPath, $zipBytes)
+          $archiveSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLower()
+          Write-Host "[ORIGINAL LAB] Reassembled archive SHA-256: $archiveSha256"
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP "mersad-lab-original-extracted"
+          if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+
+          $restoredSource = Join-Path $extractRoot "MERSAD_LAB"
+          foreach ($required in @("lab_server.py", "test_lab.py", "index.html")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $restoredSource $required) -PathType Leaf)) {
+              throw "Restored Original LAB archive is incomplete: missing $required"
+            }
+          }
+
+          $originalDir = "MERSAD_LAB_Original_ed7b8f72"
+          if (Test-Path -LiteralPath $originalDir) {
+            Remove-Item -LiteralPath $originalDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $originalDir | Out-Null
+          Get-ChildItem -LiteralPath $restoredSource -Force | Copy-Item -Destination $originalDir -Recurse -Force
+          Set-Content -LiteralPath (Join-Path $originalDir "COMMIT_SHA.txt") -Value $actualSha -Encoding ASCII
+
+          $pythonFileCount = @(Get-ChildItem -LiteralPath $originalDir -Filter "*.py" -Recurse -File).Count
+          if ($pythonFileCount -lt 2) {
+            throw "Original LAB source restoration incomplete: expected Python sources, found $pythonFileCount"
+          }
+          Write-Host "[ORIGINAL LAB] Exact commit verified: $actualSha"
+          Write-Host "[ORIGINAL LAB] Restored Python source files: $pythonFileCount"
+
+          python tools/compare_original_vs_cleanroom_lab.py --original-source $originalDir --preserve-original-dir $originalDir --cleanroom-dir "MERSAD_LAB_Preview_0.1" --require-cleanroom-pass --require-unblocked
           if ($LASTEXITCODE -ne 0) { throw "Clean-Room LAB verification failed in Phase 2 ($LASTEXITCODE)" }
 
-      - name: Phase 3A — Run Full AI (234) & LAB (20) Test Suites
+          $reportPath = "reports_and_logs/original_vs_cleanroom_lab_comparison.json"
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            throw "Phase 2 comparison JSON report was not generated"
+          }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          if ($report.commit_verification.verified -ne $true) {
+            throw "Phase 2 did not verify the exact historical Original LAB commit"
+          }
+          if ($report.independent_test_suites.cleanroom_lab.status -ne "PASS") {
+            throw "Clean-Room LAB suite did not pass"
+          }
+          Write-Host "[PHASE2] Original commit verified: $($report.commit_verification.detected_commit)"
+          Write-Host "[PHASE2] Original LAB suite: $($report.independent_test_suites.original_lab.status) ($($report.independent_test_suites.original_lab.passed)/$($report.independent_test_suites.original_lab.total))"
+          Write-Host "[PHASE2] Clean-Room LAB suite: $($report.independent_test_suites.cleanroom_lab.status) ($($report.independent_test_suites.cleanroom_lab.passed)/$($report.independent_test_suites.cleanroom_lab.total))"
+          Write-Host "[PHASE2] Overall comparison status: $($report.phase2_comparison_status)"
+
+      - name: Phase 3A — Run Full AI (234) & LAB (22) Test Suites
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -140,7 +211,12 @@ jobs:
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-          Copy-Item -Path "dashboard.html","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          Copy-Item -Path "dashboard.html","dashboard.js","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          # PR5 frozen dashboard.js smoke test
+
+          if (!(Test-Path "dist\MERSAD_AI\dashboard.js")) { throw "dashboard.js missing from frozen MERSAD_AI distribution" }
+          python -X utf8 -u windows_frozen_dashboard_smoke.py "dist\MERSAD_AI\MERSAD_AI.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen dashboard.js HTTP smoke test failed ($LASTEXITCODE)" }
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
@@ -245,3 +321,133 @@ jobs:
         with:
           name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
           path: MERSAD_PREVIEW_0.1_FINAL_DIST/
+          # Preserve hidden trust metadata and bundled sklearn runtime DLLs that are covered by SHA256SUMS.
+          include-hidden-files: true
+
+      - name: Phase 6 — Download the Published Artifact for Post-Upload Acceptance
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          path: ${{ runner.temp }}/mersad-published-artifact
+
+      - name: Phase 6 — Verify Every Published Hash, Hidden Runtime Files, Portable Packages & Installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "mersad-published-artifact"
+          $manifest = Join-Path $root "SHA256SUMS_WINDOWS_FINAL.txt"
+          if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+            throw "Published artifact is missing SHA256SUMS_WINDOWS_FINAL.txt"
+          }
+
+          $rootFull = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+          $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+          $manifestLines = @(Get-Content -LiteralPath $manifest | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          if ($manifestLines.Count -lt 100) {
+            throw "Published SHA-256 manifest is unexpectedly small: $($manifestLines.Count) entries"
+          }
+
+          foreach ($line in $manifestLines) {
+            $manifestMatch = [regex]::Match($line, '^([A-Fa-f0-9]{64})\s{2}(.+)')
+            if (-not $manifestMatch.Success -or $manifestMatch.Length -ne $line.Length) {
+              throw "Malformed SHA-256 manifest row: $line"
+            }
+            $expected = $manifestMatch.Groups[1].Value.ToLowerInvariant()
+            $relative = $manifestMatch.Groups[2].Value.Trim().Replace('/', '\')
+            if (-not $seen.Add($relative)) {
+              throw "Duplicate path in SHA-256 manifest: $relative"
+            }
+            $fullPath = [IO.Path]::GetFullPath((Join-Path $root $relative))
+            if (-not $fullPath.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "Path traversal detected in SHA-256 manifest: $relative"
+            }
+            if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+              throw "Published artifact is missing a manifest-listed file: $relative"
+            }
+            $actual = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) {
+              throw "SHA-256 mismatch for published file: $relative"
+            }
+          }
+
+          $actualFiles = @(Get-ChildItem -LiteralPath $root -Recurse -Force -File | Where-Object {
+            -not [string]::Equals($_.FullName, $manifest, [StringComparison]::OrdinalIgnoreCase)
+          })
+          foreach ($file in $actualFiles) {
+            $relative = [IO.Path]::GetRelativePath($rootFull.TrimEnd('\'), $file.FullName).Replace('\', '/')
+            if (-not $seen.Contains($relative)) {
+              throw "Unmanifested file found in published artifact: $relative"
+            }
+          }
+          if ($actualFiles.Count -ne $seen.Count) {
+            throw "Manifest/file-count mismatch: manifest=$($seen.Count), extracted=$($actualFiles.Count)"
+          }
+          Write-Host "[ARTIFACT] SHA-256 verified for $($seen.Count) files; no missing, changed, or unmanifested files."
+
+          $allFiles = @(Get-ChildItem -LiteralPath $root -Recurse -Force -File)
+          $trustedModels = @($allFiles | Where-Object { $_.Name -eq ".trusted_models.json" })
+          $sklearnDlls = @($allFiles | Where-Object {
+            ($_.Name -eq "msvcp140.dll" -or $_.Name -eq "vcomp140.dll") -and
+            $_.FullName -match '[\\/]+sklearn[\\/]+\.libs[\\/]+'
+          })
+          if ($trustedModels.Count -lt 1) {
+            throw "The hidden trusted-model metadata file .trusted_models.json is absent from the published artifact"
+          }
+          foreach ($dllName in @("msvcp140.dll", "vcomp140.dll")) {
+            if (@($sklearnDlls | Where-Object { $_.Name -eq $dllName }).Count -lt 1) {
+              throw "The sklearn runtime DLL is missing from sklearn\.libs: $dllName"
+            }
+          }
+          Write-Host "[ARTIFACT] Found .trusted_models.json and both sklearn\.libs runtime DLLs."
+
+          $aiExe = Join-Path $root "MERSAD_AI\MERSAD_AI.exe"
+          $labExe = Join-Path $root "MERSAD_LAB\MERSAD_LAB.exe"
+          $installer = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Setup_x64.exe"
+          $aiPortableZip = Join-Path $root "Installers_and_Portable\MERSAD_AI_Portable_x64.zip"
+          $labPortableZip = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Portable_x64.zip"
+          foreach ($required in @($aiExe, $labExe, $installer, $aiPortableZip, $labPortableZip)) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+              throw "Required published release component is missing: $required"
+            }
+          }
+
+          & $aiExe --verify-models
+          if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_AI.exe --verify-models failed ($LASTEXITCODE)" }
+          & $aiExe --verify
+          if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_AI.exe --verify failed ($LASTEXITCODE)" }
+          & $labExe --port 0 --self-check
+          if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_LAB.exe --self-check failed ($LASTEXITCODE)" }
+
+          $portableRoot = Join-Path $env:RUNNER_TEMP "mersad-published-portable-check"
+          $aiPortable = Join-Path $portableRoot "MERSAD_AI"
+          $labPortable = Join-Path $portableRoot "MERSAD_LAB"
+          New-Item -ItemType Directory -Force -Path $aiPortable, $labPortable | Out-Null
+          Expand-Archive -LiteralPath $aiPortableZip -DestinationPath $aiPortable -Force
+          Expand-Archive -LiteralPath $labPortableZip -DestinationPath $labPortable -Force
+          $portableAiExe = Join-Path $aiPortable "MERSAD_AI.exe"
+          $portableLabExe = Join-Path $labPortable "MERSAD_LAB.exe"
+          if (-not (Test-Path -LiteralPath $portableAiExe -PathType Leaf)) { throw "AI Portable ZIP does not contain MERSAD_AI.exe at its root" }
+          if (-not (Test-Path -LiteralPath $portableLabExe -PathType Leaf)) { throw "LAB Portable ZIP does not contain MERSAD_LAB.exe at its root" }
+          & $portableAiExe --verify-models
+          if ($LASTEXITCODE -ne 0) { throw "Published AI Portable --verify-models failed ($LASTEXITCODE)" }
+          & $portableAiExe --verify
+          if ($LASTEXITCODE -ne 0) { throw "Published AI Portable --verify failed ($LASTEXITCODE)" }
+          & $portableLabExe --port 0 --self-check
+          if ($LASTEXITCODE -ne 0) { throw "Published LAB Portable --self-check failed ($LASTEXITCODE)" }
+
+          $installDir = Join-Path $env:RUNNER_TEMP "تثبيت حزمة مرصاد المنشورة 0.1"
+          $installArg = '/DIR="' + $installDir + '"'
+          $installProcess = Start-Process -FilePath $installer -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", $installArg) -Wait -PassThru
+          if ($installProcess.ExitCode -ne 0) { throw "Published LAB installer failed ($($installProcess.ExitCode))" }
+          $installedLab = Join-Path $installDir "MERSAD_LAB.exe"
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path -LiteralPath $installedLab -PathType Leaf)) { throw "Published installer did not install MERSAD_LAB.exe" }
+          if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw "Published installer did not create unins000.exe" }
+          & $installedLab --port 0 --self-check
+          if ($LASTEXITCODE -ne 0) { throw "Installed published LAB --self-check failed ($LASTEXITCODE)" }
+          $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") -Wait -PassThru
+          if ($uninstallProcess.ExitCode -ne 0) { throw "Published LAB uninstall failed ($($uninstallProcess.ExitCode))" }
+          if (Test-Path -LiteralPath $installedLab) { throw "Published LAB uninstall left MERSAD_LAB.exe behind" }
+
+          Write-Host "[ACCEPTANCE] Downloaded artifact hashes, hidden files, AI/LAB binaries, both Portable ZIPs, and installer install/run/uninstall all passed."
+

@@ -3743,10 +3743,22 @@ def remove_camera_runtime(data, who="operator"):
                     inf_q.task_done()
                 except Exception:
                     break
-        for th_key in ("reader_thread", "infer_thread"):
-            th = st.get(th_key)
-            if th is not None and th.is_alive() and th is not threading.current_thread():
-                th.join(timeout=4.0)
+        worker_threads = [
+            st.get("reader_thread"),
+            st.get("infer_thread"),
+        ]
+        worker_threads = [
+            th for th in worker_threads
+            if th is not None and th is not threading.current_thread()
+        ]
+
+        # Give workers a bounded opportunity to observe stop_ev and drain their
+        # current frame before the capture is closed.
+        first_deadline = time.monotonic() + 4.0
+        for th in worker_threads:
+            if th.is_alive():
+                th.join(timeout=max(0.0, first_deadline - time.monotonic()))
+
         st_lock = st.get("lock")
         if st_lock is not None:
             with st_lock:
@@ -3760,6 +3772,19 @@ def remove_camera_runtime(data, who="operator"):
                 cap.release()
             except Exception:
                 pass
+
+        # A reader may have been inside a bounded VideoCapture.read() when
+        # stop_ev was set. Rejoin after release so the read can return and the
+        # worker can observe stop_ev before this API reports removal complete.
+        second_deadline = time.monotonic() + 6.0
+        for th in worker_threads:
+            if th.is_alive():
+                th.join(timeout=max(0.0, second_deadline - time.monotonic()))
+        pending_workers = [th.name for th in worker_threads if th.is_alive()]
+        workers_stopped = not pending_workers
+    else:
+        workers_stopped = True
+        pending_workers = []
     with _RUNTIME_STATE_LOCK:
         removed = STATUS.get("cameras", {}).pop(cam_name, None)
         if _ACTIVE_CAM_STATES:
@@ -3767,7 +3792,13 @@ def remove_camera_runtime(data, who="operator"):
     if CAMERA_HISTORY and (removed is not None or st is not None):
         CAMERA_HISTORY.record_status(cam_name, "unknown", "dynamic_api_remove", force=True)
     log("camera removed", f"{cam_name} by {who}")
-    return {"ok": True, "camera": cam_name, "removed": (removed is not None or st is not None)}
+    return {
+        "ok": True,
+        "camera": cam_name,
+        "removed": (removed is not None or st is not None),
+        "workers_stopped": workers_stopped,
+        "pending_workers": pending_workers,
+    }
 
 
 def wire():

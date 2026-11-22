@@ -469,19 +469,23 @@ def run_all_tests():
         # ------------------------------------------------------------------
         try:
             vid_bytes = _create_synthetic_video_bytes(num_frames=8, width=320, height=240, fps=10.0)
-            statuses = []
+            outcomes = []
             lock = threading.Lock()
 
             def _worker():
-                st, _, _ = _http_req(
-                    f"{base_url}/api/analyze/video?simulate_delay=0.12&timeout=5.0",
-                    method="POST",
-                    data=vid_bytes,
-                    headers={"Content-Type": "video/x-msvideo"},
-                    timeout=10.0,
-                )
+                try:
+                    st, _, _ = _http_req(
+                        f"{base_url}/api/analyze/video?simulate_delay=0.12&timeout=5.0",
+                        method="POST",
+                        data=vid_bytes,
+                        headers={"Content-Type": "video/x-msvideo"},
+                        timeout=10.0,
+                    )
+                    outcome = {"status": st}
+                except Exception as exc:
+                    outcome = {"status": None, "error": f"{type(exc).__name__}: {exc}"}
                 with lock:
-                    statuses.append(st)
+                    outcomes.append(outcome)
 
             threads = [threading.Thread(target=_worker) for _ in range(6)]
             for t in threads:
@@ -489,9 +493,16 @@ def run_all_tests():
             for t in threads:
                 t.join(timeout=12.0)
 
+            statuses = [item["status"] for item in outcomes if item["status"] is not None]
+            errors = [item["error"] for item in outcomes if item.get("error")]
             count_200 = statuses.count(200)
             count_429 = statuses.count(429)
-            assert count_200 >= 1 and count_429 >= 1 and len(statuses) == 6, f"Unexpected concurrent statuses: {statuses}"
+            assert (
+                not errors
+                and count_200 >= 1
+                and count_429 >= 1
+                and len(outcomes) == 6
+            ), f"Unexpected concurrent upload outcomes: {outcomes}"
             ok("LAB-SEC-09: Concurrent upload throttling (HTTP 429)", f"statuses={statuses} (200={count_200}, 429={count_429})")
         except Exception as e:
             fail("LAB-SEC-09: Concurrent upload throttling (HTTP 429)", str(e))

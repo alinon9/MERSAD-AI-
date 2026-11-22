@@ -49,6 +49,19 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
     ai_token = "main_ep_tok_2026"
     lab_token = "lab_ep_tok_2026"
 
+    # The LAB server intentionally restricts loopback destinations to a small
+    # port allowlist. Add this test's ephemeral AI port for the duration of
+    # this integration test only; never weaken the production default policy.
+    old_allowed_local_ai_ports = os.environ.get("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS")
+    allowed_local_ai_ports = [
+        item.strip()
+        for item in (old_allowed_local_ai_ports or "").split(",")
+        if item.strip()
+    ]
+    if str(ai_port) not in allowed_local_ai_ports:
+        allowed_local_ai_ports.append(str(ai_port))
+    os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = ",".join(allowed_local_ai_ports)
+
     lab_ctrl = ls.LabServerController(host="127.0.0.1", port=lab_port, token=lab_token).start()
     lab_port = lab_ctrl.port
 
@@ -167,7 +180,13 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{ai_port}"},
             method="POST",
         )
-        resp_rem1 = json.loads(urllib.request.urlopen(req_rem1, timeout=6.0).read().decode("utf-8"))
+        # The runtime removal API uses two bounded shutdown windows (4s before
+        # releasing VideoCapture + 6s after release). Keep client timeout above
+        # that documented 10s ceiling, while still failing a genuinely stuck API.
+        CAMERA_REMOVAL_HTTP_TIMEOUT_SEC = 15.0
+        resp_rem1 = json.loads(
+            urllib.request.urlopen(req_rem1, timeout=CAMERA_REMOVAL_HTTP_TIMEOUT_SEC).read().decode("utf-8")
+        )
 
         # Removal signals the stop event and performs a bounded join. A YOLO or
         # OCR native call already in progress cannot be force-cancelled safely;
@@ -187,7 +206,15 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             cap_released = (st_cam2.get("cap") is None)
         with ml._RUNTIME_STATE_LOCK:
             removed_from_status = ("LAB_DYN_CAM2" not in ml.STATUS.get("cameras", {}))
-        add_step(8, "Remove active camera LAB_DYN_CAM2 during runtime via POST /api/cameras/remove", resp_rem1.get("ok") is True and resp_rem1.get("removed") is True, resp_rem1)
+        add_step(
+            8,
+            "Remove active camera LAB_DYN_CAM2 during runtime via POST /api/cameras/remove",
+            resp_rem1.get("ok") is True
+            and resp_rem1.get("removed") is True
+            and resp_rem1.get("workers_stopped") is True
+            and not resp_rem1.get("pending_workers"),
+            resp_rem1,
+        )
         add_step(9, "Verify reader/infer threads stopped and VideoCapture released without SIGSEGV", rt_stopped and it_stopped and cap_released and removed_from_status, {
             "reader_thread_stopped": rt_stopped,
             "infer_thread_stopped": it_stopped,
@@ -204,7 +231,17 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{ai_port}"},
             method="POST",
         )
-        urllib.request.urlopen(req_rem_boot, timeout=6.0).read()
+        resp_rem_boot = json.loads(
+            urllib.request.urlopen(
+                req_rem_boot, timeout=CAMERA_REMOVAL_HTTP_TIMEOUT_SEC
+            ).read().decode("utf-8")
+        )
+        boot_removal_ok = (
+            resp_rem_boot.get("ok") is True
+            and resp_rem_boot.get("removed") is True
+            and resp_rem_boot.get("workers_stopped") is True
+            and not resp_rem_boot.get("pending_workers")
+        )
         time.sleep(0.05)
 
         # Step 10: Add a second camera (LAB_DYN_CAM3) after removal and verify full streaming & inference
@@ -238,7 +275,8 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             mjpg_chunk3 = mjpg_r3.read(512)
         mjpg3_ok = (b"image/jpeg" in mjpg_chunk3 and b"\xff\xd8" in mjpg_chunk3)
         step10_ok = (
-            t_main.is_alive()
+            boot_removal_ok
+            and t_main.is_alive()
             and resp_conn2.get("ok") is True
             and ai_resp2.get("worker_spawned") is True
             and seq3 >= 8
@@ -247,6 +285,8 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             and cam3_stat.get("status") == "online"
         )
         add_step(10, "Add second camera LAB_DYN_CAM3 after removal and verify worker_spawned, MJPEG stream, and inference", step10_ok, {
+            "boot_camera_removal": resp_rem_boot,
+            "boot_camera_removal_ok": boot_removal_ok,
             "ai_response": ai_resp2,
             "latest_frame_seq": seq3,
             "det_runs": det3,
@@ -262,6 +302,10 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             os.environ.pop("MERSAD_DATA_DIR", None)
         else:
             os.environ["MERSAD_DATA_DIR"] = old_data_dir
+        if old_allowed_local_ai_ports is None:
+            os.environ.pop("MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS", None)
+        else:
+            os.environ["MERSAD_LAB_ALLOWED_LOCAL_AI_PORTS"] = old_allowed_local_ai_ports
         try:
             if getattr(ml, "db", None) is not None:
                 ml.db.close()
