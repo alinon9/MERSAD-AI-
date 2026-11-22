@@ -16,40 +16,38 @@ if not DASHBOARD.is_file():
 
 source = DASHBOARD.read_text(encoding="utf-8")
 
-# First remove the token capture/build declaration itself. It can remain
-# unused even when qSep has already been switched to an identity helper.
+# Remove the whole declaration beginning with K=. The source is minified, and
+# Q may be declared in the same const statement; matching to that statement's
+# semicolon intentionally removes both values in one operation.
 capture_pattern = re.compile(
-    r"""const\s+K\s*=\s*new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*["']k["']\s*\)\s*\|\|\s*["']{2}\s*,\s*"""
-    r"""Q\s*=\s*K\s*\?\s*["']\?k=["']\s*\+\s*encodeURIComponent\s*\(\s*K\s*\)\s*:\s*["']{2}\s*;""",
+    r"""(?:const|let|var)\s+K\s*=\s*new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*["']k["']\s*\)[^;]*;""",
     re.MULTILINE,
 )
 capture_matches = list(capture_pattern.finditer(source))
 if len(capture_matches) == 1:
+    declaration = capture_matches[0].group(0)
+    if "Q=" not in declaration.replace(" ", "") and "Q =" not in declaration:
+        raise SystemExit("FAIL: K declaration found but Q query-token construction was not in the same statement.")
+    if "?k=" not in declaration or "encodeURIComponent(K)" not in declaration:
+        raise SystemExit("FAIL: K declaration did not match the expected legacy query-token construction.")
     source = capture_pattern.sub("", source, count=1)
-    print("[AUTH] Removed legacy URL query-token capture/build variables K and Q.")
+    print("[AUTH] Removed legacy K/Q session-token capture from the browser URL.")
 elif len(capture_matches) > 1:
-    raise SystemExit(f"FAIL: found {len(capture_matches)} query-token capture declarations; manual review required.")
+    raise SystemExit(f"FAIL: found {len(capture_matches)} legacy K query-token declarations.")
 
-# Replace the URL helper when it still propagates K/Q, or accept the identity
-# form when it has already been patched in a prior build step.
-propagation_pattern = re.compile(
-    r"""const\s+qSep\s*=\s*u\s*=>\s*Q\s*\?\s*\(\s*u\.includes\s*\(\s*["']\?["']\s*\)\s*\?\s*u\s*\+\s*["']&["']\s*\+\s*Q\.slice\s*\(\s*1\s*\)\s*:\s*u\s*\+\s*Q\s*\)\s*:\s*u\s*;""",
-    re.MULTILINE,
-)
+# Any expression-bodied qSep helper is replaced with an identity URL helper.
+qsep_pattern = re.compile(r"""(?:const|let|var)\s+qSep\s*=\s*u\s*=>[^;]*;""", re.MULTILINE)
 identity_pattern = re.compile(r"""const\s+qSep\s*=\s*u\s*=>\s*u\s*;""")
-propagation_matches = list(propagation_pattern.finditer(source))
-if len(propagation_matches) == 1:
-    source = propagation_pattern.sub("const qSep=u=>u;", source, count=1)
-    print("[AUTH] Replaced query-token qSep with identity URL handling.")
-elif len(propagation_matches) > 1:
-    raise SystemExit(f"FAIL: found {len(propagation_matches)} query-token qSep helpers.")
+qsep_matches = list(qsep_pattern.finditer(source))
+if len(qsep_matches) == 1:
+    source = qsep_pattern.sub("const qSep=u=>u;", source, count=1)
+    print("[AUTH] Replaced qSep with identity URL handling.")
+elif len(qsep_matches) > 1:
+    raise SystemExit(f"FAIL: found {len(qsep_matches)} qSep declarations.")
 elif len(identity_pattern.findall(source)) == 1:
     print("[AUTH] qSep already uses identity URLs.")
 else:
-    raise SystemExit(
-        f"FAIL: expected one query-token qSep or one identity qSep; "
-        f"found propagation={len(propagation_matches)}, identity={len(identity_pattern.findall(source))}"
-    )
+    raise SystemExit("FAIL: qSep declaration was not found; refusing to patch unknown dashboard source.")
 
 DASHBOARD.write_text(source, encoding="utf-8", newline="")
 source = DASHBOARD.read_text(encoding="utf-8")
@@ -61,7 +59,9 @@ legacy_markers = (
     re.search(r"\b(?:const|let|var)\s+Q\s*=\s*K\s*\?", source),
 )
 if any(legacy_markers):
-    raise SystemExit("FAIL: dashboard.js still contains query-token capture or URL propagation.")
+    pos = source.lower().find("?k=")
+    context = source[max(0, pos - 180):pos + 220] if pos >= 0 else "token-capture marker remains without literal ?k="
+    raise SystemExit(f"FAIL: dashboard.js still contains query-token capture/propagation: {context!r}")
 if len(identity_pattern.findall(source)) != 1:
     raise SystemExit("FAIL: dashboard.js does not contain exactly one qSep identity helper.")
 
