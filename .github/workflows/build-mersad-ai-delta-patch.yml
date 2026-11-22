@@ -1,4 +1,4 @@
-name: Build small MERSAD AI SciPy runtime patch
+name: Build small MERSAD AI SciPy runtime patch (trusted manifest validation)
 
 on:
   push:
