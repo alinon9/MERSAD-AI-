@@ -1,0 +1,57 @@
+name: Build small MERSAD AI SciPy runtime patch
+
+on:
+  push:
+    branches:
+      - "support/mersad-ai-delta-patch-20261122"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build-delta-patch:
+    name: Compare old and fixed AI distributions and publish delta patch
+    runs-on: windows-latest
+    steps:
+      - name: Checkout patch builder
+        uses: actions/checkout@v7.0.1
+
+      - name: Download previously delivered AI distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          repository: alinon9/MERSAD-AI-
+          run-id: 45037843471
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/mersad-old-artifact
+
+      - name: Download fixed AI distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          repository: alinon9/MERSAD-AI-
+          run-id: 45066828588
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/mersad-fixed-artifact
+
+      - name: Build changed-file-only patch and rollback installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./ci/build_mersad_ai_delta_patch.ps1 -OldArtifactRoot (Join-Path $env:RUNNER_TEMP "mersad-old-artifact") -NewArtifactRoot (Join-Path $env:RUNNER_TEMP "mersad-fixed-artifact") -OutputRoot (Join-Path $env:RUNNER_TEMP "mersad-delta-output") -ApplyScriptPath (Join-Path $PWD "ci/apply_mersad_ai_delta_patch.ps1")
+          if ($LASTEXITCODE -ne 0) { throw "Delta patch generation failed" }
+          $patchDirectory = Join-Path $env:RUNNER_TEMP "mersad-delta-output\MERSAD_AI_PATCH"
+          $zip = Join-Path $env:RUNNER_TEMP "MERSAD_AI_Runtime_Patch_Windows_x64.zip"
+          Compress-Archive -Path (Join-Path $patchDirectory "*") -DestinationPath $zip -CompressionLevel Optimal -Force
+          $bytes = (Get-Item -LiteralPath $zip).Length
+          Write-Host ("[DELTA] Final downloadable ZIP size: {0:N2} MB" -f ($bytes / 1MB))
+          if ($bytes -ge 512MB) { Write-Warning "Patch is >=512 MB; full package may be preferable." }
+
+      - name: Upload small AI runtime patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_AI_Runtime_Patch_Windows_x64
+          path: ${{ runner.temp }}/MERSAD_AI_Runtime_Patch_Windows_x64.zip
+          if-no-files-found: error
+          retention-days: 90
