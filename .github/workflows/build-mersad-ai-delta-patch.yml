@@ -54,7 +54,7 @@ jobs:
           $patchedAi = Join-Path $oldRoot "MERSAD_AI"
           $newFiles = @(Get-ChildItem -LiteralPath $newAi -Recurse -Force -File)
           $patchedFiles = @(Get-ChildItem -LiteralPath $patchedAi -Recurse -Force -File)
-          if ($newFiles.Count -ne $patchedFiles.Count) { throw "Patched AI file count mismatch: expected=$($newFiles.Count), actual=$($patchedFiles.Count)" }
+          $matched = 0
           foreach ($newFile in $newFiles) {
             $rel = [IO.Path]::GetRelativePath($newAi, $newFile.FullName)
             $patchedPath = Join-Path $patchedAi $rel
@@ -62,8 +62,24 @@ jobs:
             $expectedHash = (Get-FileHash -LiteralPath $newFile.FullName -Algorithm SHA256).Hash
             $actualHash = (Get-FileHash -LiteralPath $patchedPath -Algorithm SHA256).Hash
             if ($expectedHash -ne $actualHash) { throw "Patched AI differs from fixed artifact: $rel" }
+            $matched++
           }
-          Write-Host "[DELTA] Patched old AI folder is byte-for-byte identical to the fixed AI folder."
+          # The patch application runs --verify-runtime-deps, --verify-models and --verify.
+          # Those commands can create a few local logs/database/state files in the AI folder.
+          # Validate all files shipped in the fixed artifact byte-for-byte, but do not reject
+          # those legitimate local runtime files or user data as artifact mismatches.
+          $expectedPaths = @{}
+          foreach ($newFile in $newFiles) {
+            $expectedPaths[[IO.Path]::GetRelativePath($newAi, $newFile.FullName).ToLowerInvariant()] = $true
+          }
+          $extraFiles = @($patchedFiles | Where-Object {
+            -not $expectedPaths.ContainsKey([IO.Path]::GetRelativePath($patchedAi, $_.FullName).ToLowerInvariant())
+          })
+          Write-Host "[DELTA] All $matched files from the fixed AI artifact exist in the patched folder and match SHA-256."
+          Write-Host "[DELTA] Preserved/local additional files after runtime verification: $($extraFiles.Count)"
+          foreach ($extra in $extraFiles) {
+            Write-Host ("[DELTA] Local extra (preserved): " + [IO.Path]::GetRelativePath($patchedAi, $extra.FullName))
+          }
 
           $zip = Join-Path $env:RUNNER_TEMP "MERSAD_AI_Runtime_Patch_Windows_x64.zip"
           Compress-Archive -Path (Join-Path $patchDirectory "*") -DestinationPath $zip -CompressionLevel Optimal -Force
