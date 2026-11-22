@@ -3,6 +3,9 @@
 import contextlib
 import io
 import os
+import re
+import ssl
+from pathlib import Path
 import tempfile
 import threading
 import urllib.error
@@ -150,6 +153,38 @@ class MersadBatch2SecurityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "TLS"):
                 mersad_server.start_server(port=0, host="0.0.0.0")
 
+    def test_lan_startup_loads_tls12_and_wraps_listener(self):
+        with tempfile.TemporaryDirectory(prefix="mersad_batch2_tls_") as tmp:
+            cert = os.path.join(tmp, "ai-test-cert.pem")
+            key = os.path.join(tmp, "ai-test-key.pem")
+            token_file = os.path.join(tmp, "session.token")
+            with open(cert, "w", encoding="ascii") as handle:
+                handle.write("test-certificate-placeholder")
+            with open(key, "w", encoding="ascii") as handle:
+                handle.write("test-private-key-placeholder")
+            context = mock.Mock()
+            context.wrap_socket.side_effect = lambda raw_socket, server_side: raw_socket
+            env = {
+                "MERSAD_TLS_CERT": cert,
+                "MERSAD_TLS_KEY": key,
+                "MERSAD_ALLOWED_HOSTS": "192.0.2.10",
+                "MERSAD_TOKEN_FILE": token_file,
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("server.get_lan_ip", return_value="192.0.2.10"):
+                    with mock.patch("server.ssl.SSLContext", return_value=context):
+                        with contextlib.redirect_stdout(io.StringIO()) as output:
+                            srv = mersad_server.start_server(port=0, host="0.0.0.0")
+                try:
+                    self.assertEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+                    context.load_cert_chain.assert_called_once_with(certfile=cert, keyfile=key)
+                    context.wrap_socket.assert_called_once()
+                    self.assertEqual(context.wrap_socket.call_args.kwargs, {"server_side": True})
+                    self.assertIn("https://192.0.2.10:", output.getvalue())
+                    self.assertTrue(os.path.isfile(token_file))
+                finally:
+                    mersad_server.stop_server(srv)
+
     def test_loopback_startup_does_not_print_session_secret_and_stops_cleanly(self):
         with tempfile.TemporaryDirectory(prefix="mersad_batch2_") as tmp:
             token_file = os.path.join(tmp, "session.token")
@@ -172,6 +207,66 @@ class MersadBatch2SecurityTests(unittest.TestCase):
                     srv._mersad_thread.join(timeout=2)
             self.assertTrue(mersad_server.bus.stop_event.is_set())
             self.assertFalse(srv._mersad_thread.is_alive())
+
+
+    def test_ai_dashboard_response_csp_disallows_inline_scripts(self):
+        status, headers, body = self.request(
+            "/", headers={"X-Mersad-Token": "batch2-server-test-secret"}
+        )
+        self.assertEqual(status, 200)
+        csp = headers.get("Content-Security-Policy", "")
+        self.assertIn("script-src 'self'", csp)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
+        self.assertIn("object-src 'none'", csp)
+        self.assertIn("base-uri 'self'", csp)
+        self.assertIn("form-action 'self'", csp)
+        self.assertIn("trusted-types mersad-ui-html dompurify", csp)
+
+    def test_root_and_preview_dashboards_are_identical_and_have_no_inline_handlers(self):
+        preview_dir = Path(__file__).resolve().parent
+        repo_root = preview_dir.parent
+        root_html = (repo_root / "dashboard.html").read_text(encoding="utf-8")
+        preview_html = (preview_dir / "dashboard.html").read_text(encoding="utf-8")
+        self.assertEqual(root_html, preview_html)
+        self.assertNotRegex(root_html, r"\son[a-z]+\s*=")
+        scripts = re.findall(r"<script\b([^>]*)>([\s\S]*?)</script>", root_html, flags=re.IGNORECASE)
+        self.assertTrue(scripts)
+        self.assertTrue(all(re.search(r"\bsrc\s*=", attrs, flags=re.IGNORECASE) and not body.strip() for attrs, body in scripts))
+        script_sources = [re.search(r'\bsrc\s*=\s*["\']([^"\']+)["\']', attrs, flags=re.IGNORECASE).group(1) for attrs, _body in scripts]
+        self.assertEqual(script_sources[:3], ["/purify.min.js", "/dompurify-guard.js", "/dashboard.js"])
+        root_server = (repo_root / "server.py").read_text(encoding="utf-8")
+        preview_server = (preview_dir / "server.py").read_text(encoding="utf-8")
+        self.assertIn("script-src 'self'", root_server)
+        self.assertNotRegex(root_server, r"script-src[^;]*'unsafe-inline'")
+        self.assertIn("script-src 'self'", preview_server)
+        self.assertNotRegex(preview_server, r"script-src[^;]*'unsafe-inline'")
+
+
+    def test_dashboard_never_propagates_session_token_in_query_urls(self):
+        dashboard_js = (Path(__file__).resolve().parent / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("const qSep=u=>u;", dashboard_js)
+        self.assertNotIn("encodeURIComponent(K)", dashboard_js)
+        self.assertNotIn('new URLSearchParams(location.search).get("k")', dashboard_js)
+
+    def test_dashboard_js_external_asset_is_served_with_javascript_content_type(self):
+        status, headers, body = self.request(
+            "/dashboard.js", headers={"X-Mersad-Token": "batch2-server-test-secret"}
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", headers.get("Content-Type", "").lower())
+        self.assertGreater(len(body), 1000)
+
+    def test_dompurify_and_guard_assets_are_served_same_origin(self):
+        for path, marker in (
+            ("/purify.min.js", "DOMPurify 3.4.18"),
+            ("/dompurify-guard.js", "MERSAD_DOM_XSS_GUARD"),
+        ):
+            status, headers, body = self.request(
+                path, headers={"X-Mersad-Token": "batch2-server-test-secret"}
+            )
+            self.assertEqual(status, 200, path)
+            self.assertIn("javascript", headers.get("Content-Type", "").lower())
+            self.assertIn(marker.encode("utf-8"), body, path)
 
     def test_telegram_remote_http_is_rejected(self):
         with mock.patch.dict(

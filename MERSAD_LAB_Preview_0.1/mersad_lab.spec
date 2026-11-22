@@ -7,6 +7,7 @@ binaries += collect_dynamic_libs('numpy')
 
 datas = [
     ('index.html', '.'),
+    ('lab.js', '.'),
     ('README_AR.md', '.'),
     ('PHASE1_STATUS_AR.md', '.'),
 ]

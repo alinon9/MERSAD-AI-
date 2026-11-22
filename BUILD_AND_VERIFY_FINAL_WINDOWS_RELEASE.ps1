@@ -79,6 +79,16 @@ Assert-ExitCode "pip install pinned requirements"
 & $pip uninstall -y opencv-python-headless
 & $pip install --force-reinstall --no-deps opencv-python==4.11.0.86
 Assert-ExitCode "enforce GUI opencv-python==4.11.0.86"
+
+Write-Host "[Security] Restoring dashboard.js and running the DOM-XSS/CSP closure audit..."
+& $py -c "import gzip; from pathlib import Path; p=Path('MERSAD_AI_Preview_0.1/dashboard.js.gz'); Path('MERSAD_AI_Preview_0.1/dashboard.js').write_bytes(gzip.decompress(p.read_bytes()))"
+Assert-ExitCode "restore dashboard.js from pinned gzip source"
+& $py "MERSAD_AI_Preview_0.1\patch_dashboard_auth.py"
+Assert-ExitCode "remove browser dashboard query-token propagation"
+
+& $py "MERSAD_AI_Preview_0.1\security_closure_audit.py" --report "reports_and_logs\security_closure_dom_xss_report.json"
+Assert-ExitCode "security_closure_audit.py (DOM-XSS/CSP/Trusted Types)"
+
 & $py "MERSAD_AI_Preview_0.1\check_install.py" --verify-pip-deps
 Assert-ExitCode "check_install.py --verify-pip-deps"
 
@@ -130,7 +140,10 @@ try {
     & $pyinst --noconfirm --clean mersad_ai.spec
     Assert-ExitCode "PyInstaller mersad_ai.spec"
     Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-    Copy-Item -Path "dashboard.html","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+    Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+    foreach ($asset in @("dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+        if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
+    }
     Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
     Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
     Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
@@ -144,7 +157,8 @@ Push-Location "MERSAD_LAB_Preview_0.1"
 try {
     & $pyinst --noconfirm --clean mersad_lab.spec
     Assert-ExitCode "PyInstaller mersad_lab.spec"
-    Copy-Item -Path "index.html","README_AR.md","PHASE1_STATUS_AR.md","RUN_LAB.bat" -Destination "dist\MERSAD_LAB\" -Force
+    Copy-Item -Path "index.html","lab.js","README_AR.md","PHASE1_STATUS_AR.md","RUN_LAB.bat" -Destination "dist\MERSAD_LAB\" -Force
+    if (-not (Test-Path -LiteralPath "dist\MERSAD_LAB\lab.js" -PathType Leaf)) { throw "LAB distribution is missing lab.js" }
     New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
     Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "dist\portable\MERSAD_LAB_Portable_x64.zip" -Force
     & $isccPath "installer\mersad_lab_setup.iss"

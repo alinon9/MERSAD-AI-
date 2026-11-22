@@ -258,9 +258,13 @@ class H(BaseHTTPRequestHandler):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
+            if isinstance(self.connection, ssl.SSLSocket):
+                self.send_header("Strict-Transport-Security", "max-age=31536000")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; "
+                "form-action 'self'; frame-ancestors 'none'; trusted-types mersad-ui-html dompurify",
             )
             self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
@@ -318,6 +322,10 @@ class H(BaseHTTPRequestHandler):
                     with open(resolve_dashboard_path("dashboard.js.gz"), "rb") as f:
                         dashboard_js = gzip.decompress(f.read())
                 self._send(dashboard_js, "application/javascript; charset=utf-8")
+            elif p in ("/purify.min.js", "/dompurify-guard.js"):
+                asset_name = p.lstrip("/")
+                with open(resolve_dashboard_path(asset_name), "rb") as f:
+                    self._send(f.read(), "application/javascript; charset=utf-8")
             elif p == "/stream.mjpg": self.stream(self.arg("cam"))
             elif p == "/events": self.events()
             elif p == "/api/ping": self._json({"ok": True, "ts": time.time()})

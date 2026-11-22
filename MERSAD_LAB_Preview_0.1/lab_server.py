@@ -426,6 +426,20 @@ def _is_loopback_bind(host: str) -> bool:
         return False
 
 
+def _create_lab_tls_context():
+    """Create a TLS server context with certificate validation and TLS 1.2 minimum."""
+    cert_file = os.environ.get("MERSAD_LAB_TLS_CERT", "").strip()
+    key_file = os.environ.get("MERSAD_LAB_TLS_KEY", "").strip()
+    if not cert_file or not key_file:
+        raise ValueError("LAN mode requires MERSAD_LAB_TLS_CERT and MERSAD_LAB_TLS_KEY")
+    if not os.path.isfile(cert_file) or not os.path.isfile(key_file):
+        raise ValueError("LAN mode TLS certificate and private key files must exist")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    return context
+
+
 def _validate_lab_bind_policy(host: str, allow_lan: bool, token: str = None) -> None:
     """Fail closed before socket creation when a non-loopback LAB bind is requested."""
     if _is_loopback_bind(host):
@@ -442,6 +456,11 @@ def _validate_lab_bind_policy(host: str, allow_lan: bool, token: str = None) -> 
             raise ValueError("MERSAD_LAB_ALLOWED_HOSTS must include the configured bind address")
     if not str(token or os.environ.get("MERSAD_LAB_TOKEN", "")).strip():
         raise ValueError("LAN binding requires an explicitly configured LAB token (--token or MERSAD_LAB_TOKEN)")
+    # The LAB listener handles credentials and uploaded material; plain HTTP on LAN is forbidden.
+    cert_file = os.environ.get("MERSAD_LAB_TLS_CERT", "").strip()
+    key_file = os.environ.get("MERSAD_LAB_TLS_KEY", "").strip()
+    if not cert_file or not key_file or not os.path.isfile(cert_file) or not os.path.isfile(key_file):
+        raise ValueError("LAN binding requires valid MERSAD_LAB_TLS_CERT and MERSAD_LAB_TLS_KEY files")
 
 
 class LabHTTPServer(ThreadingHTTPServer):
@@ -472,11 +491,14 @@ class LabRequestHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
-            "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+            "style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; "
+            "base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
         )
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        if isinstance(self.connection, ssl.SSLSocket):
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
         self.send_header("Cache-Control", "no-store")
 
     def _json(self, payload: dict, code: int = 200):
@@ -624,6 +646,20 @@ class LabRequestHandler(BaseHTTPRequestHandler):
                 "cameras_count": len(cams),
                 "cameras": cams,
             })
+
+        if path == "/lab.js":
+            js_path = resolve_lab_asset("lab.js")
+            if not os.path.isfile(js_path):
+                return self._json({"ok": False, "error": "lab.js missing"}, code=404)
+            raw_js = open(js_path, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw_js)))
+            self.send_header("Cache-Control", "no-store")
+            self._send_security_headers()
+            self.end_headers()
+            self.wfile.write(raw_js)
+            return
 
         if not self._check_auth(require_for_mutation=False):
             return
@@ -948,8 +984,16 @@ class LabServerController:
 
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, token: str = None, require_auth: bool = False, allow_lan: bool = False):
         _validate_lab_bind_policy(host, allow_lan, token=token)
+        tls_context = None if _is_loopback_bind(host) else _create_lab_tls_context()
         self.state = LabState(token=token, require_auth=require_auth, allow_lan=allow_lan)
         self.httpd = LabHTTPServer((host, int(port)), LabRequestHandler, self.state)
+        if tls_context is not None:
+            try:
+                self.httpd.socket = tls_context.wrap_socket(self.httpd.socket, server_side=True)
+            except Exception:
+                self.httpd.server_close()
+                raise
+        self.scheme = "https" if tls_context is not None else "http"
         self.host, self.port = self.httpd.server_address
         self._thread = None
 
@@ -1016,14 +1060,16 @@ def main():
     ctrl.start()
     print("======================================================================")
     print(f"  {VERSION}")
-    print(f"  Local URL   : http://{ctrl.host}:{ctrl.port}/")
-    print(f"  Stream CAM1 : http://{ctrl.host}:{ctrl.port}/stream/cam1.mjpg")
+    scheme = ctrl.scheme
+    print(f"  Local URL   : {scheme}://{ctrl.host}:{ctrl.port}/")
+    print(f"  Stream CAM1 : {scheme}://{ctrl.host}:{ctrl.port}/stream/cam1.mjpg")
     if generated_token:
         # Show the auto-generated credential only to the local operator console.
         # It is never returned by HTTP and is not stored in browser cookies.
         print(f"  LAB API Token: {ctrl.state.token}", flush=True)
         print("  Enter this token in the LAB page; keep it private.")
-    print("  Security    : Localhost-only (127.0.0.1) + Host/Origin/CSRF Guard")
+    security_mode = "TLS 1.2+ LAN + explicit host allowlist + token + Host/Origin/CSRF Guard" if ctrl.scheme == "https" else "Loopback-only HTTP + Host/Origin/CSRF Guard"
+    print(f"  Security    : {security_mode}")
     print("======================================================================")
     try:
         while not stop_sig.is_set():

@@ -1,0 +1,36 @@
+name: Verify Existing MERSAD PREVIEW 0.1 Artifact #151
+
+on:
+  push:
+    branches:
+      - "fix/post-upload-artifact-verification-20261122"
+    paths:
+      - ".github/workflows/verify-existing-mersad-artifact-151.yml"
+      - "ci/verify_published_artifact.ps1"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify-existing-artifact:
+    name: Verify already-published Run #151 artifact
+    runs-on: windows-latest
+    steps:
+      - name: Checkout verification script
+        uses: actions/checkout@v7.0.1
+
+      - name: Download artifact from completed Run #151
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          repository: alinon9/MERSAD-AI-
+          run-id: 45033212951
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/mersad-published-artifact
+
+      - name: Verify hashes, hidden files, binaries, Portable packages & installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./ci/verify_published_artifact.ps1 -ArtifactRoot (Join-Path $env:RUNNER_TEMP "mersad-published-artifact")

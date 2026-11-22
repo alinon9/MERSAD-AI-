@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MERSAD DOMPurify Runtime Smoke Test</title>
+  <script src="purify.min.js"></script>
+  <script src="dompurify-guard.js"></script>
+</head>
+<body>
+  <div id="target"></div>
+  <pre id="result">PENDING</pre>
+  <script>
+    (function () {
+      "use strict";
+      const target = document.getElementById("target");
+      const payload = [
+        '<img src="x" onerror="document.body.dataset.domGuard=&#39;FAIL&#39;">',
+        '<svg onload="document.body.dataset.domGuard=&#39;FAIL&#39;"><script>document.body.dataset.domGuard=&#39;FAIL&#39;<\/script></svg>',
+        '<a id="bad-link" href="javascript:document.body.dataset.domGuard=&#39;FAIL&#39;">unsafe</a>',
+        '<b id="safe-bold">safe content</b>'
+      ].join("");
+      try {
+        target.innerHTML = payload;
+        const unsafe = target.querySelector("[onerror], [onload], script");
+        const badLink = target.querySelector("#bad-link");
+        const pass = window.MERSAD_DOM_XSS_GUARD &&
+          window.MERSAD_DOM_XSS_GUARD.version === "3.4.18" &&
+          !unsafe &&
+          (!badLink || !/^\s*javascript:/i.test(badLink.getAttribute("href") || "")) &&
+          Boolean(target.querySelector("#safe-bold")) &&
+          target.textContent.includes("safe content");
+        document.body.dataset.domGuard = pass ? "PASS" : "FAIL";
+        document.getElementById("result").textContent =
+          pass ? "PASS: DOMPurify removed executable markup and preserved safe HTML." :
+          "FAIL: unsafe markup survived or safe content was removed.";
+      } catch (error) {
+        document.body.dataset.domGuard = "FAIL";
+        document.getElementById("result").textContent = "FAIL: " + String(error);
+      }
+    })();
+  </script>
+</body>
+</html>

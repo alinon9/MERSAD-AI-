@@ -124,6 +124,27 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         self._raise_blocked_redirect(req, fp, code, msg, headers)
 
 
+class _NoRedirectHTTPErrorProcessor(urllib.request.HTTPErrorProcessor):
+    """Reject every 3xx response before urllib's redirect handler can follow it."""
+    handler_order = 400
+
+    def http_response(self, request, response):
+        code = getattr(response, "code", None)
+        if isinstance(code, int) and 300 <= code < 400:
+            # Keep the original response as the HTTPError file object so _call()
+            # closes its socket before returning or raising.
+            raise urllib.error.HTTPError(
+                request.full_url,
+                code,
+                f"HTTP redirect blocked ({code})",
+                response.headers,
+                response,
+            )
+        return super().http_response(request, response)
+
+    https_response = http_response
+
+
 def _call(method, fields=None, files=None, timeout=15, retries=2):
     tok = os.getenv("TELEGRAM_TOKEN", "").strip()
     if not tok:
@@ -135,7 +156,7 @@ def _call(method, fields=None, files=None, timeout=15, retries=2):
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, body, {"Content-Type": ct})
-            opener = urllib.request.build_opener(_NoRedirectHandler())
+            opener = urllib.request.build_opener(_NoRedirectHandler(), _NoRedirectHTTPErrorProcessor())
             with opener.open(req, timeout=timeout) as resp:
                 raw = resp.read()
             res = json.loads(raw)
