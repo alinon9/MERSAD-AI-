@@ -1,0 +1,243 @@
+name: MERSAD Phase 2 - Published Artifact Acceptance
+
+on:
+  push:
+    branches:
+      - "qa/release-acceptance-20261122"
+    paths:
+      - ".github/workflows/mersad-release-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  published-artifact-acceptance:
+    name: Download, Verify & Smoke-Test Published Windows Artifact
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download the exact Artifact from Windows Release #99
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          run-id: 44947549714
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          path: artifact
+
+      - name: Verify package layout and every internal SHA-256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path -LiteralPath "artifact").Path
+          $manifestPath = Join-Path $root "SHA256SUMS_WINDOWS_FINAL.txt"
+          foreach ($required in @("MERSAD_AI", "MERSAD_LAB", "Installers_and_Portable")) {
+            $p = Join-Path $root $required
+            if (-not (Test-Path -LiteralPath $p -PathType Container)) {
+              throw "Required package directory is missing: $required"
+            }
+          }
+          if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "SHA256SUMS_WINDOWS_FINAL.txt is missing"
+          }
+
+          $entries = [System.Collections.Generic.Dictionary[string,string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          $lineNo = 0
+          foreach ($line in (Get-Content -LiteralPath $manifestPath)) {
+            $lineNo++
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if ($line -notmatch '^(?<hash>[0-9a-fA-F]{64})\s{2}(?<path>.+)$') {
+              throw "Malformed checksum manifest line $lineNo"
+            }
+            $relative = $Matches["path"].Trim().Replace("/", "\")
+            if ([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative) -or $relative -match '(^|\\)\.\.(\\|$)') {
+              throw "Unsafe relative path in checksum manifest line $lineNo"
+            }
+            if ($entries.ContainsKey($relative)) {
+              throw "Duplicate path in checksum manifest: $relative"
+            }
+            $entries.Add($relative, $Matches["hash"].ToLowerInvariant())
+          }
+          if ($entries.Count -eq 0) { throw "Checksum manifest has no entries" }
+
+          $rootPrefix = $root.TrimEnd("\") + "\"
+          $manifested = 0
+          $actualFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object {
+            $_.FullName -ne $manifestPath
+          })
+          foreach ($file in $actualFiles) {
+            $relative = $file.FullName.Substring($rootPrefix.Length)
+            if (-not $entries.ContainsKey($relative)) {
+              throw "Unmanifested file found in package: $relative"
+            }
+            $actualHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $entries[$relative]) {
+              throw "SHA-256 mismatch: $relative (expected $($entries[$relative]), got $actualHash)"
+            }
+            $manifested++
+          }
+          if ($manifested -ne $entries.Count) {
+            throw "Manifest/file count mismatch: manifest=$($entries.Count), verified=$manifested"
+          }
+
+          $requiredFiles = @(
+            "MERSAD_AI\MERSAD_AI.exe",
+            "MERSAD_AI\models\yunet.onnx",
+            "MERSAD_AI\models\sface.onnx",
+            "MERSAD_AI\models\yolov8n.pt",
+            "MERSAD_AI\models\easyocr\arabic.pth",
+            "MERSAD_AI\models\easyocr\craft_mlt_25k.pth",
+            "MERSAD_LAB\MERSAD_LAB.exe",
+            "Installers_and_Portable\MERSAD_AI_Portable_x64.zip",
+            "Installers_and_Portable\MERSAD_LAB_Portable_x64.zip",
+            "Installers_and_Portable\MERSAD_LAB_Setup_x64.exe"
+          )
+          foreach ($relative in $requiredFiles) {
+            $p = Join-Path $root $relative
+            if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+              throw "Mandatory release file is missing: $relative"
+            }
+            if ((Get-Item -LiteralPath $p).Length -le 0) {
+              throw "Mandatory release file is empty: $relative"
+            }
+          }
+
+          $report = @(
+            "# MERSAD Phase 2 — Published Artifact Acceptance",
+            "",
+            "- Source workflow run: 44947549714",
+            "- Source commit: 208c5e4becff6713238ab6bf46c7cd473ace015c",
+            "- Artifact: MERSAD_PREVIEW_0.1_FINAL_Windows_x64",
+            "- Result: **PASS** — package layout and every manifested file verified",
+            "- Files SHA-256 verified: $manifested",
+            "- Note: the checksum manifest itself is excluded because the release job generated it after hashing the payload."
+          )
+          Set-Content -LiteralPath "acceptance-results.md" -Value $report -Encoding UTF8
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ($report -join [Environment]::NewLine)
+          Write-Host "[PASS] SHA-256 verified for $manifested files."
+
+      - name: Extract and smoke-test both portable distributions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path -LiteralPath "artifact").Path
+          $testRoot = Join-Path $env:RUNNER_TEMP "mersad-phase2-portable"
+          New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+
+          $aiZip = Join-Path $root "Installers_and_Portable\MERSAD_AI_Portable_x64.zip"
+          $labZip = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Portable_x64.zip"
+          $aiPortable = Join-Path $testRoot "MERSAD_AI_Portable"
+          $labPortable = Join-Path $testRoot "MERSAD_LAB_Portable"
+          Expand-Archive -LiteralPath $aiZip -DestinationPath $aiPortable -Force
+          Expand-Archive -LiteralPath $labZip -DestinationPath $labPortable -Force
+
+          function Invoke-ExeCheck {
+            param(
+              [Parameter(Mandatory=$true)][string]$Executable,
+              [Parameter(Mandatory=$true)][string[]]$Arguments,
+              [Parameter(Mandatory=$true)][string]$Label
+            )
+            if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+              throw "Executable missing for test '$Label': $Executable"
+            }
+            Push-Location (Split-Path -Parent $Executable)
+            try {
+              & $Executable @Arguments
+              $code = $LASTEXITCODE
+              if ($code -ne 0) { throw "$Label failed with exit code $code" }
+              Add-Content -LiteralPath "acceptance-results.md" -Value "- **PASS** — $Label"
+            } finally {
+              Pop-Location
+            }
+          }
+
+          $aiDist = Join-Path $root "MERSAD_AI\MERSAD_AI.exe"
+          $labDist = Join-Path $root "MERSAD_LAB\MERSAD_LAB.exe"
+          $aiPortableExe = Join-Path $aiPortable "MERSAD_AI.exe"
+          $labPortableExe = Join-Path $labPortable "MERSAD_LAB.exe"
+
+          foreach ($base in @((Split-Path -Parent $aiDist), $aiPortable)) {
+            foreach ($model in @(
+              "models\yunet.onnx",
+              "models\sface.onnx",
+              "models\yolov8n.pt",
+              "models\easyocr\arabic.pth",
+              "models\easyocr\craft_mlt_25k.pth"
+            )) {
+              if (-not (Test-Path -LiteralPath (Join-Path $base $model) -PathType Leaf)) {
+                throw "Packaged AI model missing: $model under $base"
+              }
+            }
+          }
+
+          Invoke-ExeCheck -Executable $aiDist -Arguments @("--verify-models") -Label "Distribution MERSAD_AI.exe --verify-models"
+          Invoke-ExeCheck -Executable $aiDist -Arguments @("--verify") -Label "Distribution MERSAD_AI.exe --verify"
+          Invoke-ExeCheck -Executable $aiPortableExe -Arguments @("--verify-models") -Label "Portable MERSAD_AI.exe --verify-models"
+          Invoke-ExeCheck -Executable $aiPortableExe -Arguments @("--verify") -Label "Portable MERSAD_AI.exe --verify"
+          Invoke-ExeCheck -Executable $labDist -Arguments @("--port", "0", "--self-check") -Label "Distribution MERSAD_LAB.exe --self-check"
+          Invoke-ExeCheck -Executable $labPortableExe -Arguments @("--port", "0", "--self-check") -Label "Portable MERSAD_LAB.exe --self-check"
+
+          Add-Content -LiteralPath "acceptance-results.md" -Value "- **NOT TESTED** — physical USB/RTSP camera hardware; hosted GitHub runner has no physical camera attached."
+          Write-Host "[PASS] Distribution and portable EXE smoke tests completed."
+
+      - name: Install, launch and uninstall the packaged LAB installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = (Resolve-Path -LiteralPath "artifact").Path
+          $installer = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Setup_x64.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "مرحلة قبول نسخة مرصاد LAB"
+          if (Test-Path -LiteralPath $installDir) {
+            Remove-Item -LiteralPath $installDir -Recurse -Force
+          }
+
+          $install = Start-Process -FilePath $installer -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            ('/DIR="' + $installDir + '"')
+          ) -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "LAB installer failed with exit code $($install.ExitCode)" }
+
+          $installedExe = Join-Path $installDir "MERSAD_LAB.exe"
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+            throw "Installed MERSAD_LAB.exe was not found"
+          }
+          if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
+            throw "Inno Setup uninstaller was not found"
+          }
+
+          Push-Location $installDir
+          try {
+            & $installedExe --port 0 --self-check
+            $code = $LASTEXITCODE
+            if ($code -ne 0) { throw "Installed LAB self-check failed with exit code $code" }
+            Add-Content -LiteralPath "acceptance-results.md" -Value "- **PASS** — installed LAB executable self-check in an Arabic path containing spaces"
+          } finally {
+            Pop-Location
+          }
+
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART"
+          ) -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "LAB uninstaller failed with exit code $($uninstall.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Test-Path -LiteralPath $installedExe) {
+            throw "MERSAD_LAB.exe still exists after uninstall"
+          }
+          Add-Content -LiteralPath "acceptance-results.md" -Value "- **PASS** — LAB installer install/launch/uninstall lifecycle"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (Get-Content -LiteralPath "acceptance-results.md" -Raw)
+          Write-Host "[PASS] Published installer installed, launched, and uninstalled successfully."
+
+      - name: Publish Phase 2 acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_Phase2_Acceptance_Report
+          path: acceptance-results.md
+          if-no-files-found: warn
+          retention-days: 30
