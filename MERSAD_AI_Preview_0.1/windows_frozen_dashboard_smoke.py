@@ -50,14 +50,14 @@ def main() -> int:
                     if proc.poll() is not None:
                         break
                     headers = {"X-Mersad-Token": token, "Host": f"127.0.0.1:{port}"}
-                    for route, expected_marker in (
-                        ("/", b"/purify.min.js"),
-                        ("/dashboard.js", b"MERSAD-PR5-FIND001-DELEGATION-V3"),
-                        ("/purify.min.js", b"DOMPurify 3.4.18"),
-                        ("/dompurify-guard.js", b"MERSAD_DOM_XSS_GUARD"),
-                    ):
-                        req = urllib.request.Request(f"http://127.0.0.1:{port}{route}", headers=headers)
-                        try:
+                    try:
+                        for route, expected_marker in (
+                            ("/", b"/purify.min.js"),
+                            ("/dashboard.js", b"MERSAD-PR5-FIND001-DELEGATION-V3"),
+                            ("/purify.min.js", b"DOMPurify 3.4.18"),
+                            ("/dompurify-guard.js", b"MERSAD_DOM_XSS_GUARD"),
+                        ):
+                            req = urllib.request.Request(f"http://127.0.0.1:{port}{route}", headers=headers)
                             with urllib.request.urlopen(req, timeout=2) as response:
                                 body = response.read()
                                 ctype = response.headers.get("Content-Type", "")
@@ -74,7 +74,7 @@ def main() -> int:
                                 if route == "/" and ("script-src 'self'" not in csp or "trusted-types mersad-ui-html dompurify" not in csp):
                                     raise RuntimeError(f"dashboard CSP is missing strict script/Trusted Types directives: {csp}")
                                 print(f"PASS: frozen EXE served {route} ({len(body)} bytes; {ctype}; nosniff={nosniff})")
-                    return 0
+                        return 0
                     except (OSError, urllib.error.URLError, TimeoutError) as exc:
                         last_error = exc
                         time.sleep(1)
