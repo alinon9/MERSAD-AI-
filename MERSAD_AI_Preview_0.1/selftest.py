@@ -2189,7 +2189,9 @@ def run_v7_1_audit_regression_tests():
           has_an_export_id and has_qsep_bind and uses_cookie_auth,
           (has_an_export_id, has_qsep_bind, uses_cookie_auth))
 
-    # 3. V7.1-PACKAGING-HARDENING: Verify mersad_ai.spec, BUILD_EXE.bat, and windows-build.yml exclude unused tracker/tensorboard/cdflib submodules and disable auto-install
+    # 3. V7.1-PACKAGING-HARDENING: Collect SciPy's compiled runtime while excluding unrelated optional tracker/tensorboard modules.
+    # SciPy must NOT be excluded here: the frozen Windows EXE imports sklearn, whose runtime
+    # depends on SciPy native extensions (including scipy.special._ccallback_c).
     spec_txt = open(os.path.join(WORK, "mersad_ai.spec"), encoding="utf-8").read()
     bat_txt = open(os.path.join(WORK, "BUILD_EXE.bat"), encoding="utf-8").read()
     ci_txt = open(os.path.join(WORK, ".github", "workflows", "windows-build.yml"), encoding="utf-8").read()
@@ -2197,7 +2199,8 @@ def run_v7_1_audit_regression_tests():
     pkg_ok = (
         "ultralytics.trackers" in spec_txt
         and "torch.utils.tensorboard" in spec_txt
-        and "scipy.special._cdflib" in spec_txt
+        and '("easyocr", "ultralytics", "scipy")' in spec_txt
+        and "scipy.special._cdflib" not in spec_txt
         and "ULTRALYTICS_AUTOINSTALL" in spec_txt
         and "ULTRALYTICS_AUTOINSTALL" in bat_txt
         and "ULTRALYTICS_AUTOINSTALL" in ci_txt

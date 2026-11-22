@@ -289,6 +289,8 @@ jobs:
           $origPath = $env:PATH
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           try {
+            & "$arabicRoot\MERSAD_AI\MERSAD_AI.exe" --verify-runtime-deps
+            if ($LASTEXITCODE -ne 0) { throw "MERSAD_AI.exe --verify-runtime-deps failed in Arabic path ($LASTEXITCODE)" }
             & "$arabicRoot\MERSAD_AI\MERSAD_AI.exe" --verify-models
             if ($LASTEXITCODE -ne 0) { throw "MERSAD_AI.exe --verify-models failed in Arabic path ($LASTEXITCODE)" }
             & "$arabicRoot\MERSAD_AI\MERSAD_AI.exe" --verify
