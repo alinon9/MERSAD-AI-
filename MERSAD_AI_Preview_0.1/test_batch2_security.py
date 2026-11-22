@@ -241,6 +241,14 @@ class MersadBatch2SecurityTests(unittest.TestCase):
         self.assertIn("script-src 'self'", preview_server)
         self.assertNotRegex(preview_server, r"script-src[^;]*'unsafe-inline'")
 
+
+    def test_dashboard_never_propagates_session_token_in_query_urls(self):
+        dashboard_js = (Path(__file__).resolve().parent / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("const qSep=u=>u;", dashboard_js)
+        self.assertNotRegex(dashboard_js, r"[?&]k=")
+        self.assertNotIn("encodeURIComponent(K)", dashboard_js)
+        self.assertNotIn('new URLSearchParams(location.search).get("k")', dashboard_js)
+
     def test_dashboard_js_external_asset_is_served_with_javascript_content_type(self):
         status, headers, body = self.request(
             "/dashboard.js", headers={"X-Mersad-Token": "batch2-server-test-secret"}
