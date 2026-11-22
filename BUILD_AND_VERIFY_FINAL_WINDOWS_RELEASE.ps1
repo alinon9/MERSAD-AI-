@@ -144,7 +144,8 @@ Push-Location "MERSAD_LAB_Preview_0.1"
 try {
     & $pyinst --noconfirm --clean mersad_lab.spec
     Assert-ExitCode "PyInstaller mersad_lab.spec"
-    Copy-Item -Path "index.html","README_AR.md","PHASE1_STATUS_AR.md","RUN_LAB.bat" -Destination "dist\MERSAD_LAB\" -Force
+    Copy-Item -Path "index.html","lab.js","README_AR.md","PHASE1_STATUS_AR.md","RUN_LAB.bat" -Destination "dist\MERSAD_LAB\" -Force
+    if (-not (Test-Path -LiteralPath "dist\MERSAD_LAB\lab.js" -PathType Leaf)) { throw "LAB distribution is missing lab.js" }
     New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
     Compress-Archive -Path "dist\MERSAD_LAB\*" -DestinationPath "dist\portable\MERSAD_LAB_Portable_x64.zip" -Force
     & $isccPath "installer\mersad_lab_setup.iss"
