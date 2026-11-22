@@ -1060,14 +1060,16 @@ def main():
     ctrl.start()
     print("======================================================================")
     print(f"  {VERSION}")
-    print(f"  Local URL   : http://{ctrl.host}:{ctrl.port}/")
-    print(f"  Stream CAM1 : http://{ctrl.host}:{ctrl.port}/stream/cam1.mjpg")
+    scheme = ctrl.scheme
+    print(f"  Local URL   : {scheme}://{ctrl.host}:{ctrl.port}/")
+    print(f"  Stream CAM1 : {scheme}://{ctrl.host}:{ctrl.port}/stream/cam1.mjpg")
     if generated_token:
         # Show the auto-generated credential only to the local operator console.
         # It is never returned by HTTP and is not stored in browser cookies.
         print(f"  LAB API Token: {ctrl.state.token}", flush=True)
         print("  Enter this token in the LAB page; keep it private.")
-    print("  Security    : Localhost-only (127.0.0.1) + Host/Origin/CSRF Guard")
+    security_mode = "TLS 1.2+ LAN + explicit host allowlist + token + Host/Origin/CSRF Guard" if ctrl.scheme == "https" else "Loopback-only HTTP + Host/Origin/CSRF Guard"
+    print(f"  Security    : {security_mode}")
     print("======================================================================")
     try:
         while not stop_sig.is_set():
