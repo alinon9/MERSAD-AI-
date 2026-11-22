@@ -32,6 +32,10 @@ if errorlevel 1 (
 
 echo [4/5] Building dist\MERSAD_LAB\MERSAD_LAB.exe via PyInstaller...
 .venv\Scripts\pyinstaller.exe --noconfirm --clean mersad_lab.spec
+if not exist "dist\MERSAD_LAB\lab.js" (
+  echo [ERROR] lab.js missing from frozen distribution.
+  exit /b 1
+)
 if not exist "dist\MERSAD_LAB\MERSAD_LAB.exe" (
     echo [ERROR] MERSAD_LAB.exe was not generated!
     exit /b 1
