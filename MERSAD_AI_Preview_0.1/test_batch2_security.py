@@ -3,6 +3,8 @@
 import contextlib
 import io
 import os
+import re
+from pathlib import Path
 import tempfile
 import threading
 import urllib.error
@@ -172,6 +174,44 @@ class MersadBatch2SecurityTests(unittest.TestCase):
                     srv._mersad_thread.join(timeout=2)
             self.assertTrue(mersad_server.bus.stop_event.is_set())
             self.assertFalse(srv._mersad_thread.is_alive())
+
+
+    def test_ai_dashboard_response_csp_disallows_inline_scripts(self):
+        status, headers, body = self.request(
+            "/", headers={"X-Mersad-Token": "batch2-server-test-secret"}
+        )
+        self.assertEqual(status, 200)
+        csp = headers.get("Content-Security-Policy", "")
+        self.assertIn("script-src 'self'", csp)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
+        self.assertIn("object-src 'none'", csp)
+        self.assertIn("base-uri 'self'", csp)
+        self.assertIn("form-action 'self'", csp)
+
+    def test_root_and_preview_dashboards_are_identical_and_have_no_inline_handlers(self):
+        preview_dir = Path(__file__).resolve().parent
+        repo_root = preview_dir.parent
+        root_html = (repo_root / "dashboard.html").read_text(encoding="utf-8")
+        preview_html = (preview_dir / "dashboard.html").read_text(encoding="utf-8")
+        self.assertEqual(root_html, preview_html)
+        self.assertNotRegex(root_html, r"\\son[a-z]+\\s*=")
+        scripts = re.findall(r"<script\\b([^>]*)>([\\s\\S]*?)</script>", root_html, flags=re.IGNORECASE)
+        self.assertTrue(scripts)
+        self.assertTrue(all(re.search(r"\\bsrc\\s*=", attrs, flags=re.IGNORECASE) and not body.strip() for attrs, body in scripts))
+        root_server = (repo_root / "server.py").read_text(encoding="utf-8")
+        preview_server = (preview_dir / "server.py").read_text(encoding="utf-8")
+        self.assertIn("script-src 'self'", root_server)
+        self.assertNotRegex(root_server, r"script-src[^;]*'unsafe-inline'")
+        self.assertIn("script-src 'self'", preview_server)
+        self.assertNotRegex(preview_server, r"script-src[^;]*'unsafe-inline'")
+
+    def test_dashboard_js_external_asset_is_served_with_javascript_content_type(self):
+        status, headers, body = self.request(
+            "/dashboard.js", headers={"X-Mersad-Token": "batch2-server-test-secret"}
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", headers.get("Content-Type", "").lower())
+        self.assertGreater(len(body), 1000)
 
     def test_telegram_remote_http_is_rejected(self):
         with mock.patch.dict(
