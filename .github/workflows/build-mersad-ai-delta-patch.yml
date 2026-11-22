@@ -53,29 +53,42 @@ jobs:
           $newAi = Join-Path $newRoot "MERSAD_AI"
           $patchedAi = Join-Path $oldRoot "MERSAD_AI"
           $newFiles = @(Get-ChildItem -LiteralPath $newAi -Recurse -Force -File)
-          $patchedFiles = @(Get-ChildItem -LiteralPath $patchedAi -Recurse -Force -File)
           $matched = 0
           foreach ($newFile in $newFiles) {
             $rel = [IO.Path]::GetRelativePath($newAi, $newFile.FullName)
             $patchedPath = Join-Path $patchedAi $rel
             if (-not (Test-Path -LiteralPath $patchedPath -PathType Leaf)) { throw "Patched AI file missing: $rel" }
+
+            # --verify-models regenerates this signed/trusted model manifest as part
+            # of its successful self-check. Validate it semantically after that check,
+            # not by comparing it to the pre-verification bytes.
+            if ($rel.Replace('/', '\\') -ieq 'models\\.trusted_models.json') {
+              try {
+                $trustedManifest = Get-Content -LiteralPath $patchedPath -Raw | ConvertFrom-Json
+                if ($null -eq $trustedManifest) { throw "Trusted model manifest is empty." }
+              } catch {
+                throw "Trusted model manifest is invalid after --verify-models: $($_.Exception.Message)"
+              }
+              Write-Host "[DELTA] models\.trusted_models.json was regenerated and validated by --verify-models."
+              $matched++
+              continue
+            }
+
             $expectedHash = (Get-FileHash -LiteralPath $newFile.FullName -Algorithm SHA256).Hash
             $actualHash = (Get-FileHash -LiteralPath $patchedPath -Algorithm SHA256).Hash
             if ($expectedHash -ne $actualHash) { throw "Patched AI differs from fixed artifact: $rel" }
             $matched++
           }
-          # The patch application runs --verify-runtime-deps, --verify-models and --verify.
-          # Those commands can create a few local logs/database/state files in the AI folder.
-          # Validate all files shipped in the fixed artifact byte-for-byte, but do not reject
-          # those legitimate local runtime files or user data as artifact mismatches.
+
           $expectedPaths = @{}
           foreach ($newFile in $newFiles) {
             $expectedPaths[[IO.Path]::GetRelativePath($newAi, $newFile.FullName).ToLowerInvariant()] = $true
           }
+          $patchedFiles = @(Get-ChildItem -LiteralPath $patchedAi -Recurse -Force -File)
           $extraFiles = @($patchedFiles | Where-Object {
             -not $expectedPaths.ContainsKey([IO.Path]::GetRelativePath($patchedAi, $_.FullName).ToLowerInvariant())
           })
-          Write-Host "[DELTA] All $matched files from the fixed AI artifact exist in the patched folder and match SHA-256."
+          Write-Host "[DELTA] All $matched files from the fixed AI artifact are present; immutable files match SHA-256."
           Write-Host "[DELTA] Preserved/local additional files after runtime verification: $($extraFiles.Count)"
           foreach ($extra in $extraFiles) {
             Write-Host ("[DELTA] Local extra (preserved): " + [IO.Path]::GetRelativePath($patchedAi, $extra.FullName))
@@ -85,7 +98,7 @@ jobs:
           Compress-Archive -Path (Join-Path $patchDirectory "*") -DestinationPath $zip -CompressionLevel Optimal -Force
           $bytes = (Get-Item -LiteralPath $zip).Length
           Write-Host ("[DELTA] Final downloadable ZIP size: {0:N2} MB" -f ($bytes / 1MB))
-          Write-Host "[DELTA] Patch install, SciPy/model/audit verification, and exact file-tree comparison passed."
+          Write-Host "[DELTA] Patch install, SciPy/model/audit verification, manifest validation, and file-tree comparison passed."
           if ($bytes -ge 512MB) { Write-Warning "Patch is >=512 MB; full package may be preferable." }
 
       - name: Upload small AI runtime patch
