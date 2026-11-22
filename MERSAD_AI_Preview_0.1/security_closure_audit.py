@@ -174,7 +174,48 @@ def main() -> int:
             sink_inventory(ai_js, "MERSAD_AI_Preview_0.1/dashboard.js")
             + sink_inventory(lab_js, "MERSAD_LAB_Preview_0.1/lab.js")
         )
-        report["manual_review_required"] = bool(report["dom_html_sinks"])
+
+        purifier_path = AI_DIR / "purify.min.js"
+        guard_path = AI_DIR / "dompurify-guard.js"
+        if not purifier_path.is_file() or not guard_path.is_file():
+            report["errors"].append("DOMPurify runtime or DOM insertion guard is missing")
+            purifier_source = ""
+            guard_source = ""
+        else:
+            purifier_source = purifier_path.read_text(encoding="utf-8")
+            guard_source = guard_path.read_text(encoding="utf-8")
+
+        if "DOMPurify 3.4.18" not in purifier_source[:240]:
+            report["errors"].append("DOMPurify is not pinned to the reviewed version 3.4.18")
+        for marker in (
+            'Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML")',
+            "window.DOMPurify.sanitize",
+            'Object.defineProperty(Element.prototype, "innerHTML"',
+            'createPolicy("mersad-ui-html"',
+        ):
+            if marker not in guard_source:
+                report["errors"].append(f"DOM XSS guard is missing required protection marker: {marker}")
+
+        required_script_order = ["/purify.min.js", "/dompurify-guard.js", "/dashboard.js"]
+        if ai_preview["external_scripts"][:3] != required_script_order:
+            report["errors"].append("AI dashboard must load DOMPurify, the DOM guard, then dashboard.js in that exact order")
+
+        ai_server_source = (AI_DIR / "server.py").read_text(encoding="utf-8")
+        if "trusted-types mersad-ui-html dompurify" not in ai_server_source:
+            report["errors"].append("AI CSP does not allow only the named DOMPurify/guard Trusted Types policies")
+
+        unprotected = [item for item in report["dom_html_sinks"] if not item["sink"].lower().startswith(".innerhtml")]
+        report["checks"]["dom_sink_protection"] = {
+            "total_dynamic_html_sinks": len(report["dom_html_sinks"]),
+            "sanitized_innerhtml_sinks": len(report["dom_html_sinks"]) - len(unprotected),
+            "unprotected_sink_count": len(unprotected),
+            "sanitizer": "DOMPurify 3.4.18",
+            "guard": "Element.prototype.innerHTML setter wrapper",
+            "trusted_types_policy": "mersad-ui-html",
+        }
+        report["manual_review_required"] = bool(unprotected)
+        if unprotected:
+            report["errors"].append("DOM insertion sinks outside the DOMPurify-guarded innerHTML setter were found")
 
         dynamic_eval = re.compile(r"\beval\s*\(|\bnew\s+Function\s*\(", re.IGNORECASE)
         for label, source in (
@@ -199,6 +240,8 @@ def main() -> int:
 
         report["checks"]["ai_dashboard_js_bytes"] = len(ai_js.encode("utf-8"))
         report["checks"]["lab_js_bytes"] = len(lab_js.encode("utf-8"))
+        report["checks"]["dompurify_version"] = "3.4.18"
+        report["checks"]["dompurify_guard_bytes"] = len(guard_source.encode("utf-8"))
         report["checks"]["ai_html_external_scripts"] = ai_preview["external_scripts"]
         report["checks"]["lab_html_external_scripts"] = lab_html["external_scripts"]
 
