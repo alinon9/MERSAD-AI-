@@ -130,7 +130,10 @@ try {
     & $pyinst --noconfirm --clean mersad_ai.spec
     Assert-ExitCode "PyInstaller mersad_ai.spec"
     Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-    Copy-Item -Path "dashboard.html","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+    Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+    foreach ($asset in @("dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+        if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
+    }
     Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
     Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
     Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
