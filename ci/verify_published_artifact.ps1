@@ -82,6 +82,8 @@ foreach ($required in @($aiExe, $labExe, $installer, $aiPortableZip, $labPortabl
   }
 }
 
+& $aiExe --verify-runtime-deps
+if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_AI.exe --verify-runtime-deps failed ($LASTEXITCODE)" }
 & $aiExe --verify-models
 if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_AI.exe --verify-models failed ($LASTEXITCODE)" }
 & $aiExe --verify
@@ -99,6 +101,8 @@ $portableAiExe = Join-Path $aiPortable "MERSAD_AI.exe"
 $portableLabExe = Join-Path $labPortable "MERSAD_LAB.exe"
 if (-not (Test-Path -LiteralPath $portableAiExe -PathType Leaf)) { throw "AI Portable ZIP does not contain MERSAD_AI.exe at its root" }
 if (-not (Test-Path -LiteralPath $portableLabExe -PathType Leaf)) { throw "LAB Portable ZIP does not contain MERSAD_LAB.exe at its root" }
+& $portableAiExe --verify-runtime-deps
+if ($LASTEXITCODE -ne 0) { throw "Published AI Portable --verify-runtime-deps failed ($LASTEXITCODE)" }
 & $portableAiExe --verify-models
 if ($LASTEXITCODE -ne 0) { throw "Published AI Portable --verify-models failed ($LASTEXITCODE)" }
 & $portableAiExe --verify
@@ -120,4 +124,4 @@ $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYS
 if ($uninstallProcess.ExitCode -ne 0) { throw "Published LAB uninstall failed ($($uninstallProcess.ExitCode))" }
 if (Test-Path -LiteralPath $installedLab) { throw "Published LAB uninstall left MERSAD_LAB.exe behind" }
 
-Write-Host "[ACCEPTANCE] Downloaded artifact hashes, hidden files, AI/LAB binaries, both Portable ZIPs, and installer install/run/uninstall all passed."
+Write-Host "[ACCEPTANCE] Downloaded artifact hashes, hidden files, AI/LAB binaries, bundled SciPy/sklearn runtime, both Portable ZIPs, and installer install/run/uninstall all passed."
