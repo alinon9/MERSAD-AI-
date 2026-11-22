@@ -218,12 +218,28 @@ jobs:
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-          Copy-Item -Path "dashboard.html","dashboard.js","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          foreach ($asset in @("purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+            if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
+          }
           # PR5 frozen dashboard.js smoke test
 
           if (!(Test-Path "dist\MERSAD_AI\dashboard.js")) { throw "dashboard.js missing from frozen MERSAD_AI distribution" }
           python -X utf8 -u windows_frozen_dashboard_smoke.py "dist\MERSAD_AI\MERSAD_AI.exe"
           if ($LASTEXITCODE -ne 0) { throw "Frozen dashboard.js HTTP smoke test failed ($LASTEXITCODE)" }
+          $edgeCandidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
+            (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe")
+          )
+          $edge = $edgeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $edge) { throw "Microsoft Edge is required for the DOMPurify runtime smoke test" }
+          $smokeFile = (Resolve-Path "dom_guard_smoke.html").Path.Replace("\","/")
+          $smokeUri = "file:///$smokeFile"
+          $dom = & $edge --headless=new --disable-gpu --no-first-run --no-default-browser-check --allow-file-access-from-files --dump-dom $smokeUri 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $dom -notmatch 'data-dom-guard="PASS"') {
+            throw "DOMPurify browser smoke test failed. Output: $dom"
+          }
+          Write-Host "[DOM-XSS] Edge headless smoke test passed."
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
