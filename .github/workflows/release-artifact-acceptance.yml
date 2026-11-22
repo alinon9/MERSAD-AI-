@@ -1,0 +1,305 @@
+name: MERSAD Published Artifact Acceptance
+
+run-name: "Release Artifact Acceptance #100"
+
+on:
+  push:
+    branches:
+      - "audit/release-artifact-acceptance-*"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify-published-artifact:
+    name: Download, hash-check and execute published package
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Download exact Artifact #100, verify archive digest, manifest and runtime files
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifactId = 14748995821
+          $expectedZipSha256 = "d26098a8ee201c30b9f66b9198902b47d6427fda9d33a7527c0c1b4ef265bd97"
+          $expectedZipSize = 1336786079L
+          $repo = $env:GITHUB_REPOSITORY
+          $reportPath = Join-Path $env:GITHUB_WORKSPACE "release-artifact-acceptance-report.json"
+          $report = [ordered]@{
+            artifact_id = $artifactId
+            source_run_id = 45006964099
+            expected_archive_sha256 = $expectedZipSha256
+            actual_archive_sha256 = $null
+            archive_size_bytes = $null
+            manifest_entries = 0
+            files_hashed = 0
+            hash_mismatches = @()
+            missing_manifest_files = @()
+            unmanifested_files = @()
+            trusted_models_file = $null
+            sklearn_runtime_dlls = @()
+            ai_portable = "NOT_RUN"
+            lab_portable = "NOT_RUN"
+            installer_install_run_uninstall = "NOT_RUN"
+            status = "FAIL"
+            error = $null
+          }
+
+          try {
+            if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+              throw "GITHUB_TOKEN is not available to the workflow."
+            }
+
+            $zipPath = Join-Path $env:RUNNER_TEMP "MERSAD_PREVIEW_0.1_FINAL_Windows_x64.zip"
+            $downloadUrl = "https://api.github.com/repos/$repo/actions/artifacts/$artifactId/zip"
+            $authHeader = "Authorization: Bearer $env:GITHUB_TOKEN"
+
+            Write-Host "[DOWNLOAD] Fetching published Artifact #$artifactId from workflow run #100."
+            & curl.exe --fail --location --retry 3 --retry-all-errors --silent --show-error --output $zipPath --header $authHeader --header "Accept: application/vnd.github+json" $downloadUrl
+            if ($LASTEXITCODE -ne 0) {
+              throw "Artifact download failed with curl exit code $LASTEXITCODE."
+            }
+            if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+              throw "Downloaded artifact ZIP was not created."
+            }
+
+            $zipFile = Get-Item -LiteralPath $zipPath
+            $report.archive_size_bytes = [int64]$zipFile.Length
+            if ($zipFile.Length -ne $expectedZipSize) {
+              throw "Artifact ZIP size mismatch. Expected $expectedZipSize bytes, got $($zipFile.Length)."
+            }
+
+            $actualZipSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $report.actual_archive_sha256 = $actualZipSha256
+            if ($actualZipSha256 -ne $expectedZipSha256) {
+              throw "Published artifact archive SHA-256 mismatch. Expected $expectedZipSha256, got $actualZipSha256."
+            }
+            Write-Host "[ARCHIVE] Exact ZIP size and SHA-256 match GitHub Artifact #100."
+
+            $extractRoot = Join-Path $env:RUNNER_TEMP "MERSAD_PREVIEW_0.1_FINAL_ARTIFACT_100"
+            if (Test-Path -LiteralPath $extractRoot) {
+              Remove-Item -LiteralPath $extractRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+            Write-Host "[EXTRACT] Expanding the published artifact on the Windows Runner."
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+
+            $manifests = @(Get-ChildItem -LiteralPath $extractRoot -Filter "SHA256SUMS_WINDOWS_FINAL.txt" -File -Recurse -Force)
+            if ($manifests.Count -ne 1) {
+              throw "Expected exactly one SHA256SUMS_WINDOWS_FINAL.txt; found $($manifests.Count)."
+            }
+            $manifest = $manifests[0]
+            $packageRoot = $manifest.Directory.FullName
+            $manifestLines = [System.IO.File]::ReadAllLines($manifest.FullName)
+            $entries = [System.Collections.Generic.List[object]]::new()
+            $manifestPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+            foreach ($line in $manifestLines) {
+              if ([string]::IsNullOrWhiteSpace($line)) { continue }
+              if ($line -notmatch '^\s*([0-9a-fA-F]{64})\s{2}(.+?)\s*$') {
+                throw "Malformed SHA-256 manifest line: $line"
+              }
+              $expectedHash = $Matches[1].ToLowerInvariant()
+              $relativePath = $Matches[2].Trim()
+              $normalizedPath = $relativePath.Replace("/", "\\")
+              if (-not $manifestPaths.Add($normalizedPath)) {
+                throw "Duplicate path in SHA-256 manifest: $relativePath"
+              }
+
+              $fullPath = [System.IO.Path]::GetFullPath((Join-Path $packageRoot $normalizedPath))
+              $rootPrefix = $packageRoot.TrimEnd([char[]]"\\/") + [System.IO.Path]::DirectorySeparatorChar
+              if (-not $fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Unsafe path outside package root in SHA-256 manifest: $relativePath"
+              }
+
+              $entries.Add([pscustomobject]@{
+                RelativePath = $normalizedPath
+                ExpectedHash = $expectedHash
+                FullPath = $fullPath
+              })
+            }
+            if ($entries.Count -lt 100) {
+              throw "Manifest unexpectedly small: only $($entries.Count) entries."
+            }
+            $report.manifest_entries = $entries.Count
+            Write-Host "[MANIFEST] Checking $($entries.Count) published file hashes."
+
+            $missing = [System.Collections.Generic.List[string]]::new()
+            $mismatches = [System.Collections.Generic.List[string]]::new()
+            $index = 0
+            foreach ($entry in $entries) {
+              $index++
+              if (-not (Test-Path -LiteralPath $entry.FullPath -PathType Leaf)) {
+                $missing.Add($entry.RelativePath)
+                continue
+              }
+              $actualHash = (Get-FileHash -LiteralPath $entry.FullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($actualHash -ne $entry.ExpectedHash) {
+                $mismatches.Add("$($entry.RelativePath): expected $($entry.ExpectedHash), got $actualHash")
+              }
+              if (($index % 500) -eq 0) {
+                Write-Host "[MANIFEST] Hashed $index / $($entries.Count) files."
+              }
+            }
+            $report.files_hashed = $index - $missing.Count
+            $report.missing_manifest_files = @($missing.ToArray())
+            $report.hash_mismatches = @($mismatches.ToArray())
+
+            $actualFiles = @(Get-ChildItem -LiteralPath $packageRoot -File -Recurse -Force)
+            $manifestRelative = $manifest.FullName.Substring($packageRoot.Length).TrimStart([char[]]"\\/")
+            $actualWithoutManifest = @($actualFiles | Where-Object {
+              $_.FullName -ne $manifest.FullName
+            })
+            $extras = [System.Collections.Generic.List[string]]::new()
+            foreach ($file in $actualWithoutManifest) {
+              $rel = $file.FullName.Substring($packageRoot.Length).TrimStart([char[]]"\\/")
+              if (-not $manifestPaths.Contains($rel)) {
+                $extras.Add($rel)
+              }
+            }
+            $report.unmanifested_files = @($extras.ToArray())
+
+            if ($missing.Count -gt 0 -or $mismatches.Count -gt 0 -or $extras.Count -gt 0) {
+              throw "Manifest verification failed: missing=$($missing.Count), hash_mismatches=$($mismatches.Count), unmanifested=$($extras.Count)."
+            }
+            if ($actualFiles.Count -ne ($entries.Count + 1)) {
+              throw "File inventory count mismatch: manifest has $($entries.Count) entries; package contains $($actualFiles.Count) files including its manifest."
+            }
+            Write-Host "[MANIFEST] PASS: every packaged file is present, manifested and hash-matched."
+
+            $trustedFiles = @(Get-ChildItem -LiteralPath $packageRoot -Filter ".trusted_models.json" -File -Recurse -Force)
+            if ($trustedFiles.Count -ne 1) {
+              throw "Expected exactly one .trusted_models.json in the published package; found $($trustedFiles.Count)."
+            }
+            $trustedRelative = $trustedFiles[0].FullName.Substring($packageRoot.Length).TrimStart([char[]]"\\/")
+            if (-not $manifestPaths.Contains($trustedRelative)) {
+              throw ".trusted_models.json exists but is absent from SHA256SUMS_WINDOWS_FINAL.txt."
+            }
+            $report.trusted_models_file = $trustedRelative
+
+            $dllNames = @("msvcp140.dll", "vcomp140.dll")
+            $dllRelPaths = [System.Collections.Generic.List[string]]::new()
+            foreach ($dllName in $dllNames) {
+              $dlls = @(Get-ChildItem -LiteralPath $packageRoot -Filter $dllName -File -Recurse -Force | Where-Object {
+                $_.FullName -match '[\\/]sklearn[\\/]\.libs[\\/]'
+              })
+              if ($dlls.Count -ne 1) {
+                throw "Expected exactly one sklearn .libs\$dllName; found $($dlls.Count)."
+              }
+              $dllRelative = $dlls[0].FullName.Substring($packageRoot.Length).TrimStart([char[]]"\\/")
+              if (-not $manifestPaths.Contains($dllRelative)) {
+                throw "$dllRelative exists but is absent from SHA256SUMS_WINDOWS_FINAL.txt."
+              }
+              $dllRelPaths.Add($dllRelative)
+            }
+            $report.sklearn_runtime_dlls = @($dllRelPaths.ToArray())
+            Write-Host "[RUNTIME] PASS: trusted model metadata and both sklearn runtime DLLs are present and manifested."
+
+            $aiPortableZip = Join-Path $packageRoot "Installers_and_Portable\MERSAD_AI_Portable_x64.zip"
+            $labPortableZip = Join-Path $packageRoot "Installers_and_Portable\MERSAD_LAB_Portable_x64.zip"
+            $installerExe = Join-Path $packageRoot "Installers_and_Portable\MERSAD_LAB_Setup_x64.exe"
+            foreach ($required in @($aiPortableZip, $labPortableZip, $installerExe)) {
+              if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+                throw "Published installer/portable payload missing: $required"
+              }
+            }
+
+            $originalPath = $env:PATH
+            try {
+              $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+
+              $aiPortableDir = Join-Path $env:RUNNER_TEMP "نسخة مرصاد AI المحمولة - فحص القبول"
+              if (Test-Path -LiteralPath $aiPortableDir) {
+                Remove-Item -LiteralPath $aiPortableDir -Recurse -Force
+              }
+              New-Item -ItemType Directory -Path $aiPortableDir -Force | Out-Null
+              Expand-Archive -LiteralPath $aiPortableZip -DestinationPath $aiPortableDir -Force
+              $aiExecutables = @(Get-ChildItem -LiteralPath $aiPortableDir -Filter "MERSAD_AI.exe" -File -Recurse -Force)
+              if ($aiExecutables.Count -ne 1) {
+                throw "AI portable archive must contain exactly one MERSAD_AI.exe; found $($aiExecutables.Count)."
+              }
+              Write-Host "[AI PORTABLE] Running --verify-models from the extracted published ZIP."
+              & $aiExecutables[0].FullName --verify-models
+              if ($LASTEXITCODE -ne 0) { throw "Published AI portable --verify-models failed ($LASTEXITCODE)." }
+              Write-Host "[AI PORTABLE] Running --verify from the extracted published ZIP."
+              & $aiExecutables[0].FullName --verify
+              if ($LASTEXITCODE -ne 0) { throw "Published AI portable --verify failed ($LASTEXITCODE)." }
+              $report.ai_portable = "PASS"
+
+              $labPortableDir = Join-Path $env:RUNNER_TEMP "نسخة مرصاد LAB المحمولة - فحص القبول"
+              if (Test-Path -LiteralPath $labPortableDir) {
+                Remove-Item -LiteralPath $labPortableDir -Recurse -Force
+              }
+              New-Item -ItemType Directory -Path $labPortableDir -Force | Out-Null
+              Expand-Archive -LiteralPath $labPortableZip -DestinationPath $labPortableDir -Force
+              $labExecutables = @(Get-ChildItem -LiteralPath $labPortableDir -Filter "MERSAD_LAB.exe" -File -Recurse -Force)
+              if ($labExecutables.Count -ne 1) {
+                throw "LAB portable archive must contain exactly one MERSAD_LAB.exe; found $($labExecutables.Count)."
+              }
+              Write-Host "[LAB PORTABLE] Running --port 0 --self-check from the extracted published ZIP."
+              & $labExecutables[0].FullName --port 0 --self-check
+              if ($LASTEXITCODE -ne 0) { throw "Published LAB portable --self-check failed ($LASTEXITCODE)." }
+              $report.lab_portable = "PASS"
+
+              $installDir = Join-Path $env:RUNNER_TEMP "تثبيت مرصاد LAB - فحص القبول"
+              if (Test-Path -LiteralPath $installDir) {
+                Remove-Item -LiteralPath $installDir -Recurse -Force
+              }
+              $installArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`""
+              Write-Host "[INSTALLER] Installing the EXE from the published artifact."
+              $installProcess = Start-Process -FilePath $installerExe -ArgumentList $installArgs -Wait -PassThru
+              if ($installProcess.ExitCode -ne 0) {
+                throw "Published LAB installer failed with exit code $($installProcess.ExitCode)."
+              }
+              $installedLabExe = Join-Path $installDir "MERSAD_LAB.exe"
+              $uninstaller = Join-Path $installDir "unins000.exe"
+              if (-not (Test-Path -LiteralPath $installedLabExe -PathType Leaf)) {
+                throw "Published installer did not create MERSAD_LAB.exe in the requested Arabic path."
+              }
+              Write-Host "[INSTALLER] Running the installed LAB executable."
+              & $installedLabExe --port 0 --self-check
+              if ($LASTEXITCODE -ne 0) { throw "Installed published LAB executable self-check failed ($LASTEXITCODE)." }
+              if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
+                throw "Published installer did not create unins000.exe."
+              }
+              Write-Host "[INSTALLER] Uninstalling the published installer package."
+              $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
+              if ($uninstallProcess.ExitCode -ne 0) {
+                throw "Published LAB uninstaller failed with exit code $($uninstallProcess.ExitCode)."
+              }
+              Start-Sleep -Seconds 2
+              if (Test-Path -LiteralPath $installedLabExe) {
+                throw "MERSAD_LAB.exe remains after uninstall."
+              }
+              $report.installer_install_run_uninstall = "PASS"
+            }
+            finally {
+              $env:PATH = $originalPath
+            }
+
+            $report.status = "PASS"
+            Write-Host "[ACCEPTANCE] PASS: published artifact ZIP, complete manifest, hidden runtime files, AI/LAB portable packages and installer lifecycle all passed."
+          }
+          catch {
+            $report.status = "FAIL"
+            $report.error = $_.Exception.Message
+            Write-Error $report.error
+            throw
+          }
+          finally {
+            $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8
+            Write-Host "[REPORT] $reportPath"
+          }
+
+      - name: Upload acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_RELEASE_ARTIFACT_100_ACCEPTANCE_REPORT
+          path: release-artifact-acceptance-report.json
+          if-no-files-found: warn
+          retention-days: 30
