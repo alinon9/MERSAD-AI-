@@ -321,3 +321,5 @@ jobs:
         with:
           name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
           path: MERSAD_PREVIEW_0.1_FINAL_DIST/
+          # Preserve hidden trust metadata and bundled sklearn runtime DLLs that are covered by SHA256SUMS.
+          include-hidden-files: true
