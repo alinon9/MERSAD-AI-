@@ -37,6 +37,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           python -c "import gzip; from pathlib import Path; p=Path('MERSAD_AI_Preview_0.1/dashboard.js.gz'); Path('MERSAD_AI_Preview_0.1/dashboard.js').write_bytes(gzip.decompress(p.read_bytes()))"
           if ($LASTEXITCODE -ne 0) { throw "dashboard.js decompression failed ($LASTEXITCODE)" }
+          python -X utf8 MERSAD_AI_Preview_0.1\patch_dashboard_auth.py
+          if ($LASTEXITCODE -ne 0) { throw "dashboard query-token removal failed ($LASTEXITCODE)" }
           New-Item -ItemType Directory -Force -Path artifacts\batch1-logs | Out-Null
           python -X utf8 MERSAD_AI_Preview_0.1\security_closure_audit.py --report artifacts\batch1-logs\security_closure_dom_xss_report.json
           if ($LASTEXITCODE -ne 0) { throw "DOM-XSS/CSP closure audit failed ($LASTEXITCODE)" }
