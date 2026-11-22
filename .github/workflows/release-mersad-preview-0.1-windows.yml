@@ -235,7 +235,7 @@ jobs:
           )
           $edge = $edgeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
           if (-not $edge) { throw "Microsoft Edge is required for the DOMPurify runtime smoke test" }
-          $smokeFile = (Resolve-Path "MERSAD_AI_Preview_0.1\dom_guard_smoke.html").Path.Replace("\","/")
+          $smokeFile = (Resolve-Path "dom_guard_smoke.html").Path.Replace("\","/")
           $smokeUri = "file:///$smokeFile"
           $dom = & $edge --headless=new --disable-gpu --no-first-run --no-default-browser-check --allow-file-access-from-files --dump-dom $smokeUri 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or $dom -notmatch 'data-dom-guard="PASS"') {
