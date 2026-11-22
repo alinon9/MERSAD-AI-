@@ -15,8 +15,13 @@ try:
     if _os.environ.get("MERSAD_BLOCK_SKLEARN") == "1":
         raise ImportError("sklearn blocked by MERSAD_BLOCK_SKLEARN=1")
     from sklearn.ensemble import IsolationForest
-except ImportError:
+    _SKLEARN_IMPORT_ERROR = ""
+except Exception as _sklearn_import_error:
+    # sklearn is an optional analytics accelerator; preserve the core AI runtime
+    # and use the built-in StatForest fallback if scipy/sklearn native extensions
+    # cannot be loaded in a frozen Windows distribution.
     IsolationForest = None
+    _SKLEARN_IMPORT_ERROR = f"{type(_sklearn_import_error).__name__}: {_sklearn_import_error}"
 
 
 class _StatForest:
@@ -970,9 +975,16 @@ def train(include_demo=False):
         share = {k: v / daytot[k[0]] for k, v in hrs.items()}
         arr = np.asarray(X, dtype=np.float64)
         if IsolationForest is not None:
-            model = IsolationForest(n_estimators=120, contamination=0.015, random_state=0).fit(arr)
-            short_type = "IsolationForest"
-            mtype = "IsolationForest(n_estimators=120, contamination=0.015, random_state=0)"
+            try:
+                model = IsolationForest(n_estimators=120, contamination=0.015, random_state=0).fit(arr)
+                short_type = "IsolationForest"
+                mtype = "IsolationForest(n_estimators=120, contamination=0.015, random_state=0)"
+            except Exception as _sklearn_fit_error:
+                # Keep analytics available if a frozen scipy/sklearn native runtime
+                # is incomplete on the current Windows machine.
+                model = _StatForest(contamination=0.015, random_state=0).fit(arr)
+                short_type = "StatForest"
+                mtype = "StatForest(contamination=0.015)"
         else:
             model = _StatForest(contamination=0.015, random_state=0).fit(arr)
             short_type = "StatForest"
