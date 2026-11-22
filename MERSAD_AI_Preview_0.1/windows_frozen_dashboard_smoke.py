@@ -49,25 +49,32 @@ def main() -> int:
                 while time.monotonic() < deadline:
                     if proc.poll() is not None:
                         break
-                    req = urllib.request.Request(
-                        f"http://127.0.0.1:{port}/dashboard.js",
-                        headers={"X-Mersad-Token": token, "Host": f"127.0.0.1:{port}"},
-                    )
-                    try:
-                        with urllib.request.urlopen(req, timeout=2) as response:
-                            body = response.read()
-                            ctype = response.headers.get("Content-Type", "")
-                            nosniff = response.headers.get("X-Content-Type-Options", "")
-                            if response.status != 200:
-                                raise RuntimeError(f"unexpected HTTP status: {response.status}")
-                            if "javascript" not in ctype.lower():
-                                raise RuntimeError(f"unexpected Content-Type: {ctype}")
-                            if nosniff.lower() != "nosniff":
-                                raise RuntimeError(f"missing nosniff header: {nosniff}")
-                            if b"MERSAD-PR5-FIND001-DELEGATION-V3" not in body:
-                                raise RuntimeError("served dashboard.js does not contain V3 delegation marker")
-                            print(f"PASS: frozen EXE served /dashboard.js ({len(body)} bytes; {ctype}; nosniff={nosniff})")
-                            return 0
+                    headers = {"X-Mersad-Token": token, "Host": f"127.0.0.1:{port}"}
+                    for route, expected_marker in (
+                        ("/", b"/purify.min.js"),
+                        ("/dashboard.js", b"MERSAD-PR5-FIND001-DELEGATION-V3"),
+                        ("/purify.min.js", b"DOMPurify 3.4.18"),
+                        ("/dompurify-guard.js", b"MERSAD_DOM_XSS_GUARD"),
+                    ):
+                        req = urllib.request.Request(f"http://127.0.0.1:{port}{route}", headers=headers)
+                        try:
+                            with urllib.request.urlopen(req, timeout=2) as response:
+                                body = response.read()
+                                ctype = response.headers.get("Content-Type", "")
+                                nosniff = response.headers.get("X-Content-Type-Options", "")
+                                csp = response.headers.get("Content-Security-Policy", "")
+                                if response.status != 200:
+                                    raise RuntimeError(f"unexpected HTTP status for {route}: {response.status}")
+                                if "javascript" not in ctype.lower() and route != "/":
+                                    raise RuntimeError(f"unexpected Content-Type for {route}: {ctype}")
+                                if nosniff.lower() != "nosniff":
+                                    raise RuntimeError(f"missing nosniff header for {route}: {nosniff}")
+                                if expected_marker not in body:
+                                    raise RuntimeError(f"{route} does not contain required marker {expected_marker!r}")
+                                if route == "/" and ("script-src 'self'" not in csp or "trusted-types mersad-ui-html dompurify" not in csp):
+                                    raise RuntimeError(f"dashboard CSP is missing strict script/Trusted Types directives: {csp}")
+                                print(f"PASS: frozen EXE served {route} ({len(body)} bytes; {ctype}; nosniff={nosniff})")
+                    return 0
                     except (OSError, urllib.error.URLError, TimeoutError) as exc:
                         last_error = exc
                         time.sleep(1)
