@@ -206,14 +206,31 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             cap_released = (st_cam2.get("cap") is None)
         with ml._RUNTIME_STATE_LOCK:
             removed_from_status = ("LAB_DYN_CAM2" not in ml.STATUS.get("cameras", {}))
+        # A native YOLO/OCR call cannot be force-cancelled safely. The removal
+        # endpoint signals stop, releases the capture after its bounded grace
+        # period, and may truthfully report pending workers on return. Step 8
+        # checks that removal was accepted and that this status is self-consistent;
+        # Step 9 remains the strict gate requiring every worker to exit.
+        removal_pending_workers = resp_rem1.get("pending_workers")
+        removal_report_consistent = (
+            isinstance(resp_rem1.get("workers_stopped"), bool)
+            and isinstance(removal_pending_workers, list)
+            and (resp_rem1.get("workers_stopped") is True) == (len(removal_pending_workers) == 0)
+        )
+        camera_removed_from_active_registry = "LAB_DYN_CAM2" not in ml._ACTIVE_CAM_STATES
         add_step(
             8,
             "Remove active camera LAB_DYN_CAM2 during runtime via POST /api/cameras/remove",
             resp_rem1.get("ok") is True
             and resp_rem1.get("removed") is True
-            and resp_rem1.get("workers_stopped") is True
-            and not resp_rem1.get("pending_workers"),
-            resp_rem1,
+            and removal_report_consistent
+            and camera_removed_from_active_registry,
+            {
+                **resp_rem1,
+                "removal_report_consistent": removal_report_consistent,
+                "camera_removed_from_active_registry": camera_removed_from_active_registry,
+                "note": "A pending native inference worker is allowed only at API return; Step 9 strictly verifies its bounded shutdown.",
+            },
         )
         add_step(9, "Verify reader/infer threads stopped and VideoCapture released without SIGSEGV", rt_stopped and it_stopped and cap_released and removed_from_status, {
             "reader_thread_stopped": rt_stopped,
