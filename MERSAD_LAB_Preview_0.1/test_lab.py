@@ -400,11 +400,17 @@ def run_all_tests():
         # ------------------------------------------------------------------
         try:
             idx_file = resolve_lab_asset("index.html")
+            js_file = resolve_lab_asset("lab.js")
             html_src = open(idx_file, "r", encoding="utf-8").read()
-            unsafe_sinks = re.findall(r"\b(?:innerHTML|outerHTML|insertAdjacentHTML|document\.write)\b", html_src)
-            assert len(unsafe_sinks) == 0, f"Found unsafe DOM sinks: {unsafe_sinks}"
-            assert "textContent" in html_src and "createElement" in html_src
-            ok("LAB-SEC-05: Zero innerHTML usage in index.html", "0 unsafe DOM sinks; uses textContent/createElement exclusively")
+            js_src = open(js_file, "r", encoding="utf-8").read()
+            unsafe_sinks = re.findall(
+                r"\b(?:innerHTML|outerHTML|insertAdjacentHTML|document\.write)\b",
+                html_src + "\n" + js_src,
+            )
+            assert len(unsafe_sinks) == 0, f"Found unsafe DOM sinks across index.html and lab.js: {unsafe_sinks}"
+            assert 'src="/lab.js"' in html_src
+            assert "textContent" in js_src and "createElement" in js_src
+            ok("LAB-SEC-05: Zero DOM HTML insertion sinks", "index.html uses external lab.js; both files have 0 innerHTML/outerHTML/insertAdjacentHTML/document.write sinks")
         except Exception as e:
             fail("LAB-SEC-05: Zero innerHTML usage in index.html", str(e))
 
