@@ -5,6 +5,7 @@ on:
     branches:
       - fix/mersad-preview-0.2-release-hardening
       - security/batch2-server-hardening-20261120
+      - security/release-closure-aud006-20261122
   workflow_dispatch:
 
 concurrency:
