@@ -236,12 +236,12 @@ def main() -> int:
             ("MERSAD_LAB_Preview_0.1/lab.js", lab_js),
         ):
             token_read = re.search(
-                r"new\\s+URLSearchParams\\s*\\(\\s*location\\.search\\s*\\)\\s*\\.get\\s*\\(\\s*['\\\"]k['\\\"]",
+                r"new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*['\"]k['\"]",
                 source,
                 re.IGNORECASE,
             )
-            token_encoded = re.search(r"encodeURIComponent\\s*\\(\\s*K\\s*\\)", source)
-            token_qsep = re.search(r"\\bqSep\\s*=\\s*u\\s*=>[^;]*(?:\\bQ\\b|\\bK\\b)", source)
+            token_encoded = re.search(r"encodeURIComponent\s*\(\s*K\s*\)", source)
+            token_qsep = re.search(r"\bqSep\s*=\s*u\s*=>[^;]*(?:\bQ\b|\bK\b)", source)
             if token_read or token_encoded or token_qsep:
                 report["legacy_query_token_references"].append(label)
 
