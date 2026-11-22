@@ -20,8 +20,8 @@ source = DASHBOARD.read_text(encoding="utf-8")
 # Match the minified query-token capture and URL propagation helper, allowing
 # harmless whitespace and either quote style while requiring the full shape.
 pattern = re.compile(
-    r"""const\s+K\s*=\s*new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*["']k["']\s*\)\s*\|\|\s*["']\s*"""
-    r""",\s*Q\s*=\s*K\s*\?\s*["']\?k=["']\s*\+\s*encodeURIComponent\s*\(\s*K\s*\)\s*:\s*["']\s*;\s*"""
+    r"""const\s+K\s*=\s*new\s+URLSearchParams\s*\(\s*location\.search\s*\)\s*\.get\s*\(\s*["']k["']\s*\)\s*\|\|\s*["']{2}\s*,\s*"""
+    r"""Q\s*=\s*K\s*\?\s*["']\?k=["']\s*\+\s*encodeURIComponent\s*\(\s*K\s*\)\s*:\s*["']{2}\s*;\s*"""
     r"""const\s+qSep\s*=\s*u\s*=>\s*Q\s*\?\s*\(\s*u\.includes\s*\(\s*["']\?["']\s*\)\s*\?\s*u\s*\+\s*["']&["']\s*\+\s*Q\.slice\s*\(\s*1\s*\)\s*:\s*u\s*\+\s*Q\s*\)\s*:\s*u\s*;""",
     re.MULTILINE,
 )
