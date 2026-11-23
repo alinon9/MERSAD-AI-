@@ -40,6 +40,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "dashboard.js decompression failed ($LASTEXITCODE)" }
           python -X utf8 MERSAD_AI_Preview_0.1\patch_dashboard_auth.py
           if ($LASTEXITCODE -ne 0) { throw "dashboard query-token removal failed ($LASTEXITCODE)" }
+          node --check MERSAD_AI_Preview_0.1\camera-ui.js
+          if ($LASTEXITCODE -ne 0) { throw "camera-ui.js syntax check failed ($LASTEXITCODE)" }
           python -X utf8 MERSAD_AI_Preview_0.1\security_closure_audit.py --report reports_and_logs\security_closure_dom_xss_report.json
           if ($LASTEXITCODE -ne 0) { throw "DOM-XSS/CSP closure audit failed ($LASTEXITCODE)" }
 
@@ -403,3 +405,58 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           ./ci/verify_published_artifact.ps1 -ArtifactRoot (Join-Path $env:RUNNER_TEMP "mersad-published-artifact")
+
+  build-delta-runtime-patch:
+    name: Build small AI-only update patch for existing installations
+    needs: post-upload-acceptance
+    runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout patch builder
+        uses: actions/checkout@v7.0.1
+
+      - name: Download previously installed full artifact (Run 152)
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 45066828588
+          path: ${{ runner.temp }}/mersad-old-artifact
+
+      - name: Download newly verified full artifact from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: MERSAD_PREVIEW_0.1_FINAL_Windows_x64
+          path: ${{ runner.temp }}/mersad-new-artifact
+
+      - name: Compare AI files and build rollback-capable delta patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $oldRoot = Join-Path $env:RUNNER_TEMP "mersad-old-artifact"
+          $newRoot = Join-Path $env:RUNNER_TEMP "mersad-new-artifact"
+          $outRoot = Join-Path $env:RUNNER_TEMP "mersad-ai-delta-output"
+          ./ci/build_mersad_ai_delta_patch.ps1 -OldArtifactRoot $oldRoot -NewArtifactRoot $newRoot -OutputRoot $outRoot -ApplyScriptPath "ci/apply_mersad_ai_delta_patch.ps1" -SourceRunId 45066828588 -TargetRunId ([long]$env:GITHUB_RUN_ID) -TargetCommit "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "AI delta patch builder failed ($LASTEXITCODE)" }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $patchRoot = Join-Path $outRoot "MERSAD_AI_PATCH"
+          $zipPath = Join-Path $env:RUNNER_TEMP "MERSAD_AI_Runtime_Patch_Windows_x64.zip"
+          if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+          [IO.Compression.ZipFile]::CreateFromDirectory($patchRoot, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
+          $zipInfo = Get-Item -LiteralPath $zipPath
+          Write-Host ("[DELTA] Final patch ZIP: {0:N2} MB" -f ($zipInfo.Length / 1MB))
+          if ($zipInfo.Length -gt 350MB) {
+            Write-Warning "The AI-only patch exceeds 350 MB; it is still valid, but review changed binaries before distributing."
+          }
+
+      - name: Upload MERSAD AI runtime patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_AI_Runtime_Patch_Windows_x64
+          path: ${{ runner.temp }}/MERSAD_AI_Runtime_Patch_Windows_x64.zip
+          retention-days: 90
+
