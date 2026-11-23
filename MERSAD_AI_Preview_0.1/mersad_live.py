@@ -2319,6 +2319,38 @@ def _open_camera_capture(source):
                 "OpenCV could not create a network camera capture with bounded timeouts; "
                 "the source will be retried without blocking the main service."
             ) from exc
+    cap = cv2.VideoCapture(source_value)
+    if not isinstance(source_value, int) or os.name != "nt":
+        return cap
+    try:
+        if cap is not None and cap.isOpened():
+            return cap
+    except Exception:
+        pass
+    try:
+        if cap is not None:
+            cap.release()
+    except Exception:
+        pass
+    # Some Windows virtual camera drivers are visible only through DirectShow.
+    for backend_name in ("CAP_DSHOW", "CAP_MSMF"):
+        backend = getattr(cv2, backend_name, None)
+        if backend is None:
+            continue
+        candidate = None
+        try:
+            candidate = cv2.VideoCapture(source_value, backend)
+            if candidate is not None and candidate.isOpened():
+                return candidate
+        except (TypeError, cv2.error):
+            pass
+        except Exception:
+            pass
+        try:
+            if candidate is not None:
+                candidate.release()
+        except Exception:
+            pass
     return cv2.VideoCapture(source_value)
 
 
@@ -2653,10 +2685,13 @@ def detect_vehicles(img, model, device=None):
 
 
 def find_plates(img, yolo=None, device=None):
-    """Detect plate candidates and rank geometric contours by plate-like interior appearance.
-    The classical fallback favours bright, high-contrast plate interiors over larger dark
-    windshield rectangles commonly present in LAB scenes. It remains a candidate detector,
-    not a substitute for a dedicated Yemeni plate model trained on field data."""
+    """Find ranked plate-region proposals using a custom model or two CPU CV paths.
+
+    The fallback combines Canny contours with horizontal-gradient morphology.
+    It ranks candidates using plate aspect, bright interior, edge density and
+    their position inside the vehicle crop. It does not claim a detection is
+    valid until read_plate() returns a normalized plate string.
+    """
     if img is None or getattr(img, "size", 0) == 0:
         return []
     H, W = img.shape[:2]
@@ -2673,31 +2708,74 @@ def find_plates(img, yolo=None, device=None):
             x2, y2 = min(W, int(b[2])), min(H, int(b[3]))
             if x2 > x1 and y2 > y1:
                 out.append((x1, y1, x2 - x1, y2 - y1))
-        return out
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    filtered = cv2.bilateralFilter(gray, 9, 60, 60)
-    contours, _ = cv2.findContours(cv2.Canny(filtered, 60, 180), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        return out[:3]
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.copy()
+    if gray.size == 0:
+        return []
+    filtered = cv2.bilateralFilter(gray, 7, 45, 45)
+
+    # Path A: conventional edges.
+    edge_map = cv2.Canny(filtered, 45, 145)
+    canny_contours, _ = cv2.findContours(edge_map, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Path B: horizontal character strokes closed into plate-like regions.
+    grad_x = cv2.Sobel(filtered, cv2.CV_32F, 1, 0, ksize=3)
+    grad_x = cv2.convertScaleAbs(grad_x)
+    grad_x = cv2.GaussianBlur(grad_x, (5, 5), 0)
+    _, grad_binary = cv2.threshold(grad_x, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    kernel_w = max(9, min(31, int(W * 0.055)))
+    kernel_h = max(3, min(9, int(H * 0.035)))
+    rect_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_w, kernel_h))
+    grad_closed = cv2.morphologyEx(grad_binary, cv2.MORPH_CLOSE, rect_kernel, iterations=2)
+    grad_contours, _ = cv2.findContours(grad_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    contours = list(canny_contours) + list(grad_contours)
     ranked = []
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:40]:
+    min_w = max(48, int(W * 0.12))
+    min_h = max(10, int(H * 0.035))
+    max_h = max(min_h + 1, int(H * 0.36))
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:100]:
         x, y, w, h = cv2.boundingRect(contour)
-        if w <= 80 or h <= 0 or not (2 <= w / h <= 6):
+        if w < min_w or h < min_h or h > max_h:
             continue
-        if len(cv2.approxPolyDP(contour, 0.03 * cv2.arcLength(contour, True), True)) != 4:
+        aspect = w / float(max(1, h))
+        if not 1.8 <= aspect <= 7.2:
             continue
-        # Ignore the border pixels: white plate interiors should outrank dark glass.
-        inset_x = max(2, int(w * 0.08))
-        inset_y = max(2, int(h * 0.15))
-        inner = filtered[y + inset_y:min(H, y + h - inset_y), x + inset_x:min(W, x + w - inset_x)]
+        approx = cv2.approxPolyDP(contour, 0.035 * cv2.arcLength(contour, True), True)
+        if len(approx) < 4 or len(approx) > 10:
+            continue
+
+        inset_x = max(2, int(w * 0.07))
+        inset_y = max(2, int(h * 0.12))
+        inner = filtered[y + inset_y:min(H, y + h - inset_y),
+                         x + inset_x:min(W, x + w - inset_x)]
         if inner.size == 0:
             continue
+
         mean_luma = float(np.mean(inner)) / 255.0
-        bright_fraction = float(np.mean(inner >= 150))
-        ratio_score = max(0.0, 1.0 - abs((w / float(h)) - 4.0) / 4.0)
-        area_fraction = min(1.0, (w * h) / max(1.0, W * H * 0.04))
-        score = 0.55 * bright_fraction + 0.25 * mean_luma + 0.15 * ratio_score + 0.05 * area_fraction
+        bright_fraction = float(np.mean(inner >= 145))
+        contrast = min(1.0, float(np.std(inner)) / 72.0)
+        edge_density = float(cv2.Canny(inner, 45, 135).mean()) / 255.0
+        ratio_score = max(0.0, 1.0 - abs(aspect - 3.8) / 4.2)
+        width_score = min(1.0, float(w) / max(1.0, W * 0.38))
+        area_score = min(1.0, float(w * h) / max(1.0, W * H * 0.035))
+        cy_norm = (y + h * 0.5) / max(1.0, float(H))
+        lower_vehicle_score = max(0.0, 1.0 - abs(cy_norm - 0.62) / 0.58)
+        edge_score = min(1.0, edge_density / 0.24)
+        score = (
+            0.35 * bright_fraction
+            + 0.18 * mean_luma
+            + 0.12 * contrast
+            + 0.15 * ratio_score
+            + 0.08 * width_score
+            + 0.07 * edge_score
+            + 0.03 * lower_vehicle_score
+            + 0.02 * area_score
+        )
         ranked.append((score, (x, y, w, h)))
+
     ranked.sort(key=lambda item: item[0], reverse=True)
-    # Return up to three distinct top candidates; downstream OCR can still inspect alternatives.
     selected = []
     for score, box in ranked:
         x, y, w, h = box
@@ -2707,7 +2785,8 @@ def find_plates(img, yolo=None, device=None):
             ix2, iy2 = min(x + w, sx + sw), min(y + h, sy + sh)
             inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
             union = w * h + sw * sh - inter
-            if union > 0 and inter / union >= 0.85:
+            smaller = min(w * h, sw * sh)
+            if (union > 0 and inter / union >= 0.55) or (smaller > 0 and inter / smaller >= 0.88):
                 duplicate = True
                 break
         if not duplicate:
@@ -2717,23 +2796,26 @@ def find_plates(img, yolo=None, device=None):
     return selected
 
 
+
 def preprocess_plate(crop):
-    """Enhance plate crop contrast (CLAHE) and upscale small crops before OCR."""
+    """Enhance small plate crops with upscaling, denoising, CLAHE and mild sharpening."""
     if crop is None or getattr(crop, "size", 0) == 0:
         return None
     h, w = crop.shape[:2]
     if h < 8 or w < 16:
         return None
     img = crop
-    if h < 48:
-        scale = 48.0 / h
-        img = cv2.resize(img, (max(16, int(w * scale)), 48), interpolation=cv2.INTER_CUBIC)
-    if img.ndim == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        eq = clahe.apply(gray)
-        return cv2.cvtColor(eq, cv2.COLOR_GRAY2BGR)
-    return img
+    if h < 72:
+        scale = 72.0 / h
+        img = cv2.resize(img, (max(24, int(w * scale)), 72), interpolation=cv2.INTER_CUBIC)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    gray = cv2.bilateralFilter(gray, 5, 35, 35)
+    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    softened = cv2.GaussianBlur(enhanced, (0, 0), 0.9)
+    sharpened = cv2.addWeighted(enhanced, 1.25, softened, -0.25, 0)
+    return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
+
 
 
 def _plate_ocr_result(reader, image, min_conf, kwargs=None, trace=None, attempt="original"):
@@ -3241,6 +3323,56 @@ def assess_frame_quality(frame, cam_name=None):
         "issues": list(warnings),
         "health_warning": warnings[0] if warnings else "",
     }
+
+
+def probe_camera_devices(max_devices=8):
+    """List free local webcam/virtual-camera indexes for the in-dashboard camera manager."""
+    max_i = max(1, min(12, int(max_devices or 8)))
+    active_indexes = set()
+    try:
+        for state in list(_ACTIVE_CAM_STATES.values()):
+            source = str(state.get("src", "")).strip()
+            if source.isdigit():
+                active_indexes.add(int(source))
+    except Exception:
+        pass
+
+    devices = []
+    for index in range(max_i):
+        if index in active_indexes:
+            continue
+        capture = None
+        try:
+            if os.name == "nt" and getattr(cv2, "CAP_DSHOW", None) is not None:
+                capture = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+                if capture is None or not capture.isOpened():
+                    if capture is not None:
+                        capture.release()
+                    capture = None
+            if capture is None:
+                capture = cv2.VideoCapture(index)
+            if capture is None or not capture.isOpened():
+                continue
+            ok, frame = capture.read()
+            if not ok or frame is None or getattr(frame, "size", 0) == 0:
+                continue
+            height, width = frame.shape[:2]
+            devices.append({
+                "source": str(index),
+                "label": f"كاميرا Windows رقم {index + 1}",
+                "resolution": f"{width}x{height}",
+                "width": int(width),
+                "height": int(height),
+            })
+        except Exception:
+            continue
+        finally:
+            try:
+                if capture is not None:
+                    capture.release()
+            except Exception:
+                pass
+    return {"ok": True, "devices": devices, "active_indexes": sorted(active_indexes)}
 
 
 def list_cameras_runtime():
@@ -3803,6 +3935,7 @@ def remove_camera_runtime(data, who="operator"):
 
 def wire():
     bus.on_stats = stats
+    bus.on_camera_devices = probe_camera_devices
     bus.verify, bus.on_list, bus.on_template, bus.on_import = verify, R.list_rows, R.template, R.import_file
 
     def _analytics_report():
@@ -4258,60 +4391,76 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
                 if ix2 > ix1 and iy2 > iy1:
                     inter = float((ix2 - ix1) * (iy2 - iy1))
                     union = float(pw1 * ph1 + qw1 * qh1 - inter)
-                    if union > 0 and (inter / union) > 0.5:
+                    smaller = float(min(pw1 * ph1, qw1 * qh1))
+                    if (union > 0 and inter / union > 0.50) or (smaller > 0 and inter / smaller > 0.88):
                         overlap = True
                         break
             if not overlap:
                 dedup_pboxes.append(pb)
-        for (x, y, bw, bh) in dedup_pboxes:
+
+        # Evaluate every distinct proposal. Only OCR-validated candidates can
+        # receive the green plate overlay or enter the registry.
+        plate_reads = []
+        for proposal_index, (px, py, bw, bh) in enumerate(dedup_pboxes[:3]):
             if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
                 break
-            x, y = x + vx, y + oy
+            x, y = px + vx, py + oy
             d, c = read_plate(reader, inf_frame[y:y + bh, x:x + bw])
-            # EasyOCR/Tesseract may finish after the camera is removed. Do not
-            # publish sightings, mutate the registry, or raise alerts for a
-            # camera whose stop event was set while OCR was in flight.
+            # OCR may finish after camera removal; do not mutate state afterward.
             if ((st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set()):
                 return
-            new_boxes.append((x, y, bw, bh, d))
-            if not d:
-                continue
+            if d:
+                proposal_prior = 1.0 - (proposal_index / max(1, len(dedup_pboxes)))
+                selection_score = (0.88 * float(c)) + (0.12 * proposal_prior)
+                plate_reads.append((selection_score, float(c), int(bw * bh), x, y, bw, bh, d))
+
+        if not plate_reads:
+            continue
+
+        # A single physical vehicle should produce at most one plate read per
+        # inference frame. Pick the strongest validated OCR result.
+        _score, c, _area, x, y, bw, bh, d = max(
+            plate_reads, key=lambda item: (item[0], item[1], item[2])
+        )
+        new_boxes.append((x, y, bw, bh, d))
+        with st["infer_lock"]:
+            confirmed = confirm_plate_read(d, c, (x, y, bw, bh), now_f, st["votes"], st["tracks"], st["last_seen"])
+        if confirmed:
+            cm, direction = confirmed[0], confirmed[1]
+            win_plate = getattr(confirmed, "plate", d) or d
+            l_conf = getattr(confirmed, "letters_confirmed", True)
             with st["infer_lock"]:
-                confirmed = confirm_plate_read(d, c, (x, y, bw, bh), now_f, st["votes"], st["tracks"], st["last_seen"])
-            if confirmed:
-                cm, direction = confirmed[0], confirmed[1]
-                win_plate = getattr(confirmed, "plate", d) or d
-                l_conf = getattr(confirmed, "letters_confirmed", True)
-                with st["infer_lock"]:
-                    st["last_plate"] = win_plate
+                st["last_plate"] = win_plate
+            with _RUNTIME_STATE_LOCK:
+                STATUS["plates"] = int(STATUS.get("plates", 0)) + 1
+                STATUS["vehicles"] = int(STATUS.get("vehicles", 0)) + max(1, len(new_vboxes))
+            msg, v = register(win_plate, cm, cam_name, vc, curfew, direction, raw_text=d,
+                              session_id=SESSION_ID, letters_confirmed=l_conf)
+            base, detail = vinfo(v)
+            bus.publish({"type": "sighting", "plate": win_plate, "cam": cam_name, "vclass": vc, "direction": direction,
+                         "ts": time.strftime("%H:%M:%S"), "conf": round(cm, 2),
+                         "model": v["model"] if v else "", "status": v["status"] if v else "",
+                         "match_note": v.get("match_note", "") if v else ""})
+            if msg:
                 with _RUNTIME_STATE_LOCK:
-                    STATUS["plates"] = int(STATUS.get("plates", 0)) + 1
-                    STATUS["vehicles"] = int(STATUS.get("vehicles", 0)) + max(1, len(new_vboxes))
-                msg, v = register(win_plate, cm, cam_name, vc, curfew, direction, raw_text=d,
-                                  session_id=SESSION_ID, letters_confirmed=l_conf)
-                base, detail = vinfo(v)
-                bus.publish({"type": "sighting", "plate": win_plate, "cam": cam_name, "vclass": vc, "direction": direction,
-                             "ts": time.strftime("%H:%M:%S"), "conf": round(cm, 2),
-                             "model": v["model"] if v else "", "status": v["status"] if v else "",
-                             "match_note": v.get("match_note", "") if v else ""})
-                if msg:
-                    with _RUNTIME_STATE_LOCK:
-                        why_val = WHY.get(win_plate, "")
-                    if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")):
-                        detail = " · ".join(x for x in (detail, why_val) if x)
-                    raise_alert(msg, win_plate, cam_name, inf_frame, detail=detail,
-                                extra=f"\nنوع المركبة: {vc}\nالاتجاه/المسار: {direction}"
-                                + (f"\nالسيارة: {base}" if base else "")
-                                + (f"\nالسبب: {why_val}" if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")) and why_val else ""),
-                                unmatched_faces=inf_veh_blur_boxes,
-                                face_entries=inf_face_entries)
-                if INS:
-                    with INS._STATE_LOCK:
-                        should_retrain = INS.M.get("since", 0) >= 100
-                        if should_retrain:
-                            INS.M["since"] = 0
+                    why_val = WHY.get(win_plate, "")
+                if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")):
+                    detail = " · ".join(x for x in (detail, why_val) if x)
+                raise_alert(msg, win_plate, cam_name, inf_frame, detail=detail,
+                            extra=f"\\nنوع المركبة: {vc}\\nالاتجاه/المسار: {direction}"
+                            + (f"\\nالسيارة: {base}" if base else "")
+                            + (f"\\nالسبب: {why_val}" if msg.startswith(("ANOMALY", "ROUTE", "POSSIBLE")) and why_val else ""),
+                            unmatched_faces=inf_veh_blur_boxes,
+                            face_entries=inf_face_entries)
+            if INS:
+                with INS._STATE_LOCK:
+                    should_retrain = INS.M.get("since", 0) >= 100
                     if should_retrain:
-                        threading.Thread(target=INS.train, daemon=True).start()
+                        INS.M["since"] = 0
+                if should_retrain:
+                    threading.Thread(target=INS.train, daemon=True).start()
+
+
 
     with st["infer_lock"]:
         st["vboxes"] = new_vboxes
