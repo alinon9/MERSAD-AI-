@@ -2680,9 +2680,21 @@ def find_plates(img, yolo=None, device=None):
     ranked = []
     for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:40]:
         x, y, w, h = cv2.boundingRect(contour)
-        if w <= 80 or h <= 0 or not (2 <= w / h <= 6):
+        # Yemeni plates can occupy a small part of a distant 1080p frame.
+        # Keep a conservative frame-relative floor instead of a fixed 80px cutoff.
+        min_plate_width = max(28, int(W * 0.025))
+        if w < min_plate_width or h < 7 or not (1.8 <= w / float(h) <= 7.0):
             continue
-        if len(cv2.approxPolyDP(contour, 0.03 * cv2.arcLength(contour, True), True)) != 4:
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
+        # Perspective, rounded corners and compression artifacts often prevent an
+        # exact four-vertex polygon. Accept near-rectangular contours, but reject
+        # highly irregular shapes using contour-vs-bounding-box fill ratio.
+        if len(approx) < 4 or len(approx) > 8:
+            continue
+        contour_area = float(cv2.contourArea(contour))
+        rectangularity = contour_area / max(1.0, float(w * h))
+        if rectangularity < 0.42:
             continue
         # Ignore the border pixels: white plate interiors should outrank dark glass.
         inset_x = max(2, int(w * 0.08))
@@ -2725,9 +2737,16 @@ def preprocess_plate(crop):
     if h < 8 or w < 16:
         return None
     img = crop
-    if h < 48:
-        scale = 48.0 / h
-        img = cv2.resize(img, (max(16, int(w * scale)), 48), interpolation=cv2.INTER_CUBIC)
+    # EasyOCR's Arabic recognizer benefits from taller glyphs; retain aspect
+    # ratio and avoid shrinking crops that already contain sufficient detail.
+    target_height = 96
+    if h < target_height:
+        scale = target_height / float(h)
+        img = cv2.resize(
+            img,
+            (max(24, int(round(w * scale))), target_height),
+            interpolation=cv2.INTER_CUBIC if scale >= 1.0 else cv2.INTER_AREA,
+        )
     if img.ndim == 3:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -2848,17 +2867,23 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
         adaptive = cv2.adaptiveThreshold(
             sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
         )
-        latin_allowlist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        # Keep both Arabic governorate names and Latin/digit variants available.
+        # A Latin-only allowlist silently erased Arabic text from every retry.
+        bilingual_allowlist = (
+            "ابتثجحخدذرزسشصضطظعغفقكلمنهويءأإآةىؤئ"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            "0123456789-"
+        )
         retry_attempts = (
             ("upscale", enlarged, {"detail": 1, "paragraph": False, "contrast_ths": 0.05, "adjust_contrast": 0.7}),
-            ("clahe_beamsearch", clahe, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
-                                         "decoder": "beamsearch", "beamWidth": 5, "contrast_ths": 0.05, "adjust_contrast": 0.7}),
-            ("sharpened_beamsearch", sharpened, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
-                                                 "decoder": "beamsearch", "beamWidth": 5}),
-            ("otsu_beamsearch", otsu, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
-                                       "decoder": "beamsearch", "beamWidth": 5}),
-            ("adaptive_beamsearch", adaptive, {"detail": 1, "paragraph": False, "allowlist": latin_allowlist,
-                                               "decoder": "beamsearch", "beamWidth": 5}),
+            ("clahe_bilingual_beamsearch", clahe, {"detail": 1, "paragraph": False, "allowlist": bilingual_allowlist,
+                                                  "decoder": "beamsearch", "beamWidth": 5, "contrast_ths": 0.05, "adjust_contrast": 0.7}),
+            ("sharpened_bilingual_beamsearch", sharpened, {"detail": 1, "paragraph": False, "allowlist": bilingual_allowlist,
+                                                          "decoder": "beamsearch", "beamWidth": 5}),
+            ("otsu_bilingual_beamsearch", otsu, {"detail": 1, "paragraph": False, "allowlist": bilingual_allowlist,
+                                                "decoder": "beamsearch", "beamWidth": 5}),
+            ("adaptive_bilingual_beamsearch", adaptive, {"detail": 1, "paragraph": False, "allowlist": bilingual_allowlist,
+                                                        "decoder": "beamsearch", "beamWidth": 5}),
         )
         for attempt_name, image_variant, options in retry_attempts:
             result = _plate_ocr_result(
