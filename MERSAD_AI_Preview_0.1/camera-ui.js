@@ -28,11 +28,15 @@
     const select = byId("cam-manager-device");
     if (!select) return;
     select.disabled = true;
-    select.innerHTML = '<option value="">جارٍ البحث عن الكاميرات...</option>';
+    select.replaceChildren();
+    const loading = document.createElement("option");
+    loading.value = "";
+    loading.textContent = "جارٍ البحث عن الكاميرات...";
+    select.appendChild(loading);
     try {
       const result = await requestJson("/api/camera_devices");
       const devices = Array.isArray(result.devices) ? result.devices : [];
-      select.innerHTML = "";
+      select.replaceChildren();
       if (!devices.length) {
         const option = document.createElement("option");
         option.value = "";
@@ -49,7 +53,11 @@
         setStatus("تم العثور على " + devices.length + " كاميرا متاحة.");
       }
     } catch (error) {
-      select.innerHTML = '<option value="">تعذر فحص الكاميرات</option>';
+      select.replaceChildren();
+      const failed = document.createElement("option");
+      failed.value = "";
+      failed.textContent = "تعذر فحص الكاميرات";
+      select.appendChild(failed);
       setStatus("تعذر فحص الكاميرات: " + error.message, true);
     } finally { select.disabled = false; }
   }
@@ -60,7 +68,7 @@
     try {
       const result = await requestJson("/api/cameras");
       const entries = Object.entries(result.cameras || {});
-      host.innerHTML = "";
+      host.replaceChildren();
       if (!entries.length) { host.textContent = "لا توجد كاميرات مرتبطة حاليًا."; return; }
       for (const [name, info] of entries) {
         const row = document.createElement("div");
