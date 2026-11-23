@@ -45,6 +45,7 @@ class Bus:
         self.on_plate_eval_status = self.on_plate_eval_history = self.on_plate_eval_export = self.on_plate_eval_template = None
         self.on_camera_links_suggestions = self.on_readiness = None
         self.on_cameras_list = None
+        self.on_camera_devices = None
         self.active_mjpeg_clients = 0
         self.max_mjpeg_clients = 16
         self.on_analytics = self.on_analytics_export = None
