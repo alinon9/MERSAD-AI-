@@ -323,7 +323,7 @@ class H(BaseHTTPRequestHandler):
                     with open(resolve_dashboard_path("dashboard.js.gz"), "rb") as f:
                         dashboard_js = gzip.decompress(f.read())
                 self._send(dashboard_js, "application/javascript; charset=utf-8")
-            elif p in ("/purify.min.js", "/dompurify-guard.js"):
+            elif p in ("/purify.min.js", "/dompurify-guard.js", "/camera-ui.js"):
                 asset_name = p.lstrip("/")
                 with open(resolve_dashboard_path(asset_name), "rb") as f:
                     self._send(f.read(), "application/javascript; charset=utf-8")
@@ -362,6 +362,8 @@ class H(BaseHTTPRequestHandler):
                     self._json({"ok": True, "links": [], "inferred_links": [], "calibrated_cameras": []})
             elif p == "/api/readiness":
                 self._json(bus.on_readiness() if bus.on_readiness else {"ok": True})
+            elif p == "/api/camera_devices":
+                self._json(bus.on_camera_devices() if bus.on_camera_devices else {"ok": True, "devices": []})
             elif p == "/api/cameras":
                 self._json(bus.on_cameras_list() if bus.on_cameras_list else {"ok": True, "cameras": {}})
             elif p == "/api/camera_links/suggestions":
