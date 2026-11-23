@@ -69,7 +69,7 @@ ul{margin:4px 0;padding-inline-start:18px}
 <section id="t-ops">
 <div class="g">
 <div>
-<div class="c"><div class="bar"><h2>البث المباشر</h2><div id="cam-sw" class="bt" style="margin:0"></div></div><div class="vid"><img id="v" alt="live"><div class="hud"><span class="rec" id="rec-dot"></span><span id="live-lbl">LIVE</span><span id="hcam"></span></div></div></div>
+<div class="c"><div class="bar"><h2>البث المباشر</h2><button id="cam-manager-open" type="button">+ ربط كاميرا الهاتف</button><div id="cam-sw" class="bt" style="margin:0"></div></div><div class="vid"><img id="v" alt="live"><div class="hud"><span class="rec" id="rec-dot"></span><span id="live-lbl">LIVE</span><span id="hcam"></span></div></div></div>
 <div class="c"><h2>آخر عمليات الرصد</h2><div id="fd"><p class="mu">بانتظار الرصد...</p></div></div>
 </div>
 <div>
@@ -207,10 +207,41 @@ ul{margin:4px 0;padding-inline-start:18px}
 <form id="dlg-f" data-action-submit="preventSubmit"></form>
 <p id="dlg-e" style="color:var(--er)"></p>
 <div class="bt"><button class="ok" data-action="saveForm">حفظ</button><button data-action="closeDlg">إلغاء</button></div></dialog>
+<dialog id="cam-manager-dialog" aria-labelledby="cam-manager-title">
+<div class="bar"><h2 id="cam-manager-title">ربط كاميرا الهاتف</h2><button type="button" id="cam-manager-close">إغلاق</button></div>
+<p class="mu">الربط السهل: افتح DroidCam على الهاتف والكمبيوتر، ثم اضغط «تحديث الكاميرات» واختر كاميرا الهاتف من القائمة. لا تحتاج إلى كتابة أوامر أو عناوين.</p>
+<label>اسم الكاميرا
+<input id="cam-manager-name" value="PHONE_CAM2" maxlength="32" autocomplete="off">
+</label>
+<label>طريقة الاتصال
+<select id="cam-manager-mode">
+<option value="device">DroidCam أو كاميرا ويب متصلة بويندوز</option>
+<option value="url">رابط بث Wi-Fi من الهاتف</option>
+</select>
+</label>
+<div id="cam-manager-device-box">
+<div class="bar"><label style="flex:1">الكاميرا المتاحة
+<select id="cam-manager-device" style="width:100%"><option value="">اضغط تحديث الكاميرات</option></select></label>
+<button type="button" id="cam-manager-refresh">تحديث الكاميرات</button></div>
+<p class="mu">إذا لم تظهر كاميرا الهاتف، افتح DroidCam Client في Windows وتأكد أن صورة الهاتف تظهر فيه، ثم اضغط تحديث الكاميرات.</p>
+</div>
+<div id="cam-manager-url-box" hidden>
+<label>عنوان بث الهاتف
+<input id="cam-manager-url" type="url" placeholder="http://عنوان-الهاتف:8080/video" autocomplete="off">
+</label>
+<p class="mu">هذا الخيار اختياري لتطبيقات بث IP Camera فقط، عند استخدام شبكة Wi-Fi محلية.</p>
+</div>
+<p id="cam-manager-status" class="mu" role="status" aria-live="polite"></p>
+<div class="bt"><button class="ok" type="button" id="cam-manager-connect">ربط الكاميرا</button></div>
+<hr style="border:0;border-top:1px solid var(--ln);margin:14px 0">
+<h3 style="font-size:.9rem">الكاميرات المرتبطة</h3>
+<div id="cam-manager-list" class="mu">جارٍ تحميل القائمة...</div>
+</dialog>
 <div id="toast"></div>
 
 <script src="/purify.min.js" defer></script>
 <script src="/dompurify-guard.js" defer></script>
 <script src="/dashboard.js" defer></script>
+<script src="/camera-ui.js" defer></script>
 </body>
 </html>
