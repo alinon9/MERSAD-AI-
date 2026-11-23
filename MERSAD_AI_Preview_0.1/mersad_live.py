@@ -2685,13 +2685,10 @@ def detect_vehicles(img, model, device=None):
 
 
 def find_plates(img, yolo=None, device=None):
-    """Find ranked plate-region proposals using a custom model or two CPU CV paths.
-
-    The fallback combines Canny contours with horizontal-gradient morphology.
-    It ranks candidates using plate aspect, bright interior, edge density and
-    their position inside the vehicle crop. It does not claim a detection is
-    valid until read_plate() returns a normalized plate string.
-    """
+    """Detect plate candidates and rank geometric contours by plate-like interior appearance.
+    The classical fallback favours bright, high-contrast plate interiors over larger dark
+    windshield rectangles commonly present in LAB scenes. It remains a candidate detector,
+    not a substitute for a dedicated Yemeni plate model trained on field data."""
     if img is None or getattr(img, "size", 0) == 0:
         return []
     H, W = img.shape[:2]
@@ -2708,74 +2705,31 @@ def find_plates(img, yolo=None, device=None):
             x2, y2 = min(W, int(b[2])), min(H, int(b[3]))
             if x2 > x1 and y2 > y1:
                 out.append((x1, y1, x2 - x1, y2 - y1))
-        return out[:3]
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.copy()
-    if gray.size == 0:
-        return []
-    filtered = cv2.bilateralFilter(gray, 7, 45, 45)
-
-    # Path A: conventional edges.
-    edge_map = cv2.Canny(filtered, 45, 145)
-    canny_contours, _ = cv2.findContours(edge_map, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Path B: horizontal character strokes closed into plate-like regions.
-    grad_x = cv2.Sobel(filtered, cv2.CV_32F, 1, 0, ksize=3)
-    grad_x = cv2.convertScaleAbs(grad_x)
-    grad_x = cv2.GaussianBlur(grad_x, (5, 5), 0)
-    _, grad_binary = cv2.threshold(grad_x, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    kernel_w = max(9, min(31, int(W * 0.055)))
-    kernel_h = max(3, min(9, int(H * 0.035)))
-    rect_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_w, kernel_h))
-    grad_closed = cv2.morphologyEx(grad_binary, cv2.MORPH_CLOSE, rect_kernel, iterations=2)
-    grad_contours, _ = cv2.findContours(grad_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    contours = list(canny_contours) + list(grad_contours)
+        return out
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    filtered = cv2.bilateralFilter(gray, 9, 60, 60)
+    contours, _ = cv2.findContours(cv2.Canny(filtered, 60, 180), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     ranked = []
-    min_w = max(48, int(W * 0.12))
-    min_h = max(10, int(H * 0.035))
-    max_h = max(min_h + 1, int(H * 0.36))
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:100]:
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:40]:
         x, y, w, h = cv2.boundingRect(contour)
-        if w < min_w or h < min_h or h > max_h:
+        if w <= 80 or h <= 0 or not (2 <= w / h <= 6):
             continue
-        aspect = w / float(max(1, h))
-        if not 1.8 <= aspect <= 7.2:
+        if len(cv2.approxPolyDP(contour, 0.03 * cv2.arcLength(contour, True), True)) != 4:
             continue
-        approx = cv2.approxPolyDP(contour, 0.035 * cv2.arcLength(contour, True), True)
-        if len(approx) < 4 or len(approx) > 10:
-            continue
-
-        inset_x = max(2, int(w * 0.07))
-        inset_y = max(2, int(h * 0.12))
-        inner = filtered[y + inset_y:min(H, y + h - inset_y),
-                         x + inset_x:min(W, x + w - inset_x)]
+        # Ignore the border pixels: white plate interiors should outrank dark glass.
+        inset_x = max(2, int(w * 0.08))
+        inset_y = max(2, int(h * 0.15))
+        inner = filtered[y + inset_y:min(H, y + h - inset_y), x + inset_x:min(W, x + w - inset_x)]
         if inner.size == 0:
             continue
-
         mean_luma = float(np.mean(inner)) / 255.0
-        bright_fraction = float(np.mean(inner >= 145))
-        contrast = min(1.0, float(np.std(inner)) / 72.0)
-        edge_density = float(cv2.Canny(inner, 45, 135).mean()) / 255.0
-        ratio_score = max(0.0, 1.0 - abs(aspect - 3.8) / 4.2)
-        width_score = min(1.0, float(w) / max(1.0, W * 0.38))
-        area_score = min(1.0, float(w * h) / max(1.0, W * H * 0.035))
-        cy_norm = (y + h * 0.5) / max(1.0, float(H))
-        lower_vehicle_score = max(0.0, 1.0 - abs(cy_norm - 0.62) / 0.58)
-        edge_score = min(1.0, edge_density / 0.24)
-        score = (
-            0.35 * bright_fraction
-            + 0.18 * mean_luma
-            + 0.12 * contrast
-            + 0.15 * ratio_score
-            + 0.08 * width_score
-            + 0.07 * edge_score
-            + 0.03 * lower_vehicle_score
-            + 0.02 * area_score
-        )
+        bright_fraction = float(np.mean(inner >= 150))
+        ratio_score = max(0.0, 1.0 - abs((w / float(h)) - 4.0) / 4.0)
+        area_fraction = min(1.0, (w * h) / max(1.0, W * H * 0.04))
+        score = 0.55 * bright_fraction + 0.25 * mean_luma + 0.15 * ratio_score + 0.05 * area_fraction
         ranked.append((score, (x, y, w, h)))
-
     ranked.sort(key=lambda item: item[0], reverse=True)
+    # Return up to three distinct top candidates; downstream OCR can still inspect alternatives.
     selected = []
     for score, box in ranked:
         x, y, w, h = box
@@ -2785,8 +2739,7 @@ def find_plates(img, yolo=None, device=None):
             ix2, iy2 = min(x + w, sx + sw), min(y + h, sy + sh)
             inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
             union = w * h + sw * sh - inter
-            smaller = min(w * h, sw * sh)
-            if (union > 0 and inter / union >= 0.55) or (smaller > 0 and inter / smaller >= 0.88):
+            if union > 0 and inter / union >= 0.85:
                 duplicate = True
                 break
         if not duplicate:
@@ -2796,26 +2749,23 @@ def find_plates(img, yolo=None, device=None):
     return selected
 
 
-
 def preprocess_plate(crop):
-    """Enhance small plate crops with upscaling, denoising, CLAHE and mild sharpening."""
+    """Enhance plate crop contrast (CLAHE) and upscale small crops before OCR."""
     if crop is None or getattr(crop, "size", 0) == 0:
         return None
     h, w = crop.shape[:2]
     if h < 8 or w < 16:
         return None
     img = crop
-    if h < 72:
-        scale = 72.0 / h
-        img = cv2.resize(img, (max(24, int(w * scale)), 72), interpolation=cv2.INTER_CUBIC)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
-    gray = cv2.bilateralFilter(gray, 5, 35, 35)
-    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    softened = cv2.GaussianBlur(enhanced, (0, 0), 0.9)
-    sharpened = cv2.addWeighted(enhanced, 1.25, softened, -0.25, 0)
-    return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
-
+    if h < 48:
+        scale = 48.0 / h
+        img = cv2.resize(img, (max(16, int(w * scale)), 48), interpolation=cv2.INTER_CUBIC)
+    if img.ndim == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        eq = clahe.apply(gray)
+        return cv2.cvtColor(eq, cv2.COLOR_GRAY2BGR)
+    return img
 
 
 def _plate_ocr_result(reader, image, min_conf, kwargs=None, trace=None, attempt="original"):
