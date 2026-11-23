@@ -3343,14 +3343,9 @@ def probe_camera_devices(max_devices=8):
             continue
         capture = None
         try:
-            if os.name == "nt" and getattr(cv2, "CAP_DSHOW", None) is not None:
-                capture = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-                if capture is None or not capture.isOpened():
-                    if capture is not None:
-                        capture.release()
-                    capture = None
-            if capture is None:
-                capture = cv2.VideoCapture(index)
+            # Reuse the same bounded backend fallback as the real reader so virtual
+            # cameras that expose DirectShow/MSMF are discoverable in the picker.
+            capture = _open_camera_capture(str(index))
             if capture is None or not capture.isOpened():
                 continue
             ok, frame = capture.read()
