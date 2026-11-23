@@ -18,7 +18,7 @@
     const el = statusEl();
     if (!el) return;
     el.textContent = message || "";
-    el.style.color = bad ? "var(--red)" : "var(--mu)";
+    el.style.color = bad ? "var(--er)" : "var(--mu)";
   }
   function statusLabel(value) {
     return value === "online" ? "متصلة" : value === "reconnecting" ? "جارٍ الاتصال" :
