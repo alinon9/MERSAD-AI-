@@ -220,8 +220,8 @@ jobs:
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-          Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
-          foreach ($asset in @("purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+          Copy-Item -Path "dashboard.html","dashboard.js","camera-ui.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          foreach ($asset in @("camera-ui.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
             if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
           }
           # PR5 frozen dashboard.js smoke test
