@@ -5978,7 +5978,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
         )
         check(
             "ALPR-STRUCTURED-OCR-RETRY",
-            "high-confidence digit-only OCR is retried and a structured Yemeni governorate + five-digit plate wins",
+            "high-confidence digit-only OCR is retried; structured Yemeni governorate + five-digit plate wins",
             _structured_retry_ok,
             {"result": _structured_result, "ocr_calls": _structured_reader.calls},
         )
