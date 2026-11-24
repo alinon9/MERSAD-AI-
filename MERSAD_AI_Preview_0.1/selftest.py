@@ -5972,7 +5972,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
             trace=_structured_trace,
         )
         _structured_retry_ok = (
-            _structured_result[0] == "إب-91406"
+            _structured_result[0] == "اب-91406"
             and _structured_reader.calls >= 2
             and any(item.get("attempt") == "upscale" for item in _structured_trace)
         )
