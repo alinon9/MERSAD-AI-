@@ -3061,6 +3061,7 @@ def run_stage4_gap_regression_tests():
         "lock": threading.Lock(),
         "infer_lock": threading.Lock(),
         "infer_queue": __import__("queue").Queue(maxsize=1),
+        "stop_ev": gap08_stop,
         "infer_busy": False,
         "infer_idle_event": gap08_idle,
         "dropped_infer_frames": 0,
@@ -3096,6 +3097,8 @@ def run_stage4_gap_regression_tests():
         daemon=True,
     )
     t_worker08.start()
+    stop_enqueue_rejected = False
+    worker_stopped = False
     try:
         t0_disp = time.perf_counter()
         dummy_frame = np.full((360, 640, 3), 90, dtype=np.uint8)
@@ -3122,7 +3125,12 @@ def run_stage4_gap_regression_tests():
             dropped_08 = gap08_st["dropped_infer_frames"]
     finally:
         gap08_stop.set()
+        stop_enqueue_rejected = (
+            m._enqueue_latest_inference(gap08_st, (None, time.time(), [], [], 999)) is False
+            and gap08_st["infer_queue"].empty()
+        )
         t_worker08.join(timeout=1.0)
+        worker_stopped = not t_worker08.is_alive()
         m._ACTIVE_CAM_STATES.pop("CAM_GAP08", None)
 
     # Also verify source code of mersad_live.py has no blocking wait/join inside the display while loop
@@ -3137,10 +3145,11 @@ def run_stage4_gap_regression_tests():
         and "infer_idle_event" not in loop_body
         and ".join(" not in loop_body
     )
-    check("STAGE4-GAP08", f"24 display frames & {fid_delta_during_infer} MJPEG updates completed in {disp_elapsed_ms:.1f}ms (<120ms) while 250ms OCR ran asynchronously",
+    check("STAGE4-GAP08", f"24 display frames & {fid_delta_during_infer} MJPEG updates completed in {disp_elapsed_ms:.1f}ms (<120ms) while 250ms OCR ran asynchronously; shutdown rejects new work",
           disp_elapsed_ms < 150.0 and fid_delta_during_infer >= 12 and settled_ok and det_runs_08 >= 1
-          and len(boxes_08) >= 1 and dropped_08 >= 1 and no_wait_in_loop,
-          (disp_elapsed_ms, fid_delta_during_infer, settled_ok, det_runs_08, len(boxes_08), dropped_08, no_wait_in_loop))
+          and len(boxes_08) >= 1 and dropped_08 >= 1 and no_wait_in_loop
+          and stop_enqueue_rejected and worker_stopped,
+          (disp_elapsed_ms, fid_delta_during_infer, settled_ok, det_runs_08, len(boxes_08), dropped_08, no_wait_in_loop, stop_enqueue_rejected, worker_stopped))
 
     # 2. STAGE4-GAP12: Thread safety of server.Bus under concurrent load, abrupt SSE/MJPEG client disconnect (BrokenPipeError), & resolve_dashboard_path
     gap12_errs = []

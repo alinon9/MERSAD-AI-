@@ -4218,7 +4218,10 @@ _ACTIVE_CAM_STATES = {}
 
 def _enqueue_latest_inference(st, item):
     """Non-blocking drop-oldest / keep-latest enqueue into a bounded 1-slot per-camera inference queue (GAP-08).
-    Never blocks the video display & streaming loop."""
+    Never blocks the video display & streaming loop; refuses new work after camera shutdown begins."""
+    stop_ev = st.get("stop_ev")
+    if (stop_ev is not None and stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
+        return False
     q = st["infer_queue"]
     st["infer_idle_event"].clear()
     dropped = 0
@@ -4231,14 +4234,24 @@ def _enqueue_latest_inference(st, item):
     if dropped:
         with st["infer_lock"]:
             st["dropped_infer_frames"] = int(st.get("dropped_infer_frames", 0)) + dropped
+    # Re-check after queue maintenance: removal can signal stop while this
+    # producer is replacing a stale frame.
+    if (stop_ev is not None and stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
+        if q.empty() and not st.get("infer_busy"):
+            st["infer_idle_event"].set()
+        return False
     try:
         q.put_nowait(item)
+        return True
     except queue.Full:
-        pass
+        return False
 
 
 def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfew):
     """Execute heavy vehicle/plate/OCR inference on a single frame snapshot outside the display thread (GAP-08)."""
+    st_stop_ev = st.get("stop_ev")
+    if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
+        return
     cam_name = st["cam"]
     inf_frame, now_f, inf_face_entries, inf_veh_blur_boxes, frame_no = item
     H, W = inf_frame.shape[:2]
@@ -4357,6 +4370,16 @@ def _camera_inference_worker(st, stop_ev, vyolo, yolo, reader, trucks_only, curf
                 st["infer_idle_event"].set()
             continue
 
+        # The queue may receive a frame concurrently with camera removal
+        # after the worker entered q.get(). Never start native inference once
+        # the stop event has been signalled.
+        if stop_ev.is_set() or STOP_MAIN_EVENT.is_set():
+            try:
+                q.task_done()
+            except ValueError:
+                pass
+            break
+
         st["infer_busy"] = True
         st["infer_idle_event"].clear()
         try:
@@ -4378,6 +4401,19 @@ def _camera_inference_worker(st, stop_ev, vyolo, yolo, reader, trucks_only, curf
             if q.empty():
                 st["infer_busy"] = False
                 st["infer_idle_event"].set()
+
+    # A producer that already took a supervisor snapshot can race with
+    # shutdown. Discard any final queued item and publish a stable idle state.
+    while True:
+        try:
+            q.get_nowait()
+            q.task_done()
+        except queue.Empty:
+            break
+        except ValueError:
+            break
+    st["infer_busy"] = False
+    st["infer_idle_event"].set()
 
 
 def wait_for_pending_inference(timeout=5.0, cam=None):
