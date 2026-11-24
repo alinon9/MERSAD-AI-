@@ -241,6 +241,16 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             "removed_from_status_dict": removed_from_status,
         })
 
+        # Let the boot camera finish any already-running native inference before
+        # removing it. Step 8/9 above already exercise removal during active
+        # inference; this second removal isolates the zero-camera -> re-add path
+        # and avoids making its result depend on CPU scheduling/model warm-up.
+        boot_inference_idle = ml.wait_for_pending_inference(timeout=30.0, cam="BOOT_CAM1")
+        boot_state = ml._ACTIVE_CAM_STATES.get("BOOT_CAM1")
+        boot_infer_thread = boot_state.get("infer_thread") if boot_state else None
+        boot_infer_stopped_before_remove = not (boot_infer_thread and boot_infer_thread.is_alive())
+        boot_idle_before_remove = bool(boot_inference_idle and boot_infer_stopped_before_remove)
+
         # Remove BOOT_CAM1 as well to prove main() stays alive even when 0 cameras remain before Step 10
         req_rem_boot = urllib.request.Request(
             f"http://127.0.0.1:{ai_port}/api/cameras/remove?k={ai_token}",
@@ -254,7 +264,8 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             ).read().decode("utf-8")
         )
         boot_removal_ok = (
-            resp_rem_boot.get("ok") is True
+            boot_idle_before_remove
+            and resp_rem_boot.get("ok") is True
             and resp_rem_boot.get("removed") is True
             and resp_rem_boot.get("workers_stopped") is True
             and not resp_rem_boot.get("pending_workers")
@@ -302,6 +313,9 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             and cam3_stat.get("status") == "online"
         )
         add_step(10, "Add second camera LAB_DYN_CAM3 after removal and verify worker_spawned, MJPEG stream, and inference", step10_ok, {
+            "boot_camera_inference_idle_before_remove": boot_idle_before_remove,
+            "boot_camera_inference_wait_ok": boot_inference_idle,
+            "boot_camera_infer_thread_stopped_before_remove": boot_infer_stopped_before_remove,
             "boot_camera_removal": resp_rem_boot,
             "boot_camera_removal_ok": boot_removal_ok,
             "ai_response": ai_resp2,
