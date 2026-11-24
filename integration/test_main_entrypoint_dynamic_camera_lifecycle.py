@@ -43,6 +43,29 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
     import registry as reg
     import lab_server as ls
 
+    # This suite verifies camera/thread lifecycle, not model throughput. Keep the
+    # always-on BOOT_CAM1 inference worker deterministic so a slow native YOLO/OCR
+    # call cannot monopolize CPU and make the zero-camera -> re-add lifecycle
+    # depend on model warm-up. Dynamically added LAB cameras still use the real
+    # inference implementation here, and the immediately following Phase 4
+    # integration suite exercises the real detector/OCR pipeline with real models.
+    _real_inference_runner = ml._run_single_inference_item
+
+    def _lifecycle_boot_inference(st, item, vyolo, yolo, reader, trucks_only, curfew):
+        if st.get("cam") != "BOOT_CAM1":
+            return _real_inference_runner(st, item, vyolo, yolo, reader, trucks_only, curfew)
+        stop_ev = st.get("stop_ev")
+        if (stop_ev is not None and stop_ev.is_set()) or ml.STOP_MAIN_EVENT.is_set():
+            return
+        with st["infer_lock"]:
+            st["det_runs"] += 1
+            det_runs = st["det_runs"]
+        with ml._RUNTIME_STATE_LOCK:
+            if "BOOT_CAM1" in ml.STATUS.get("cameras", {}):
+                ml.STATUS["cameras"]["BOOT_CAM1"]["detections"] = det_runs
+
+    ml._run_single_inference_item = _lifecycle_boot_inference
+
     tmp_home = tempfile.mkdtemp(prefix="mersad_main_ep_lifecycle_")
     ai_port = _free_port()
     lab_port = _free_port()
@@ -325,6 +348,7 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             "camera_status": cam3_stat,
         })
     finally:
+        ml._run_single_inference_item = _real_inference_runner
         ml.STOP_MAIN_EVENT.set()
         t_main.join(timeout=5.0)
         lab_ctrl.stop()
