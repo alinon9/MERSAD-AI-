@@ -701,6 +701,8 @@ _LATIN_GOV_TO_AR = {
     "AEN": "عدن",
     "SANAA": "صنعاء",
     "SANA": "صنعاء",
+    # EasyOCR may split SANAA and omit the final two letters in a clean Otsu retry.
+    "SAN": "صنعاء",
     "TAIZ": "تعز",
     # Common EasyOCR omissions on narrow uppercase glyphs in small plates:
     # TAIZ -> TAZ and MARIB/MARI -> MAR. These aliases are limited to the
