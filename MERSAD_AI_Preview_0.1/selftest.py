@@ -3355,12 +3355,15 @@ def run_stage5_gap_regression_tests():
 
         class _BenchReader:
             def readtext(self, crop):
-                cw = crop.shape[1] if (crop is not None and crop.ndim >= 2) else 0
-                if cw < 193:
+                # read_plate() upscales small crops to 96px and may resize
+                # retries again. Aspect ratio is invariant under these transforms;
+                # absolute width is not. Classify the synthetic fixture by ratio.
+                ratio = (float(crop.shape[1]) / float(crop.shape[0])) if (crop is not None and crop.ndim >= 2 and crop.shape[0] > 0) else 0.0
+                if ratio < 3.9:
                     txt = "عدن ١٢٣٤٥"
-                elif cw < 218:
+                elif ratio < 4.45:
                     txt = "صنعاء ١٢٣٤٥"
-                elif cw < 243:
+                elif ratio < 4.97:
                     txt = "12349"
                 else:
                     txt = "99999"
@@ -4519,10 +4522,12 @@ def run_stage12_security_and_eval_integrity_tests():
 
         class _StrictReader:
             def readtext(self, crop):
-                cw = crop.shape[1] if (crop is not None and crop.ndim >= 2) else 0
-                if abs(cw - 200) <= 6:
+                # preprocess_plate() changes absolute dimensions before OCR.
+                # Aspect ratio preserves the synthetic sample identity.
+                ratio = (float(crop.shape[1]) / float(crop.shape[0])) if (crop is not None and crop.ndim >= 2 and crop.shape[0] > 0) else 0.0
+                if 3.8 <= ratio < 4.3:
                     return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 12345", 0.96)]
-                if abs(cw - 190) <= 6:
+                if 3.5 <= ratio < 3.8:
                     # gt_box crop of Sample 2 -> OCR reads it as exact match 'عدن 55555'
                     return [([[0, 0], [1, 0], [1, 1], [0, 1]], "عدن 55555", 0.94)]
                 return [([[0, 0], [1, 0], [1, 1], [0, 1]], "صنعاء 77799", 0.90)]
