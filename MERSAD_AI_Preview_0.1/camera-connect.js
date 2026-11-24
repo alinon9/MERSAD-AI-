@@ -40,7 +40,7 @@
           const lr=await fetch("/api/cameras",{credentials:"same-origin"});const list=await lr.json();
           cam=list.cameras&&list.cameras[n];if(cam&&cam.status==="online"&&Number(cam.frames||0)>0)break;
         }
-        if(cam&&cam.status==="online"){status.style.color="#35d39a";status.textContent="وصل البث وأصبحت الكاميرا متاحة في مرصاد.";}
+        if(cam&&cam.status==="online"&&Number(cam.frames||0)>0){status.style.color="#35d39a";status.textContent="وصل البث وأصبحت الكاميرا متاحة في مرصاد."; }
         else{status.style.color="#f2b23a";status.textContent="تم تسجيل المصدر لكن لم نتأكد من وصول الإطارات. تحقق من الرابط والشبكة وبيانات الدخول، ثم راجع حالة الكاميرا.";}
         window.dispatchEvent(new CustomEvent("mersad:cameras-updated"));
       }catch(e){status.style.color="#ff5d6c";status.textContent=e.message||"فشل الاتصال.";}
