@@ -27,8 +27,11 @@
     panel.addEventListener("click",e=>{if(e.target===panel)panel.style.display="none";});
     update();
     $("mc-add").addEventListener("click",async()=>{
-      const n=name.value.trim(), src=source.value.trim();
-      if(!n||!src){status.textContent="أدخل اسم الكاميرا ومصدر الفيديو.";return;}
+      const rawName=name.value.trim(), src=source.value.trim();
+      // Match the server-side camera-name normalization so polling uses the registered key.
+      const n=rawName.replace(/[^A-Za-z0-9_\-\u0600-\u06FF]/g,"").slice(0,32);
+      if(!n||!src){status.textContent="أدخل اسم كاميرا صالحاً ومصدر الفيديو.";return;}
+      if(n!==rawName){name.value=n;status.textContent="تم تنسيق اسم الكاميرا إلى: "+n;}
       if(/[\r\n\0]/.test(src)||src.length>512){status.textContent="مصدر الفيديو غير صالح.";return;}
       const btn=$("mc-add");btn.disabled=true;status.textContent="جارٍ تسجيل المصدر وفحص وصول البث…";
       try{
