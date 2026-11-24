@@ -753,6 +753,7 @@ def _known_governorate_plate_from_raw(raw):
     signatures.update({
         "ADN": "عدن",
         "A05N": "عدن",   # observed EasyOCR confusion for ADEN
+        "AD5N": "عدن",   # observed Otsu read: ADEN 12345 -> AD5N 12345
         "AN0": "عدن",    # observed CI read: ADEN 12345 -> AN 012345
         "T4Z": "تعز",    # observed EasyOCR confusion for TAZ/TAIZ
         "I88": "إب",
