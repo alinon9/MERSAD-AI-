@@ -2857,7 +2857,7 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
     first = _plate_ocr_result(reader, proc, min_conf, trace=trace, attempt="original_preprocessed")
     candidates = [first] if first else []
     retry_threshold = max(0.55, min_conf + 0.20)
-    known_governorates = set(getattr(R, "_LATIN_GOV_TO_AR", {}).values())
+    known_governorates = {R._norm_letters_only(value) for value in getattr(R, "_LATIN_GOV_TO_AR", {}).values()}
 
     def _has_yemeni_plate_structure(candidate):
         if not candidate:
@@ -2919,7 +2919,7 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
 
     # Prefer a recognized Yemeni governorate + five-digit serial over malformed
     # alternatives with stray Latin prefixes and extra digits. This uses OCR output only.
-    known_governorates = set(getattr(R, "_LATIN_GOV_TO_AR", {}).values())
+    known_governorates = {R._norm_letters_only(value) for value in getattr(R, "_LATIN_GOV_TO_AR", {}).values()}
     counts = {}
     for normalized, confidence in candidates:
         entry = counts.setdefault(normalized, {"votes": 0, "confidence": 0.0, "best": 0.0, "structured": False})
