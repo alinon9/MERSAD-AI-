@@ -15,6 +15,7 @@ on:
       - "security/release-closure-aud006-20261122"
       - "feat/desktop-camera-alpr-*"
       - "feat/unified-camera-connectivity-*"
+      - "feat/native-windows-desktop-*"
 
 permissions:
   contents: read
@@ -84,6 +85,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "prepare_safe_eval_benchmarks.py --generate failed ($LASTEXITCODE)" }
           python tools/prepare_safe_eval_benchmarks.py --verify
           if ($LASTEXITCODE -ne 0) { throw "prepare_safe_eval_benchmarks.py --verify failed ($LASTEXITCODE)" }
+
+      - name: Test the native desktop-shell lifecycle helpers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location MERSAD_AI_Preview_0.1
+          python -X utf8 -m unittest test_desktop_shell -v
+          if ($LASTEXITCODE -ne 0) { throw "desktop shell unit tests failed ($LASTEXITCODE)" }
+          Pop-Location
 
       - name: Phase 1 — Download All 4 Real AI Models, Verify Pinned SHA-256 & Execute Real Inference on LAB Frames
         shell: pwsh
@@ -221,9 +231,15 @@ jobs:
           Push-Location MERSAD_AI_Preview_0.1
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
+          python -X utf8 generate_desktop_icon.py
+          if ($LASTEXITCODE -ne 0) { throw "generate_desktop_icon.py failed ($LASTEXITCODE)" }
+          pyinstaller --noconfirm --clean --distpath dist --workpath build_desktop mersad_desktop.spec
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller desktop_shell.py failed ($LASTEXITCODE)" }
+          if (-not (Test-Path "dist\MERSAD_Desktop.exe")) { throw "MERSAD_Desktop.exe was not created" }
+          Copy-Item -LiteralPath "dist\MERSAD_Desktop.exe" -Destination "dist\MERSAD_AI\MERSAD_Desktop.exe" -Force
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-          Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
-          foreach ($asset in @("purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+          Copy-Item -Path "dashboard.html","dashboard.js","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          foreach ($asset in @("camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
             if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
           }
           # PR5 frozen dashboard.js smoke test
@@ -231,6 +247,8 @@ jobs:
           if (!(Test-Path "dist\MERSAD_AI\dashboard.js")) { throw "dashboard.js missing from frozen MERSAD_AI distribution" }
           python -X utf8 -u windows_frozen_dashboard_smoke.py "dist\MERSAD_AI\MERSAD_AI.exe"
           if ($LASTEXITCODE -ne 0) { throw "Frozen dashboard.js HTTP smoke test failed ($LASTEXITCODE)" }
+          python -X utf8 -u windows_frozen_desktop_shell_smoke.py "dist\MERSAD_AI\MERSAD_Desktop.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen desktop shell package smoke test failed ($LASTEXITCODE)" }
           $edgeCandidates = @(
             (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
             (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe")
@@ -244,7 +262,8 @@ jobs:
             throw "DOMPurify browser smoke test failed. Output: $dom"
           }
           Write-Host "[DOM-XSS] Edge headless smoke test passed."
-          Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
+          Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_Desktop.exe"
+          Set-Content -LiteralPath "dist\MERSAD_AI\RUN_BACKEND.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
           New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
@@ -358,6 +377,7 @@ jobs:
 
           $requiredManifestPaths = @(
             "MERSAD_AI/MERSAD_AI.exe",
+            "MERSAD_AI/MERSAD_Desktop.exe",
             "MERSAD_LAB/MERSAD_LAB.exe",
             "Installers_and_Portable/MERSAD_AI_Portable_x64.zip",
             "Installers_and_Portable/MERSAD_LAB_Portable_x64.zip",
@@ -372,6 +392,43 @@ jobs:
             throw "SHA-256 manifest generation produced too few entries: $($manifestRows.Count)"
           }
           $manifestRows | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+      - name: Package cumulative EXE-only update
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = "MERSAD_AI_Preview_0.1\dist\MERSAD_AI"
+          $out = "MERSAD_INCREMENTAL_UPDATE_DIST"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $files = @("MERSAD_AI.exe","MERSAD_Desktop.exe","dashboard.html","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","RUN.bat","RUN_BACKEND.bat")
+          foreach ($name in $files) {
+            $source = Join-Path $src $name
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing incremental update file: $source" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $out $name) -Force
+          }
+          Copy-Item -LiteralPath "ci\apply_incremental_update.ps1" -Destination (Join-Path $out "APPLY_UPDATE.ps1") -Force
+          $rows = foreach ($name in $files) { $hash = (Get-FileHash -LiteralPath (Join-Path $out $name) -Algorithm SHA256).Hash.ToLowerInvariant(); "$hash  $name" }
+          $rows | Set-Content -LiteralPath (Join-Path $out "SHA256SUMS_UPDATE.txt") -Encoding UTF8
+          @'
+          تحديث مرصاد التراكمي — المراحل 1 و2 و3
+          1) أغلق مرصاد بالكامل.
+          2) فك ضغط الحزمة في مجلد مؤقت.
+          3) افتح PowerShell داخل المجلد وشغّل:
+             .\APPLY_UPDATE.ps1 -InstallDir "C:\مسار\MERSAD_AI"
+          4) ينشئ السكربت نسخة احتياطية من الملفات التي يستبدلها، ويتحقق من SHA-256 قبل التثبيت.
+          5) لا يستبدل مجلد models أو قاعدة البيانات أو الأدلة أو السجلات.
+          6) شغّل MERSAD_Desktop.exe. يتطلب WebView2 Runtime.
+          ملاحظة: يجب أن يكون مجلد التثبيت هو المجلد الذي يحتوي MERSAD_AI.exe.
+          '@ | Set-Content -LiteralPath (Join-Path $out "اقرأني_التحديث.txt") -Encoding UTF8
+          Compress-Archive -Path (Join-Path $out "*") -DestinationPath "MERSAD_INCREMENTAL_UPDATE_Windows_x64.zip" -Force
+          $z = Get-Item "MERSAD_INCREMENTAL_UPDATE_Windows_x64.zip"
+          Write-Host ("Incremental update size: {0:N1} MB" -f ($z.Length / 1MB))
+
+      - name: Upload cumulative EXE-only update
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_INCREMENTAL_UPDATE_Windows_x64
+          path: MERSAD_INCREMENTAL_UPDATE_Windows_x64.zip
 
       - name: Upload MERSAD_PREVIEW_0.1_FINAL Artifact
         uses: actions/upload-artifact@v4

@@ -31,6 +31,7 @@ PINNED_RUNTIME_SPECS = {
     "easyocr": "1.7.2",
     "ultralytics": "8.3.0",
     "openpyxl": "3.1.5",
+    "pywebview": "6.2.1",
 }
 PINNED_TORCH_SPECS = {
     "torch": "2.5.1",

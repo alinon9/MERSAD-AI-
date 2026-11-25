@@ -2210,8 +2210,8 @@ def run_v7_1_audit_regression_tests():
     check("V7.1-PACKAGING-HARDENING", "PyInstaller spec, BUILD_EXE.bat, CI workflow & runtime enforce offline mode and exclude unused optional submodules",
           pkg_ok)
 
-    # 4. V7.1-WIN-ACL: Verify registry.py PowerShell ACL hardening (_windows_acl_script, _set_windows_private_acl,
-    #    _windows_acl_is_private, Get-Acl, Set-Acl, SetAccessRuleProtection) AND live secret creation via atomic_write_secret_bytes
+    # 4. V7.1-WIN-ACL: Verify registry.py DACL-only Windows ACL hardening (SetNamedSecurityInfo; no SACL privilege)
+    #    AND live secret creation via atomic_write_secret_bytes
     reg_txt = open(os.path.join(WORK, "registry.py"), encoding="utf-8").read()
     ps_set_file = reg_mod._windows_acl_script(check_only=False, is_dir=False) if hasattr(reg_mod, "_windows_acl_script") else ""
     ps_set_dir = reg_mod._windows_acl_script(check_only=False, is_dir=True) if hasattr(reg_mod, "_windows_acl_script") else ""
@@ -2222,9 +2222,11 @@ def run_v7_1_audit_regression_tests():
         and callable(getattr(reg_mod, "_windows_acl_is_private", None))
         and "_set_windows_private_acl" in reg_txt
         and "_windows_acl_is_private" in reg_txt
-        and "Get-Acl" in ps_set_file and "Set-Acl" in ps_set_file
-        and "SetAccessRuleProtection($true, $false)" in ps_set_file
-        and "ContainerInherit" in ps_set_dir and "ObjectInherit" in ps_set_dir
+        and "SetNamedSecurityInfo" in ps_set_file
+        and "DACL_SECURITY_INFORMATION" in ps_set_file
+        and "PROTECTED_DACL_SECURITY_INFORMATION" in ps_set_file
+        and "Set-Acl" not in ps_set_file
+        and "OICI" in ps_set_dir and "OICI" not in ps_set_file
         and "AreAccessRulesProtected" in ps_chk_acl
         and "S-1-5-18" in ps_set_file and "S-1-5-32-544" in ps_set_file
         and "S-1-5-18" in ps_chk_acl and "S-1-5-32-544" in ps_chk_acl
@@ -2275,7 +2277,7 @@ def run_v7_1_audit_regression_tests():
             live_acl_ok = (f_mode == 0o600 and (f_mode & 0o077) == 0)
     finally:
         shutil.rmtree(win_acl_dir, ignore_errors=True)
-    check("V7.1-WIN-ACL", "atomic_write_secret_bytes enforces PowerShell private ACLs (Get-Acl/Set-Acl/SetAccessRuleProtection for user, SYSTEM & Administrators) and 0600 permissions",
+    check("V7.1-WIN-ACL", "atomic_write_secret_bytes applies a protected DACL without requiring SeSecurityPrivilege, for user, SYSTEM & Administrators, and enforces 0600 permissions",
           acl_mech_ok and file_written_ok and live_acl_ok,
           (acl_mech_ok, file_written_ok, live_acl_ok))
 
@@ -6152,6 +6154,21 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 chunk_ep2 = mjpg_ep2.read(400)
             mjpg_ep2_ok = (b"image/jpeg" in chunk_ep2 and b"\xff\xd8" in chunk_ep2)
 
+            # The desktop wrapper must be able to request a clean backend exit.
+            req_shutdown = urllib.request.Request(
+                f"http://127.0.0.1:{port_234}/api/desktop/shutdown",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Mersad-Token": tok_234,
+                    "Host": f"127.0.0.1:{port_234}",
+                },
+                method="POST",
+            )
+            r_shutdown = json.loads(urllib.request.urlopen(req_shutdown, timeout=3.0).read().decode("utf-8"))
+            wait(lambda: not t_main_234.is_alive(), t=6.0)
+            shutdown_route_ok = (r_shutdown.get("ok") is True and not t_main_234.is_alive())
+
             main_ep_ok = (
                 r_add1.get("ok") is True and r_add1.get("worker_spawned") is True
                 and threads_started_1 and mjpg_ep1_ok
@@ -6160,6 +6177,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 and main_still_alive
                 and r_add2.get("ok") is True and r_add2.get("worker_spawned") is True
                 and mjpg_ep2_ok
+                and shutdown_route_ok
             )
             main_ep_detail = {
                 "add1_worker_spawned": r_add1.get("worker_spawned"),
@@ -6170,6 +6188,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 "main_still_alive": main_still_alive,
                 "add2_worker_spawned": r_add2.get("worker_spawned"),
                 "mjpg_ep2_ok": mjpg_ep2_ok,
+                "shutdown_route_ok": shutdown_route_ok,
             }
         finally:
             m.STOP_MAIN_EVENT.set()

@@ -68,6 +68,26 @@ venv\Scripts\pyinstaller.exe --noconfirm --clean mersad_ai.spec > build_pyinstal
     exit /b 1
 )
 
+echo [4B/6] Generating the branded MERSAD desktop icon...
+venv\Scripts\python.exe generate_desktop_icon.py || (
+    echo [ERROR] Desktop icon generation failed.
+    pause
+    exit /b 1
+)
+
+echo [4B/6] Building the native MERSAD_Desktop.exe shell...
+venv\Scripts\pyinstaller.exe --noconfirm --clean --distpath dist --workpath build_desktop mersad_desktop.spec > build_desktop.log 2>&1 || (
+    echo [ERROR] Desktop shell build failed. Last lines of build_desktop.log:
+    powershell -NoProfile -Command "Get-Content build_desktop.log -Tail 45" 2>nul
+    pause
+    exit /b 1
+)
+if not exist "dist\MERSAD_Desktop.exe" (
+    echo [ERROR] MERSAD_Desktop.exe was not created.
+    pause
+    exit /b 1
+)
+
 REM [MERSAD-PR5-DASHBOARD-JS-PACKAGING-V3]
 if not exist "dist\MERSAD_AI\dashboard.js" (
     echo [ERROR] dashboard.js is missing from the frozen distribution!
@@ -78,6 +98,11 @@ if not exist "dist\MERSAD_AI\dashboard.js" (
 echo [5/6] Copying verified offline AI models and distribution launchers into dist\MERSAD_AI\ ...
 if not exist "dist\MERSAD_AI\MERSAD_AI.exe" (
     echo [ERROR] Build output dist\MERSAD_AI\MERSAD_AI.exe was not created!
+    pause
+    exit /b 1
+)
+copy /Y "dist\MERSAD_Desktop.exe" "dist\MERSAD_AI\MERSAD_Desktop.exe" >nul || (
+    echo [ERROR] Could not copy the desktop shell into the MERSAD distribution.
     pause
     exit /b 1
 )
@@ -95,9 +120,16 @@ REM Create distribution launcher scripts inside dist\MERSAD_AI\ that run MERSAD_
 echo @echo off
 echo chcp 65001 ^>nul
 echo cd /d "%%~dp0"
+echo MERSAD_Desktop.exe
+) > "dist\MERSAD_AI\RUN.bat"
+
+(
+echo @echo off
+echo chcp 65001 ^>nul
+echo cd /d "%%~dp0"
 echo MERSAD_AI.exe %%*
 echo pause
-) > "dist\MERSAD_AI\RUN.bat"
+) > "dist\MERSAD_AI\RUN_BACKEND.bat"
 
 (
 echo @echo off
@@ -119,7 +151,7 @@ echo pause
 ) > "dist\MERSAD_AI\VERIFY_AUDIT.bat"
 
 REM Verify required files (including all 4 AI models, SHA-256 sidecars, and launchers) exist inside dist\MERSAD_AI\ before declaring success
-for %%F in ("dist\MERSAD_AI\MERSAD_AI.exe" "dist\MERSAD_AI\models\yunet.onnx" "dist\MERSAD_AI\models\sface.onnx" "dist\MERSAD_AI\models\yolov8n.pt" "dist\MERSAD_AI\models\yolov8n.pt.sha256" "dist\MERSAD_AI\models\.trusted_models.json" "dist\MERSAD_AI\RUN.bat" "dist\MERSAD_AI\RUN_LAN.bat" "dist\MERSAD_AI\VERIFY_AUDIT.bat") do (
+for %%F in ("dist\MERSAD_AI\MERSAD_AI.exe" "dist\MERSAD_AI\MERSAD_Desktop.exe" "dist\MERSAD_AI\models\yunet.onnx" "dist\MERSAD_AI\models\sface.onnx" "dist\MERSAD_AI\models\yolov8n.pt" "dist\MERSAD_AI\models\yolov8n.pt.sha256" "dist\MERSAD_AI\models\.trusted_models.json" "dist\MERSAD_AI\RUN.bat" "dist\MERSAD_AI\RUN_LAN.bat" "dist\MERSAD_AI\VERIFY_AUDIT.bat") do (
     if not exist %%F (
         echo [ERROR] Distribution verification failed: missing required file %%F
         pause
@@ -141,7 +173,7 @@ if !DLL_COUNT! LSS 5 (
     exit /b 1
 )
 
-echo [6/6] Running standalone smoke test on dist\MERSAD_AI\MERSAD_AI.exe in isolated temp data dir...
+echo [6/6] Running backend and desktop-shell package smoke tests...
 set "SMOKE_DATA_DIR=%TEMP%\mersad_build_smoke_%RANDOM%"
 mkdir "%SMOKE_DATA_DIR%" >nul 2>nul
 set "MERSAD_DATA_DIR=%SMOKE_DATA_DIR%"
@@ -165,10 +197,15 @@ if !SMOKE_VERIFY_RC! NEQ 0 (
 )
 set "MERSAD_DATA_DIR="
 rmdir /s /q "%SMOKE_DATA_DIR%" >nul 2>nul
+venv\Scripts\python.exe windows_frozen_desktop_shell_smoke.py "dist\MERSAD_AI\MERSAD_Desktop.exe" || (
+    echo [ERROR] Frozen desktop shell package smoke test failed.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ============================================================
-echo   BUILD COMPLETE ^& VERIFIED: %~dp0dist\MERSAD_AI\MERSAD_AI.exe
+echo   BUILD COMPLETE ^& VERIFIED: %~dp0dist\MERSAD_AI\MERSAD_Desktop.exe (desktop) + MERSAD_AI.exe (engine)
 echo   Note: This is an --onedir distribution. Distribute the
 echo   ENTIRE dist\MERSAD_AI\ folder (including internal DLLs and
 echo   models\) to target Windows x64 machines.
