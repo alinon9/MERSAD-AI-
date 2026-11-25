@@ -238,8 +238,8 @@ jobs:
           if (-not (Test-Path "dist\MERSAD_Desktop.exe")) { throw "MERSAD_Desktop.exe was not created" }
           Copy-Item -LiteralPath "dist\MERSAD_Desktop.exe" -Destination "dist\MERSAD_AI\MERSAD_Desktop.exe" -Force
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-          Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
-          foreach ($asset in @("purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+          Copy-Item -Path "dashboard.html","dashboard.js","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          foreach ($asset in @("camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
             if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
           }
           # PR5 frozen dashboard.js smoke test
