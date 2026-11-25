@@ -393,6 +393,43 @@ jobs:
           }
           $manifestRows | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
+      - name: Package cumulative EXE-only update
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = "MERSAD_AI_Preview_0.1\dist\MERSAD_AI"
+          $out = "MERSAD_INCREMENTAL_UPDATE_DIST"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $files = @("MERSAD_AI.exe","MERSAD_Desktop.exe","dashboard.html","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","RUN.bat","RUN_BACKEND.bat")
+          foreach ($name in $files) {
+            $source = Join-Path $src $name
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing incremental update file: $source" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $out $name) -Force
+          }
+          Copy-Item -LiteralPath "ci\apply_incremental_update.ps1" -Destination (Join-Path $out "APPLY_UPDATE.ps1") -Force
+          $rows = foreach ($name in $files) { $hash = (Get-FileHash -LiteralPath (Join-Path $out $name) -Algorithm SHA256).Hash.ToLowerInvariant(); "$hash  $name" }
+          $rows | Set-Content -LiteralPath (Join-Path $out "SHA256SUMS_UPDATE.txt") -Encoding UTF8
+          @'
+          تحديث مرصاد التراكمي — المراحل 1 و2 و3
+          1) أغلق مرصاد بالكامل.
+          2) فك ضغط الحزمة في مجلد مؤقت.
+          3) افتح PowerShell داخل المجلد وشغّل:
+             .\APPLY_UPDATE.ps1 -InstallDir "C:\مسار\MERSAD_AI"
+          4) ينشئ السكربت نسخة احتياطية من الملفات التي يستبدلها، ويتحقق من SHA-256 قبل التثبيت.
+          5) لا يستبدل مجلد models أو قاعدة البيانات أو الأدلة أو السجلات.
+          6) شغّل MERSAD_Desktop.exe. يتطلب WebView2 Runtime.
+          ملاحظة: يجب أن يكون مجلد التثبيت هو المجلد الذي يحتوي MERSAD_AI.exe.
+          '@ | Set-Content -LiteralPath (Join-Path $out "اقرأني_التحديث.txt") -Encoding UTF8
+          Compress-Archive -Path (Join-Path $out "*") -DestinationPath "MERSAD_INCREMENTAL_UPDATE_Windows_x64.zip" -Force
+          $z = Get-Item "MERSAD_INCREMENTAL_UPDATE_Windows_x64.zip"
+          Write-Host ("Incremental update size: {0:N1} MB" -f ($z.Length / 1MB))
+
+      - name: Upload cumulative EXE-only update
+        uses: actions/upload-artifact@v4
+        with:
+          name: MERSAD_INCREMENTAL_UPDATE_Windows_x64
+          path: MERSAD_INCREMENTAL_UPDATE_Windows_x64.zip
+
       - name: Upload MERSAD_PREVIEW_0.1_FINAL Artifact
         uses: actions/upload-artifact@v4
         with:
