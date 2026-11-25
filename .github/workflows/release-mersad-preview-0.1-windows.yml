@@ -16,6 +16,7 @@ on:
       - "feat/desktop-camera-alpr-*"
       - "feat/unified-camera-connectivity-*"
       - "feat/native-windows-desktop-*"
+      - "fix/align-windows-acl-sources-*"
 
 permissions:
   contents: read
