@@ -15,6 +15,7 @@ on:
       - "security/release-closure-aud006-20261122"
       - "feat/desktop-camera-alpr-*"
       - "feat/unified-camera-connectivity-*"
+      - "feat/native-windows-desktop-*"
 
 permissions:
   contents: read
