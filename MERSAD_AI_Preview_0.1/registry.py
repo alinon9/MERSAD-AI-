@@ -266,11 +266,10 @@ foreach ($r in $rules) {
 if (-not $currentAllow) { exit 23 }
 exit 0
 """
-    dir_flag = "$true" if is_dir else "$false"
+    ace_flags = "OICI" if is_dir else ""
     script = r"""
 $ErrorActionPreference = 'Stop'
 $p = $env:MERSAD_ACL_PATH
-$isDir = __DIR_FLAG__
 $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if ([string]::IsNullOrWhiteSpace($currentSid)) { throw 'Cannot resolve current user SID' }
 
@@ -333,11 +332,11 @@ public static class MersadDaclNative
 '@
 Add-Type -TypeDefinition $nativeSource -Language CSharp
 
-$aceFlags = if ($isDir) { 'OICI' } else { '' }
+$aceFlags = '__ACE_FLAGS__'
 $sddl = 'D:P(A;' + $aceFlags + ';FA;;;' + $currentSid + ')(A;' + $aceFlags + ';FA;;;S-1-5-18)(A;' + $aceFlags + ';FA;;;S-1-5-32-544)'
 [MersadDaclNative]::SetProtectedDacl($p, $sddl)
 """
-    return script.replace("__DIR_FLAG__", dir_flag)
+    return script.replace("__ACE_FLAGS__", ace_flags)
 
 def _windows_acl_call(path, script):
     env = dict(os.environ)
