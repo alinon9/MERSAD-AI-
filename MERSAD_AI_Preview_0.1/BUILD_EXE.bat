@@ -76,7 +76,7 @@ venv\Scripts\python.exe generate_desktop_icon.py || (
 )
 
 echo [4B/6] Building the native MERSAD_Desktop.exe shell...
-venv\Scripts\pyinstaller.exe --noconfirm --clean --onefile --windowed --name MERSAD_Desktop --icon=MERSAD_Desktop.ico --version-file=desktop_version_info.txt --distpath dist --workpath build_desktop --collect-all webview --collect-all pythonnet --collect-all clr_loader --hidden-import webview.platforms.edgechromium --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 desktop_shell.py > build_desktop.log 2>&1 || (
+venv\Scripts\pyinstaller.exe --noconfirm --clean --onefile --windowed --name MERSAD_Desktop --icon=MERSAD_Desktop.ico --version-file=desktop_version_info.txt --distpath dist --workpath build_desktop --collect-all webview --collect-all pythonnet --collect-all clr_loader --hidden-import clr --hidden-import webview.platforms.edgechromium --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 desktop_shell.py > build_desktop.log 2>&1 || (
     echo [ERROR] Desktop shell build failed. Last lines of build_desktop.log:
     powershell -NoProfile -Command "Get-Content build_desktop.log -Tail 45" 2>nul
     pause
