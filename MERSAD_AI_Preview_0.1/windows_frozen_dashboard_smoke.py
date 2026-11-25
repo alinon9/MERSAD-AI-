@@ -54,6 +54,7 @@ def main() -> int:
                         for route, expected_marker in (
                             ("/", b"/purify.min.js"),
                             ("/dashboard.js", b"MERSAD-PR5-FIND001-DELEGATION-V3"),
+                            ("/camera-connect.js", b'open.addEventListener("click"'),
                             ("/purify.min.js", b"DOMPurify 3.4.18"),
                             ("/dompurify-guard.js", b"MERSAD_DOM_XSS_GUARD"),
                         ):
@@ -71,6 +72,10 @@ def main() -> int:
                                     raise RuntimeError(f"missing nosniff header for {route}: {nosniff}")
                                 if expected_marker not in body:
                                     raise RuntimeError(f"{route} does not contain required marker {expected_marker!r}")
+                                if route == "/" and b'id="mc-open"' not in body:
+                                    raise RuntimeError("frozen dashboard does not render the visible phone-camera launcher")
+                                if route == "/" and b'src="/camera-connect.js"' not in body:
+                                    raise RuntimeError("frozen dashboard does not load the phone-camera connection script")
                                 if route == "/" and ("script-src 'self'" not in csp or "trusted-types mersad-ui-html dompurify" not in csp):
                                     raise RuntimeError(f"dashboard CSP is missing strict script/Trusted Types directives: {csp}")
                                 print(f"PASS: frozen EXE served {route} ({len(body)} bytes; {ctype}; nosniff={nosniff})")

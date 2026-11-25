@@ -16,6 +16,7 @@ on:
       - "feat/desktop-camera-alpr-*"
       - "feat/unified-camera-connectivity-*"
       - "feat/native-windows-desktop-*"
+      - "fix/align-windows-acl-sources-*"
 
 permissions:
   contents: read
@@ -226,6 +227,26 @@ jobs:
             $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
           } else {
             throw "FATAL: ISCC.exe (Inno Setup 6) is missing; MERSAD_LAB_Setup_x64.exe is mandatory"
+          }
+
+          # Fail closed if either duplicate registry source regresses to the legacy Set-Acl path.
+          foreach ($aclSource in @("registry.py", "MERSAD_AI_Preview_0.1\\registry.py")) {
+            if (-not (Test-Path -LiteralPath $aclSource -PathType Leaf)) { throw "Missing Windows ACL source: $aclSource" }
+            $aclText = Get-Content -LiteralPath $aclSource -Raw
+            if ($aclText -notmatch "SetNamedSecurityInfo" -or $aclText -notmatch "DACL_SECURITY_INFORMATION" -or $aclText -match "Set-Acl") {
+              throw "Windows ACL source is not DACL-only (or still contains Set-Acl): $aclSource"
+            }
+          }
+
+          # Ensure the phone-camera launcher is visible in the shipped operations UI
+          # and that the camera onboarding script binds its click handler.
+          $dashboardHtml = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\dashboard.html" -Raw
+          $cameraJs = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\camera-connect.js" -Raw
+          if ($dashboardHtml -notmatch 'id="mc-open"' -or $dashboardHtml -notmatch 'src="/camera-connect.js"') {
+            throw "Operations dashboard is missing the visible phone-camera launcher or its script."
+          }
+          if (-not $cameraJs.Contains('open.addEventListener("click"') -or -not $cameraJs.Contains('/api/cameras/add')) {
+            throw "Phone-camera onboarding click handler or camera-add API call is missing."
           }
 
           Push-Location MERSAD_AI_Preview_0.1
