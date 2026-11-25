@@ -230,7 +230,9 @@ jobs:
           Push-Location MERSAD_AI_Preview_0.1
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
-          pyinstaller --noconfirm --clean --onefile --windowed --name MERSAD_Desktop --distpath dist --workpath build_desktop --collect-all webview --collect-all pythonnet --collect-all clr_loader --hidden-import webview.platforms.edgechromium --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 desktop_shell.py
+          python -X utf8 generate_desktop_icon.py
+          if ($LASTEXITCODE -ne 0) { throw "generate_desktop_icon.py failed ($LASTEXITCODE)" }
+          pyinstaller --noconfirm --clean --onefile --windowed --name MERSAD_Desktop --icon=MERSAD_Desktop.ico --version-file=desktop_version_info.txt --distpath dist --workpath build_desktop --collect-all webview --collect-all pythonnet --collect-all clr_loader --hidden-import webview.platforms.edgechromium --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 desktop_shell.py
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller desktop_shell.py failed ($LASTEXITCODE)" }
           if (-not (Test-Path "dist\MERSAD_Desktop.exe")) { throw "MERSAD_Desktop.exe was not created" }
           Copy-Item -LiteralPath "dist\MERSAD_Desktop.exe" -Destination "dist\MERSAD_AI\MERSAD_Desktop.exe" -Force
