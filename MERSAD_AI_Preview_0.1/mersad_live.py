@@ -4838,6 +4838,27 @@ def main():
 
     _main_runtime_ctrl = _MainLoopRuntimeController()
     _ACTIVE_ENGINE_CONTROLLER = _main_runtime_ctrl
+
+    # The native desktop shell closes the engine through this authenticated,
+    # loopback-only endpoint so the normal camera/database cleanup path runs.
+    def _desktop_shutdown_post(payload, peer_ip):
+        if str(peer_ip) not in ("127.0.0.1", "::1"):
+            return {"ok": False, "error": "Local desktop shutdown is loopback-only"}
+
+        def _request_stop():
+            time.sleep(0.35)  # let the HTTP handler return its acknowledgement
+            STOP_MAIN_EVENT.set()
+
+        threading.Thread(
+            target=_request_stop,
+            daemon=True,
+            name="mersad-desktop-shutdown",
+        ).start()
+        return {"ok": True, "status": "shutdown_requested"}
+
+    with bus._lock:
+        bus.post["/api/desktop/shutdown"] = _desktop_shutdown_post
+
     srv = start_server(a.port, host=a.host)
     if cfg.get("open_browser") and not a.no_window:
         webbrowser.open(f"http://127.0.0.1:{a.port}/?k={bus.token}")
