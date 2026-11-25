@@ -274,8 +274,8 @@ $isDir = __DIR_FLAG__
 $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if ([string]::IsNullOrWhiteSpace($currentSid)) { throw 'Cannot resolve current user SID' }
 
-# Update only the DACL through SetNamedSecurityInfo. Set-Acl can attempt to
-# write a SACL and fail for ordinary users because that requires SeSecurityPrivilege.
+# Update only the DACL through the Windows security API. Leave the SACL untouched
+# so ordinary users do not need the SeSecurityPrivilege.
 $nativeSource = @'
 using System;
 using System.ComponentModel;
