@@ -85,6 +85,15 @@ jobs:
           python tools/prepare_safe_eval_benchmarks.py --verify
           if ($LASTEXITCODE -ne 0) { throw "prepare_safe_eval_benchmarks.py --verify failed ($LASTEXITCODE)" }
 
+      - name: Test the native desktop-shell lifecycle helpers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location MERSAD_AI_Preview_0.1
+          python -X utf8 -m unittest test_desktop_shell -v
+          if ($LASTEXITCODE -ne 0) { throw "desktop shell unit tests failed ($LASTEXITCODE)" }
+          Pop-Location
+
       - name: Phase 1 — Download All 4 Real AI Models, Verify Pinned SHA-256 & Execute Real Inference on LAB Frames
         shell: pwsh
         run: |
@@ -221,6 +230,10 @@ jobs:
           Push-Location MERSAD_AI_Preview_0.1
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
+          pyinstaller --noconfirm --clean --onefile --windowed --name MERSAD_Desktop --distpath dist --workpath build_desktop --collect-all webview --collect-all pythonnet --collect-all clr_loader --hidden-import webview.platforms.edgechromium --exclude-module PyQt5 --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6 desktop_shell.py
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller desktop_shell.py failed ($LASTEXITCODE)" }
+          if (-not (Test-Path "dist\MERSAD_Desktop.exe")) { throw "MERSAD_Desktop.exe was not created" }
+          Copy-Item -LiteralPath "dist\MERSAD_Desktop.exe" -Destination "dist\MERSAD_AI\MERSAD_Desktop.exe" -Force
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
           Copy-Item -Path "dashboard.html","dashboard.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
           foreach ($asset in @("purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
@@ -231,6 +244,8 @@ jobs:
           if (!(Test-Path "dist\MERSAD_AI\dashboard.js")) { throw "dashboard.js missing from frozen MERSAD_AI distribution" }
           python -X utf8 -u windows_frozen_dashboard_smoke.py "dist\MERSAD_AI\MERSAD_AI.exe"
           if ($LASTEXITCODE -ne 0) { throw "Frozen dashboard.js HTTP smoke test failed ($LASTEXITCODE)" }
+          python -X utf8 -u windows_frozen_desktop_shell_smoke.py "dist\MERSAD_AI\MERSAD_Desktop.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Frozen desktop shell package smoke test failed ($LASTEXITCODE)" }
           $edgeCandidates = @(
             (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
             (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe")
@@ -244,7 +259,9 @@ jobs:
             throw "DOMPurify browser smoke test failed. Output: $dom"
           }
           Write-Host "[DOM-XSS] Edge headless smoke test passed."
-          Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
+          Set-Content -LiteralPath "dist\MERSAD_AI\RUN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r
+MERSAD_Desktop.exe"
+          Set-Content -LiteralPath "dist\MERSAD_AI\RUN_BACKEND.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\RUN_LAN.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`necho [LAN MODE] Starting MERSAD_AI.exe on 0.0.0.0 for local Wi-Fi access...`r`nMERSAD_AI.exe --host 0.0.0.0 %*`r`npause"
           Set-Content -LiteralPath "dist\MERSAD_AI\VERIFY_AUDIT.bat" -Encoding utf8 -Value "@echo off`r`nchcp 65001 >nul`r`ncd /d `"%~dp0`"`r`nMERSAD_AI.exe --verify || (pause & exit /b 1)`r`nMERSAD_AI.exe --verify-models || (pause & exit /b 1)`r`nMERSAD_AI.exe --readiness-report || (pause & exit /b 1)`r`npause"
           New-Item -ItemType Directory -Force -Path "dist\portable" | Out-Null
