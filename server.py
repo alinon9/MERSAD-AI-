@@ -323,6 +323,9 @@ class H(BaseHTTPRequestHandler):
                     with open(resolve_dashboard_path("dashboard.js.gz"), "rb") as f:
                         dashboard_js = gzip.decompress(f.read())
                 self._send(dashboard_js, "application/javascript; charset=utf-8")
+            elif p == "/camera-connect.js":
+                with open(resolve_dashboard_path("camera-connect.js"), "rb") as f:
+                    self._send(f.read(), "application/javascript; charset=utf-8")
             elif p in ("/purify.min.js", "/dompurify-guard.js"):
                 asset_name = p.lstrip("/")
                 with open(resolve_dashboard_path(asset_name), "rb") as f:

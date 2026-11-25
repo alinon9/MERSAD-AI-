@@ -43,6 +43,29 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
     import registry as reg
     import lab_server as ls
 
+    # This suite verifies camera/thread lifecycle, not model throughput. Keep the
+    # always-on BOOT_CAM1 inference worker deterministic so a slow native YOLO/OCR
+    # call cannot monopolize CPU and make the zero-camera -> re-add lifecycle
+    # depend on model warm-up. Dynamically added LAB cameras still use the real
+    # inference implementation here, and the immediately following Phase 4
+    # integration suite exercises the real detector/OCR pipeline with real models.
+    _real_inference_runner = ml._run_single_inference_item
+
+    def _lifecycle_boot_inference(st, item, vyolo, yolo, reader, trucks_only, curfew):
+        if st.get("cam") != "BOOT_CAM1":
+            return _real_inference_runner(st, item, vyolo, yolo, reader, trucks_only, curfew)
+        stop_ev = st.get("stop_ev")
+        if (stop_ev is not None and stop_ev.is_set()) or ml.STOP_MAIN_EVENT.is_set():
+            return
+        with st["infer_lock"]:
+            st["det_runs"] += 1
+            det_runs = st["det_runs"]
+        with ml._RUNTIME_STATE_LOCK:
+            if "BOOT_CAM1" in ml.STATUS.get("cameras", {}):
+                ml.STATUS["cameras"]["BOOT_CAM1"]["detections"] = det_runs
+
+    ml._run_single_inference_item = _lifecycle_boot_inference
+
     tmp_home = tempfile.mkdtemp(prefix="mersad_main_ep_lifecycle_")
     ai_port = _free_port()
     lab_port = _free_port()
@@ -241,6 +264,21 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             "removed_from_status_dict": removed_from_status,
         })
 
+        # Let the boot camera finish any already-running native inference before
+        # removing it. Step 8/9 above already exercise removal during active
+        # inference; this second removal isolates the zero-camera -> re-add path
+        # and avoids making its result depend on CPU scheduling/model warm-up.
+        boot_inference_idle = ml.wait_for_pending_inference(timeout=30.0, cam="BOOT_CAM1")
+        boot_state = ml._ACTIVE_CAM_STATES.get("BOOT_CAM1")
+        boot_infer_thread = boot_state.get("infer_thread") if boot_state else None
+        boot_reader_thread = boot_state.get("reader_thread") if boot_state else None
+        # An idle inference worker is expected to remain alive until the camera
+        # is removed. Requiring it to be stopped BEFORE the remove request was
+        # a false assertion: wait_for_pending_inference() guarantees only that
+        # its queue is empty and no inference is in flight.
+        boot_infer_alive_before_remove = bool(boot_infer_thread and boot_infer_thread.is_alive())
+        boot_idle_before_remove = bool(boot_inference_idle and boot_infer_alive_before_remove)
+
         # Remove BOOT_CAM1 as well to prove main() stays alive even when 0 cameras remain before Step 10
         req_rem_boot = urllib.request.Request(
             f"http://127.0.0.1:{ai_port}/api/cameras/remove?k={ai_token}",
@@ -253,11 +291,17 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
                 req_rem_boot, timeout=CAMERA_REMOVAL_HTTP_TIMEOUT_SEC
             ).read().decode("utf-8")
         )
+        boot_workers_stopped_after_remove = not (
+            (boot_infer_thread and boot_infer_thread.is_alive())
+            or (boot_reader_thread and boot_reader_thread.is_alive())
+        )
         boot_removal_ok = (
-            resp_rem_boot.get("ok") is True
+            boot_idle_before_remove
+            and resp_rem_boot.get("ok") is True
             and resp_rem_boot.get("removed") is True
             and resp_rem_boot.get("workers_stopped") is True
             and not resp_rem_boot.get("pending_workers")
+            and boot_workers_stopped_after_remove
         )
         time.sleep(0.05)
 
@@ -302,7 +346,11 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             and cam3_stat.get("status") == "online"
         )
         add_step(10, "Add second camera LAB_DYN_CAM3 after removal and verify worker_spawned, MJPEG stream, and inference", step10_ok, {
+            "boot_camera_inference_idle_before_remove": boot_idle_before_remove,
+            "boot_camera_inference_wait_ok": boot_inference_idle,
+            "boot_camera_infer_thread_alive_before_remove": boot_infer_alive_before_remove,
             "boot_camera_removal": resp_rem_boot,
+            "boot_camera_workers_stopped_after_remove": boot_workers_stopped_after_remove,
             "boot_camera_removal_ok": boot_removal_ok,
             "ai_response": ai_resp2,
             "latest_frame_seq": seq3,
@@ -311,6 +359,7 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
             "camera_status": cam3_stat,
         })
     finally:
+        ml._run_single_inference_item = _real_inference_runner
         ml.STOP_MAIN_EVENT.set()
         t_main.join(timeout=5.0)
         lab_ctrl.stop()

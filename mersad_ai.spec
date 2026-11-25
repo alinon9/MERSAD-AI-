@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = [
     ("dashboard.html", "."),
+    ("camera-connect.js", "."),
     ("README_AR.md", "."),
 ]
 binaries = []

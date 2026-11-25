@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 datas = [
     ("dashboard.html", "."),
     ("dashboard.js", "."),
+    ("camera-connect.js", "."),
     ("purify.min.js", "."),
     ("dompurify-guard.js", "."),
     ("LICENSE_DOMPURIFY.txt", "."),
