@@ -203,10 +203,12 @@ def self_test() -> int:
             backend = application_directory() / "MERSAD_AI.exe"
             if not backend.is_file():
                 raise FileNotFoundError(f"Missing backend executable: {backend}")
-        print("PASS: desktop shell imports pywebview and resolves its backend payload")
+        if sys.stdout is not None:
+            print("PASS: desktop shell imports pywebview and resolves its backend payload")
         return 0
     except Exception as exc:
-        print(f"FAIL: desktop shell package check: {exc}", file=sys.stderr)
+        if sys.stderr is not None:
+            print(f"FAIL: desktop shell package check: {exc}", file=sys.stderr)
         return 1
 
 
