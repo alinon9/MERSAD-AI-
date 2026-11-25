@@ -271,8 +271,13 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
         boot_inference_idle = ml.wait_for_pending_inference(timeout=30.0, cam="BOOT_CAM1")
         boot_state = ml._ACTIVE_CAM_STATES.get("BOOT_CAM1")
         boot_infer_thread = boot_state.get("infer_thread") if boot_state else None
-        boot_infer_stopped_before_remove = not (boot_infer_thread and boot_infer_thread.is_alive())
-        boot_idle_before_remove = bool(boot_inference_idle and boot_infer_stopped_before_remove)
+        boot_reader_thread = boot_state.get("reader_thread") if boot_state else None
+        # An idle inference worker is expected to remain alive until the camera
+        # is removed. Requiring it to be stopped BEFORE the remove request was
+        # a false assertion: wait_for_pending_inference() guarantees only that
+        # its queue is empty and no inference is in flight.
+        boot_infer_alive_before_remove = bool(boot_infer_thread and boot_infer_thread.is_alive())
+        boot_idle_before_remove = bool(boot_inference_idle and boot_infer_alive_before_remove)
 
         # Remove BOOT_CAM1 as well to prove main() stays alive even when 0 cameras remain before Step 10
         req_rem_boot = urllib.request.Request(
@@ -286,12 +291,17 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
                 req_rem_boot, timeout=CAMERA_REMOVAL_HTTP_TIMEOUT_SEC
             ).read().decode("utf-8")
         )
+        boot_workers_stopped_after_remove = not (
+            (boot_infer_thread and boot_infer_thread.is_alive())
+            or (boot_reader_thread and boot_reader_thread.is_alive())
+        )
         boot_removal_ok = (
             boot_idle_before_remove
             and resp_rem_boot.get("ok") is True
             and resp_rem_boot.get("removed") is True
             and resp_rem_boot.get("workers_stopped") is True
             and not resp_rem_boot.get("pending_workers")
+            and boot_workers_stopped_after_remove
         )
         time.sleep(0.05)
 
@@ -338,8 +348,9 @@ def run_main_entrypoint_dynamic_lifecycle_test() -> dict:
         add_step(10, "Add second camera LAB_DYN_CAM3 after removal and verify worker_spawned, MJPEG stream, and inference", step10_ok, {
             "boot_camera_inference_idle_before_remove": boot_idle_before_remove,
             "boot_camera_inference_wait_ok": boot_inference_idle,
-            "boot_camera_infer_thread_stopped_before_remove": boot_infer_stopped_before_remove,
+            "boot_camera_infer_thread_alive_before_remove": boot_infer_alive_before_remove,
             "boot_camera_removal": resp_rem_boot,
+            "boot_camera_workers_stopped_after_remove": boot_workers_stopped_after_remove,
             "boot_camera_removal_ok": boot_removal_ok,
             "ai_response": ai_resp2,
             "latest_frame_seq": seq3,
