@@ -99,8 +99,12 @@ New-Item -ItemType Directory -Force -Path $aiPortable, $labPortable | Out-Null
 Expand-Archive -LiteralPath $aiPortableZip -DestinationPath $aiPortable -Force
 Expand-Archive -LiteralPath $labPortableZip -DestinationPath $labPortable -Force
 $portableAiExe = Join-Path $aiPortable "MERSAD_AI.exe"
+$portableDesktopExe = Join-Path $aiPortable "MERSAD_Desktop.exe"
 $portableLabExe = Join-Path $labPortable "MERSAD_LAB.exe"
 if (-not (Test-Path -LiteralPath $portableAiExe -PathType Leaf)) { throw "AI Portable ZIP does not contain MERSAD_AI.exe at its root" }
+if (-not (Test-Path -LiteralPath $portableDesktopExe -PathType Leaf)) { throw "AI Portable ZIP does not contain MERSAD_Desktop.exe at its root" }
+& $portableDesktopExe --self-test
+if ($LASTEXITCODE -ne 0) { throw "Published AI Portable MERSAD_Desktop.exe --self-test failed ($LASTEXITCODE)" }
 if (-not (Test-Path -LiteralPath $portableLabExe -PathType Leaf)) { throw "LAB Portable ZIP does not contain MERSAD_LAB.exe at its root" }
 & $portableAiExe --verify-models
 if ($LASTEXITCODE -ne 0) { throw "Published AI Portable --verify-models failed ($LASTEXITCODE)" }
