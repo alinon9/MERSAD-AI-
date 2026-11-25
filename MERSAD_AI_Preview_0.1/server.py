@@ -13,11 +13,14 @@ log = logging.getLogger("mersad.server")
 def resolve_dashboard_path(filename="dashboard.html"):
     """Resolve static UI asset path reliably across source tree, PyInstaller _MEIPASS, and frozen .exe directory (GAP-12)."""
     candidates = []
+    # In frozen onedir builds, prefer the beside-EXE assets: release updates
+    # replace these files without rebuilding PyInstaller's _internal bundle.
+    # _MEIPASS remains a fallback for distributions without external assets.
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), filename))
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         candidates.append(os.path.join(meipass, filename))
-    if getattr(sys, "frozen", False):
-        candidates.append(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), filename))
     candidates.append(os.path.join(BASE, filename))
     candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), filename))
     data_dir = os.environ.get("MERSAD_DATA_DIR")
