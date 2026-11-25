@@ -238,6 +238,17 @@ jobs:
             }
           }
 
+          # Ensure the phone-camera launcher is visible in the shipped operations UI
+          # and that the camera onboarding script binds its click handler.
+          $dashboardHtml = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\dashboard.html" -Raw
+          $cameraJs = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\camera-connect.js" -Raw
+          if ($dashboardHtml -notmatch 'id="mc-open"' -or $dashboardHtml -notmatch 'src="/camera-connect.js"') {
+            throw "Operations dashboard is missing the visible phone-camera launcher or its script."
+          }
+          if ($cameraJs -notmatch 'open\\.addEventListener\\(' -or $cameraJs -notmatch '/api/cameras/add') {
+            throw "Phone-camera onboarding click handler or camera-add API call is missing."
+          }
+
           Push-Location MERSAD_AI_Preview_0.1
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
