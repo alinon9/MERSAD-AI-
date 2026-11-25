@@ -740,6 +740,9 @@ def main():
                 method="POST",
                 payload={"name": "LAB_DYN_CAM2"},
                 headers={"Origin": f"http://127.0.0.1:{ep_port}"},
+                # Removal can spend up to 10 seconds joining workers (4s + 6s)
+                # before returning its verified lifecycle result.
+                timeout=15.0,
             )
             threads_stopped_2 = bool(rt_dyn2 and not rt_dyn2.is_alive() and it_dyn2 and not it_dyn2.is_alive())
             cap_closed_2 = (st_dyn2.get("cap") is None) if st_dyn2 else False
