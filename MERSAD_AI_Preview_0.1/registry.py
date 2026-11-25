@@ -267,31 +267,77 @@ if (-not $currentAllow) { exit 23 }
 exit 0
 """
     dir_flag = "$true" if is_dir else "$false"
-    return r"""
+    script = r"""
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $p = $env:MERSAD_ACL_PATH
-$isDir = """ + dir_flag + r"""
-$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-if ($null -eq $current) { throw 'Cannot resolve current user SID' }
-$acl = Get-Acl -LiteralPath $p
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleSpecific($rule) }
-$acl.SetOwner($current)
-$inheritance = [System.Security.AccessControl.InheritanceFlags]::None
-if ($isDir) { $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit }
-$propagation = [System.Security.AccessControl.PropagationFlags]::None
-$rights = [System.Security.AccessControl.FileSystemRights]::FullControl
-$allow = [System.Security.AccessControl.AccessControlType]::Allow
-$principals = @($current.Value, 'S-1-5-18', 'S-1-5-32-544')
-foreach ($sidText in $principals) {
-  $sid = [System.Security.Principal.SecurityIdentifier]::new($sidText)
-  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, $inheritance, $propagation, $allow)
-  [void]$acl.AddAccessRule($rule)
-}
-Set-Acl -LiteralPath $p -AclObject $acl
-"""
+$isDir = __DIR_FLAG__
+$currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+if ([string]::IsNullOrWhiteSpace($currentSid)) { throw 'Cannot resolve current user SID' }
 
+# Update only the DACL through SetNamedSecurityInfo. Set-Acl can attempt to
+# write a SACL and fail for ordinary users because that requires SeSecurityPrivilege.
+$nativeSource = @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class MersadDaclNative
+{
+    private const int SE_FILE_OBJECT = 1;
+    private const uint DACL_SECURITY_INFORMATION = 0x00000004;
+    private const uint PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000;
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(
+        string sddl, uint revision, out IntPtr securityDescriptor, out uint size);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetSecurityDescriptorDacl(
+        IntPtr securityDescriptor, out bool daclPresent, out IntPtr dacl, out bool daclDefaulted);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint SetNamedSecurityInfo(
+        string objectName, int objectType, uint securityInfo,
+        IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    public static void SetProtectedDacl(string path, string sddl)
+    {
+        IntPtr descriptor = IntPtr.Zero;
+        try
+        {
+            uint size;
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out descriptor, out size))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot parse private DACL security descriptor.");
+
+            bool present, defaulted;
+            IntPtr dacl;
+            if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present || dacl == IntPtr.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot read private DACL security descriptor.");
+
+            uint result = SetNamedSecurityInfo(
+                path, SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+            if (result != 0)
+                throw new Win32Exception((int)result, "Cannot apply protected private DACL.");
+        }
+        finally
+        {
+            if (descriptor != IntPtr.Zero) LocalFree(descriptor);
+        }
+    }
+}
+'@
+Add-Type -TypeDefinition $nativeSource -Language CSharp
+
+$aceFlags = if ($isDir) { 'OICI' } else { '' }
+$sddl = 'D:P(A;' + $aceFlags + ';FA;;;' + $currentSid + ')(A;' + $aceFlags + ';FA;;;S-1-5-18)(A;' + $aceFlags + ';FA;;;S-1-5-32-544)'
+[MersadDaclNative]::SetProtectedDacl($p, $sddl)
+"""
+    return script.replace("__DIR_FLAG__", dir_flag)
 
 def _windows_acl_call(path, script):
     env = dict(os.environ)
