@@ -6175,6 +6175,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 and main_still_alive
                 and r_add2.get("ok") is True and r_add2.get("worker_spawned") is True
                 and mjpg_ep2_ok
+                and shutdown_route_ok
             )
             main_ep_detail = {
                 "add1_worker_spawned": r_add1.get("worker_spawned"),
@@ -6184,7 +6185,8 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 "cap_released_1": cap_released_1,
                 "main_still_alive": main_still_alive,
                 "add2_worker_spawned": r_add2.get("worker_spawned"),
-                "mjpg_ep2_ok": mjpg_ep2_ok,\n                "shutdown_route_ok": shutdown_route_ok,
+                "mjpg_ep2_ok": mjpg_ep2_ok,
+                "shutdown_route_ok": shutdown_route_ok,
             }
         finally:
             m.STOP_MAIN_EVENT.set()
