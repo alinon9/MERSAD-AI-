@@ -245,7 +245,7 @@ jobs:
           if ($dashboardHtml -notmatch 'id="mc-open"' -or $dashboardHtml -notmatch 'src="/camera-connect.js"') {
             throw "Operations dashboard is missing the visible phone-camera launcher or its script."
           }
-          if ($cameraJs -notmatch 'open\\.addEventListener\\(' -or $cameraJs -notmatch '/api/cameras/add') {
+          if (-not $cameraJs.Contains('open.addEventListener("click"') -or -not $cameraJs.Contains('/api/cameras/add')) {
             throw "Phone-camera onboarding click handler or camera-add API call is missing."
           }
 
