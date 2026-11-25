@@ -5950,6 +5950,39 @@ def run_patched_v7_1_and_preview_0_1_tests():
               "Phase 2 comparison records Original LAB as BLOCKED without faking PASS while allowing Windows build pipeline to reach Phase 3B",
               p2_ok, p2_detail)
 
+        # 30A. ALPR-STRUCTURED-RETRY: A high-confidence digit-only hallucination must not suppress Arabic OCR retries.
+        class _StructuredRetryReader:
+            def __init__(self):
+                self.calls = 0
+
+            def readtext(self, image, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return [([[0, 0], [1, 0], [1, 1], [0, 1]], "18891406", 0.658)]
+                return [
+                    ([[0, 0], [1, 0], [1, 1], [0, 1]], "إب", 0.90),
+                    ([[2, 0], [3, 0], [3, 1], [2, 1]], "91406", 0.91),
+                ]
+
+        _structured_reader = _StructuredRetryReader()
+        _structured_trace = []
+        _structured_result = m.read_plate(
+            _structured_reader,
+            np.full((64, 240, 3), 180, dtype=np.uint8),
+            trace=_structured_trace,
+        )
+        _structured_retry_ok = (
+            _structured_result[0] == "اب-91406"
+            and _structured_reader.calls >= 2
+            and any(item.get("attempt") == "upscale" for item in _structured_trace)
+        )
+        check(
+            "ALPR-STRUCTURED-OCR-RETRY",
+            "high-confidence digit-only OCR is retried; structured Yemeni governorate + five-digit plate wins",
+            _structured_retry_ok,
+            {"result": _structured_result, "ocr_calls": _structured_reader.calls},
+        )
+
         # 31. PREVIEW01-MODEL-EVAL-GATES-AND-CI-INNOSETUP (BUG-09, BUG-10, BUG-11 Regression):
         # Verify evaluate_ai_models.py enforces ground-truth CER/ExactMatch/IoU/Positive-Negative gates (never granting PASS merely for 4 frames)
         # and Windows CI workflows explicitly install CPU PyTorch, --verify-pip-deps, and Inno Setup (choco install innosetup).

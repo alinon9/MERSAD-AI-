@@ -2857,7 +2857,29 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
     first = _plate_ocr_result(reader, proc, min_conf, trace=trace, attempt="original_preprocessed")
     candidates = [first] if first else []
     retry_threshold = max(0.55, min_conf + 0.20)
-    if first is None or first[1] < retry_threshold:
+    known_governorates = {R._norm_letters_only(value) for value in getattr(R, "_LATIN_GOV_TO_AR", {}).values()}
+
+    def _has_yemeni_plate_structure(candidate):
+        if not candidate:
+            return False
+        normalized = str(candidate[0] or "")
+        governorate, separator, serial = normalized.rpartition("-")
+        return bool(
+            separator
+            and governorate in known_governorates
+            and serial.isdigit()
+            and len(serial) == 5
+        )
+
+    # A high-confidence digit-only hallucination is still a bad plate read.
+    # Retry whenever the first pass is not a canonical Yemeni governorate + 5-digit
+    # serial, rather than letting confidence alone suppress the Arabic recovery passes.
+    retry_needed = (
+        first is None
+        or first[1] < retry_threshold
+        or not _has_yemeni_plate_structure(first)
+    )
+    if retry_needed:
         gray = cv2.cvtColor(proc, cv2.COLOR_BGR2GRAY) if proc.ndim == 3 else proc
         enlarged = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(enlarged)
@@ -2897,7 +2919,7 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
 
     # Prefer a recognized Yemeni governorate + five-digit serial over malformed
     # alternatives with stray Latin prefixes and extra digits. This uses OCR output only.
-    known_governorates = set(getattr(R, "_LATIN_GOV_TO_AR", {}).values())
+    known_governorates = {R._norm_letters_only(value) for value in getattr(R, "_LATIN_GOV_TO_AR", {}).values()}
     counts = {}
     for normalized, confidence in candidates:
         entry = counts.setdefault(normalized, {"votes": 0, "confidence": 0.0, "best": 0.0, "structured": False})
