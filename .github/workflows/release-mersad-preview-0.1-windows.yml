@@ -374,6 +374,7 @@ jobs:
 
           $requiredManifestPaths = @(
             "MERSAD_AI/MERSAD_AI.exe",
+            "MERSAD_AI/MERSAD_Desktop.exe",
             "MERSAD_LAB/MERSAD_LAB.exe",
             "Installers_and_Portable/MERSAD_AI_Portable_x64.zip",
             "Installers_and_Portable/MERSAD_LAB_Portable_x64.zip",
