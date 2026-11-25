@@ -6152,6 +6152,21 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 chunk_ep2 = mjpg_ep2.read(400)
             mjpg_ep2_ok = (b"image/jpeg" in chunk_ep2 and b"\xff\xd8" in chunk_ep2)
 
+            # The desktop wrapper must be able to request a clean backend exit.
+            req_shutdown = urllib.request.Request(
+                f"http://127.0.0.1:{port_234}/api/desktop/shutdown",
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Mersad-Token": tok_234,
+                    "Host": f"127.0.0.1:{port_234}",
+                },
+                method="POST",
+            )
+            r_shutdown = json.loads(urllib.request.urlopen(req_shutdown, timeout=3.0).read().decode("utf-8"))
+            wait(lambda: not t_main_234.is_alive(), t=6.0)
+            shutdown_route_ok = (r_shutdown.get("ok") is True and not t_main_234.is_alive())
+
             main_ep_ok = (
                 r_add1.get("ok") is True and r_add1.get("worker_spawned") is True
                 and threads_started_1 and mjpg_ep1_ok
@@ -6169,7 +6184,7 @@ def run_patched_v7_1_and_preview_0_1_tests():
                 "cap_released_1": cap_released_1,
                 "main_still_alive": main_still_alive,
                 "add2_worker_spawned": r_add2.get("worker_spawned"),
-                "mjpg_ep2_ok": mjpg_ep2_ok,
+                "mjpg_ep2_ok": mjpg_ep2_ok,\n                "shutdown_route_ok": shutdown_route_ok,
             }
         finally:
             m.STOP_MAIN_EVENT.set()
