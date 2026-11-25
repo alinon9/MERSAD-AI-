@@ -75,6 +75,24 @@ $aiExe = Join-Path $root "MERSAD_AI\MERSAD_AI.exe"
 $desktopExe = Join-Path $root "MERSAD_AI\MERSAD_Desktop.exe"
 $labExe = Join-Path $root "MERSAD_LAB\MERSAD_LAB.exe"
 $installer = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Setup_x64.exe"
+
+function Test-DesktopShellExecutable {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ExecutablePath,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+
+  # MERSAD_Desktop.exe is built with the Windows GUI subsystem (console=False).
+  # Start-Process exposes its real process ExitCode reliably; $LASTEXITCODE can
+  # remain null when a GUI-subsystem executable is invoked with PowerShell's &.
+  $desktopTest = Start-Process -FilePath $ExecutablePath -ArgumentList @("--self-test") -Wait -PassThru
+  if ($desktopTest.ExitCode -ne 0) {
+    throw "$Label --self-test failed (exit code $($desktopTest.ExitCode))"
+  }
+  Write-Host "[ARTIFACT] $Label --self-test passed (exit code 0)."
+}
 $aiPortableZip = Join-Path $root "Installers_and_Portable\MERSAD_AI_Portable_x64.zip"
 $labPortableZip = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Portable_x64.zip"
 foreach ($required in @($aiExe, $desktopExe, $labExe, $installer, $aiPortableZip, $labPortableZip)) {
@@ -83,8 +101,7 @@ foreach ($required in @($aiExe, $desktopExe, $labExe, $installer, $aiPortableZip
   }
 }
 
-& $desktopExe --self-test
-if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_Desktop.exe --self-test failed ($LASTEXITCODE)" }
+Test-DesktopShellExecutable -ExecutablePath $desktopExe -Label "Published MERSAD_Desktop.exe"
 & $aiExe --verify-models
 if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_AI.exe --verify-models failed ($LASTEXITCODE)" }
 & $aiExe --verify
@@ -103,8 +120,7 @@ $portableDesktopExe = Join-Path $aiPortable "MERSAD_Desktop.exe"
 $portableLabExe = Join-Path $labPortable "MERSAD_LAB.exe"
 if (-not (Test-Path -LiteralPath $portableAiExe -PathType Leaf)) { throw "AI Portable ZIP does not contain MERSAD_AI.exe at its root" }
 if (-not (Test-Path -LiteralPath $portableDesktopExe -PathType Leaf)) { throw "AI Portable ZIP does not contain MERSAD_Desktop.exe at its root" }
-& $portableDesktopExe --self-test
-if ($LASTEXITCODE -ne 0) { throw "Published AI Portable MERSAD_Desktop.exe --self-test failed ($LASTEXITCODE)" }
+Test-DesktopShellExecutable -ExecutablePath $portableDesktopExe -Label "Published AI Portable MERSAD_Desktop.exe"
 if (-not (Test-Path -LiteralPath $portableLabExe -PathType Leaf)) { throw "LAB Portable ZIP does not contain MERSAD_LAB.exe at its root" }
 & $portableAiExe --verify-models
 if ($LASTEXITCODE -ne 0) { throw "Published AI Portable --verify-models failed ($LASTEXITCODE)" }
