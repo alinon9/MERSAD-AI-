@@ -72,16 +72,19 @@ foreach ($dllName in @("msvcp140.dll", "vcomp140.dll")) {
 Write-Host "[ARTIFACT] Found .trusted_models.json and both sklearn\.libs runtime DLLs."
 
 $aiExe = Join-Path $root "MERSAD_AI\MERSAD_AI.exe"
+$desktopExe = Join-Path $root "MERSAD_AI\MERSAD_Desktop.exe"
 $labExe = Join-Path $root "MERSAD_LAB\MERSAD_LAB.exe"
 $installer = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Setup_x64.exe"
 $aiPortableZip = Join-Path $root "Installers_and_Portable\MERSAD_AI_Portable_x64.zip"
 $labPortableZip = Join-Path $root "Installers_and_Portable\MERSAD_LAB_Portable_x64.zip"
-foreach ($required in @($aiExe, $labExe, $installer, $aiPortableZip, $labPortableZip)) {
+foreach ($required in @($aiExe, $desktopExe, $labExe, $installer, $aiPortableZip, $labPortableZip)) {
   if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
     throw "Required published release component is missing: $required"
   }
 }
 
+& $desktopExe --self-test
+if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_Desktop.exe --self-test failed ($LASTEXITCODE)" }
 & $aiExe --verify-models
 if ($LASTEXITCODE -ne 0) { throw "Published MERSAD_AI.exe --verify-models failed ($LASTEXITCODE)" }
 & $aiExe --verify
