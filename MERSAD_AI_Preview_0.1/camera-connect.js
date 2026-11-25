@@ -12,11 +12,20 @@
   }
   function init() {
     const bar = $("cam-sw");
-    if (!bar || $("mc-open")) return;
-    const open = document.createElement("button");
-    open.id = "mc-open"; open.type = "button"; open.className = "ok";
-    open.textContent = "＋ ربط كاميرا";
-    bar.parentNode.insertBefore(open, bar.nextSibling);
+    let open = $("mc-open");
+    if (!bar || !bar.parentNode) return;
+    // Render the launcher statically in dashboard.html; retain a fallback
+    // for older dashboards and bind once even if initialization is repeated.
+    if (!open) {
+      open = document.createElement("button");
+      open.id = "mc-open";
+      open.type = "button";
+      open.className = "ok";
+      open.textContent = "＋ ربط كاميرا";
+      bar.parentNode.insertBefore(open, bar.nextSibling);
+    }
+    if (open.dataset.mcBound === "1") return;
+    open.dataset.mcBound = "1";
     const panel = document.createElement("div");
     panel.id = "mc-panel";
     panel.style.cssText = "position:fixed;inset:0;background:#000b;z-index:1000;display:none;align-items:center;justify-content:center;padding:14px";
