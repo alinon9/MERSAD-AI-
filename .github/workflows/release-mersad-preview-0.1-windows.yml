@@ -228,6 +228,15 @@ jobs:
             throw "FATAL: ISCC.exe (Inno Setup 6) is missing; MERSAD_LAB_Setup_x64.exe is mandatory"
           }
 
+          # Fail closed if either duplicate registry source regresses to the legacy Set-Acl path.
+          foreach ($aclSource in @("registry.py", "MERSAD_AI_Preview_0.1\\registry.py")) {
+            if (-not (Test-Path -LiteralPath $aclSource -PathType Leaf)) { throw "Missing Windows ACL source: $aclSource" }
+            $aclText = Get-Content -LiteralPath $aclSource -Raw
+            if ($aclText -notmatch "SetNamedSecurityInfo" -or $aclText -notmatch "DACL_SECURITY_INFORMATION" -or $aclText -match "Set-Acl") {
+              throw "Windows ACL source is not DACL-only (or still contains Set-Acl): $aclSource"
+            }
+          }
+
           Push-Location MERSAD_AI_Preview_0.1
           pyinstaller --noconfirm --clean mersad_ai.spec
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller mersad_ai.spec failed ($LASTEXITCODE)" }
