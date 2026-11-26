@@ -48,3 +48,6 @@ The Windows EXE was **not** built or run in this Linux environment. Real camera 
 - V7.1 Stages 1–14 engineering remediation completed (**193 PASS / 0 SKIP / 0 FAIL**), including `--evaluate-plates` two-stage vehicle/plate evaluation.
 
 > **توحيد عداد الاختبارات المعتمد (PREVIEW 0.1 — Build #65):** إجمالي حزمة `selftest.py` الكاملة هو **`237 PASS, 0 SKIP, 0 FAIL`** (منها **`196 PASS`** عبر المراحل 1–14 و`195` اختباراً قبل `STAGE14-06-DOC-AND-UI-PARITY` بعد إضافة 3 اختبارات انحدار على خط الأساس التاريخي `193 PASS`، بالإضافة إلى `8` اختبارات للمرحلة 15 = **`204 PASS`**، و`33` اختباراً لإصدار `Preview 0.1` = **`237 PASS`**، مع **`20/20 PASS`** في `Clean-Room LAB`).
+
+
+> **ملاحظة عدّادات الفرع التشخيصي (PR #15):** تتكوّن حزمة `selftest.py` الحالية من **239 فحصاً** إجمالاً، منها **197 فحصاً** حتى نهاية المرحلة 14. هذه أعداد معرّفات/فحوصات وليست ادعاءً بأن جميعها ناجح؛ حالة النجاح أو الفشل النهائية تؤخذ من سجل GitHub Actions للبناء الموافق.
