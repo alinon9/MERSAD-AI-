@@ -3225,7 +3225,10 @@ def stats():
     with _RUNTIME_STATE_LOCK:
         fps_val = STATUS["fps"]
         cam_val = STATUS["cam"]
-        cams_snap = {k: dict(v) for k, v in (STATUS.get("cameras") or {}).items()}
+        cams_snap = {
+            k: {**dict(v), "alpr": dict(v.get("alpr") or {})}
+            for k, v in (STATUS.get("cameras") or {}).items()
+        }
         t0_val = STATUS["t0"]
     if INS and hasattr(INS, "_STATE_LOCK"):
         with INS._STATE_LOCK:
@@ -3527,6 +3530,8 @@ class MersadEngineController:
             "infer_busy": False,
             "infer_idle_event": idle_ev,
             "dropped_infer_frames": 0,
+            "alpr_diag_lock": threading.Lock(),
+            "alpr_diag": _new_alpr_diagnostics(vyolo, yolo, reader),
             "cap": cap_obj,
             "status": init_status,
             "n": 0,
@@ -4269,14 +4274,92 @@ def _enqueue_latest_inference(st, item):
         return False
 
 
+def _new_alpr_diagnostics(vyolo=None, yolo=None, reader=None):
+    """Create privacy-preserving per-camera ALPR telemetry. Never stores recognized plate text or frames."""
+    return {
+        "version": 1,
+        "plate_detector_mode": "yolo_plate_model" if yolo is not None else "opencv_canny_contour",
+        "vehicle_model_loaded": bool(vyolo is not None),
+        "ocr_model_loaded": bool(reader is not None),
+        "frames_processed": 0,
+        "frames_with_vehicle_boxes": 0,
+        "frames_without_vehicle_boxes": 0,
+        "vehicle_boxes_total": 0,
+        "frames_with_plate_candidates": 0,
+        "plate_candidates_total": 0,
+        "ocr_attempts": 0,
+        "ocr_text_candidates": 0,
+        "ocr_no_result": 0,
+        "frames_awaiting_confirmation": 0,
+        "confirmed_reads": 0,
+        "errors": 0,
+        "inference_ms_total": 0.0,
+        "mean_inference_ms": 0.0,
+        "last_inference_ms": 0.0,
+        "last_vehicle_boxes": 0,
+        "last_plate_candidates": 0,
+        "last_ocr_confidence": None,
+        "pending_vote_count": 0,
+        "last_stage": "waiting",
+        "last_reason_code": "waiting_for_first_frame",
+        "last_error_type": "",
+        "updated_at": None,
+    }
+
+
+def _record_alpr_diagnostics(st, stage=None, reason_code=None, increments=None, values=None):
+    """Update live ALPR counters and publish a copy into STATUS for the authenticated diagnostics API."""
+    diag_lock = st.get("alpr_diag_lock")
+    if diag_lock is None:
+        diag_lock = st["alpr_diag_lock"] = threading.Lock()
+    with diag_lock:
+        diag = st.setdefault("alpr_diag", _new_alpr_diagnostics())
+        for key, amount in (increments or {}).items():
+            diag[key] = (float(diag.get(key, 0.0) or 0.0) + float(amount or 0.0))
+            if key not in ("inference_ms_total",):
+                diag[key] = int(diag[key])
+        for key, value in (values or {}).items():
+            diag[key] = value
+        if stage:
+            diag["last_stage"] = str(stage)[:40]
+        if reason_code:
+            diag["last_reason_code"] = str(reason_code)[:64]
+        diag["updated_at"] = time.time()
+        frames = int(diag.get("frames_processed", 0) or 0)
+        diag["mean_inference_ms"] = round(
+            float(diag.get("inference_ms_total", 0.0) or 0.0) / max(1, frames), 1
+        )
+        snapshot = dict(diag)
+
+    cam_name = str(st.get("cam") or "")
+    if cam_name:
+        with _RUNTIME_STATE_LOCK:
+            camera_status = STATUS.setdefault("cameras", {}).get(cam_name)
+            if isinstance(camera_status, dict):
+                camera_status["alpr"] = snapshot
+
+
 def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfew):
     """Execute heavy vehicle/plate/OCR inference on a single frame snapshot outside the display thread (GAP-08)."""
     st_stop_ev = st.get("stop_ev")
     if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
         return
     cam_name = st["cam"]
+    inference_started = time.perf_counter()
     inf_frame, now_f, inf_face_entries, inf_veh_blur_boxes, frame_no = item
     H, W = inf_frame.shape[:2]
+    _record_alpr_diagnostics(
+        st,
+        stage="vehicle_detection",
+        reason_code="processing_frame",
+        increments={"frames_processed": 1},
+        values={
+            "vehicle_model_loaded": bool(vyolo is not None),
+            "plate_detector_mode": "yolo_plate_model" if yolo is not None else "opencv_canny_contour",
+            "ocr_model_loaded": bool(reader is not None),
+            "last_error_type": "",
+        },
+    )
     with st["infer_lock"]:
         st["det_runs"] += 1
         det_runs_now = st["det_runs"]
@@ -4285,6 +4368,17 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
             STATUS["cameras"][cam_name]["detections"] = det_runs_now
 
     new_vboxes = detect_vehicles(inf_frame, vyolo)
+    _record_alpr_diagnostics(
+        st,
+        stage="plate_detection",
+        reason_code="vehicle_boxes_found" if new_vboxes else "no_vehicle_boxes_full_frame_fallback",
+        increments={
+            "frames_with_vehicle_boxes": 1 if new_vboxes else 0,
+            "frames_without_vehicle_boxes": 0 if new_vboxes else 1,
+            "vehicle_boxes_total": len(new_vboxes),
+        },
+        values={"last_vehicle_boxes": len(new_vboxes)},
+    )
     # A native detector call cannot be force-cancelled safely. Once it returns,
     # honour camera removal before starting any downstream OCR or registry work.
     if ((st.get("stop_ev") is not None and st["stop_ev"].is_set()) or STOP_MAIN_EVENT.is_set()):
@@ -4298,6 +4392,11 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
     )
     st_stop_ev = st.get("stop_ev")
     iter_vboxes = [] if skip_empty_vyolo else (new_vboxes or [(0, 0, W, H, "unknown")])
+    frame_plate_candidates = 0
+    frame_ocr_attempts = 0
+    frame_ocr_text_candidates = 0
+    frame_confirmed_reads = 0
+    last_ocr_confidence = None
     for (vx, vy, vw, vh, vc) in iter_vboxes:
         if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
             break
@@ -4323,11 +4422,16 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
                         break
             if not overlap:
                 dedup_pboxes.append(pb)
+        frame_plate_candidates += len(dedup_pboxes)
         for (x, y, bw, bh) in dedup_pboxes:
             if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
                 break
             x, y = x + vx, y + oy
+            frame_ocr_attempts += 1
             d, c = read_plate(reader, inf_frame[y:y + bh, x:x + bw])
+            if d:
+                frame_ocr_text_candidates += 1
+                last_ocr_confidence = round(float(c), 4)
             # EasyOCR/Tesseract may finish after the camera is removed. Do not
             # publish sightings, mutate the registry, or raise alerts for a
             # camera whose stop event was set while OCR was in flight.
@@ -4339,6 +4443,7 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
             with st["infer_lock"]:
                 confirmed = confirm_plate_read(d, c, (x, y, bw, bh), now_f, st["votes"], st["tracks"], st["last_seen"])
             if confirmed:
+                frame_confirmed_reads += 1
                 cm, direction = confirmed[0], confirmed[1]
                 win_plate = getattr(confirmed, "plate", d) or d
                 l_conf = getattr(confirmed, "letters_confirmed", True)
@@ -4377,6 +4482,42 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
         st["vboxes"] = new_vboxes
         st["boxes"] = new_boxes
         st["consec_errors"] = 0
+        pending_vote_count = sum(len(items) for items in st.get("votes", {}).values())
+
+    if skip_empty_vyolo:
+        diag_stage, diag_reason = "vehicle_detection", "skip_ocr_no_vehicle"
+    elif frame_plate_candidates <= 0:
+        diag_stage = "plate_detection"
+        diag_reason = "no_plate_candidates" if new_vboxes else "no_vehicle_boxes_full_frame_no_plate_candidates"
+    elif frame_ocr_text_candidates <= 0:
+        diag_stage, diag_reason = "ocr", "ocr_unavailable" if reader is None else "ocr_no_result"
+    elif frame_confirmed_reads <= 0:
+        diag_stage, diag_reason = "confirmation", "awaiting_multi_frame_confirmation"
+    else:
+        diag_stage, diag_reason = "confirmation", "plate_confirmed"
+
+    elapsed_ms = (time.perf_counter() - inference_started) * 1000.0
+    _record_alpr_diagnostics(
+        st,
+        stage=diag_stage,
+        reason_code=diag_reason,
+        increments={
+            "frames_with_plate_candidates": 1 if frame_plate_candidates > 0 else 0,
+            "plate_candidates_total": frame_plate_candidates,
+            "ocr_attempts": frame_ocr_attempts,
+            "ocr_text_candidates": frame_ocr_text_candidates,
+            "ocr_no_result": max(0, frame_ocr_attempts - frame_ocr_text_candidates),
+            "frames_awaiting_confirmation": 1 if frame_ocr_text_candidates > 0 and frame_confirmed_reads <= 0 else 0,
+            "confirmed_reads": frame_confirmed_reads,
+            "inference_ms_total": elapsed_ms,
+        },
+        values={
+            "last_plate_candidates": frame_plate_candidates,
+            "last_ocr_confidence": last_ocr_confidence,
+            "pending_vote_count": pending_vote_count,
+            "last_inference_ms": round(elapsed_ms, 1),
+        },
+    )
 
 
 def _camera_inference_worker(st, stop_ev, vyolo, yolo, reader, trucks_only, curfew):
@@ -4410,6 +4551,13 @@ def _camera_inference_worker(st, stop_ev, vyolo, yolo, reader, trucks_only, curf
             with st["infer_lock"]:
                 st["consec_errors"] += 1
                 err_cnt = st["consec_errors"]
+            _record_alpr_diagnostics(
+                st,
+                stage="inference_error",
+                reason_code="inference_exception",
+                increments={"errors": 1},
+                values={"last_error_type": type(inf_err).__name__},
+            )
             with _RUNTIME_STATE_LOCK:
                 if cam_name in STATUS.get("cameras", {}):
                     STATUS["cameras"][cam_name]["errors"] = err_cnt
@@ -4689,7 +4837,12 @@ def main():
     with _RUNTIME_STATE_LOCK:
         STATUS["cam"] = ",".join(cam_states.keys())
         STATUS["cameras"] = {
-            k: {"status": v["status"], "fps": 0.0, "frames": 0, "detections": 0, "errors": 0, "fail_count": v["fail_count"], "reconnect_count": v.get("reconnect_count", 0)}
+            k: {
+                "status": v["status"], "fps": 0.0, "frames": 0, "detections": 0,
+                "errors": 0, "fail_count": v["fail_count"],
+                "reconnect_count": v.get("reconnect_count", 0),
+                "alpr": dict(v.get("alpr_diag") or {}),
+            }
             for k, v in cam_states.items()
         }
     for cam_name, st in cam_states.items():
@@ -4766,6 +4919,8 @@ def main():
                 "infer_busy": False,
                 "infer_idle_event": idle_ev_d,
                 "dropped_infer_frames": 0,
+                "alpr_diag_lock": threading.Lock(),
+                "alpr_diag": _new_alpr_diagnostics(vyolo, yolo, reader),
                 "cap": cap_d,
                 "status": st_status,
                 "n": 0,
@@ -4818,6 +4973,7 @@ def main():
                     "reconnect_count": 0,
                     "source": redact_url(dyn_src),
                     "health_warning": "",
+                    "alpr": dict(st_d.get("alpr_diag") or {}),
                 }
             if st_d["status"] == "online":
                 log("session start", dyn_cam)
