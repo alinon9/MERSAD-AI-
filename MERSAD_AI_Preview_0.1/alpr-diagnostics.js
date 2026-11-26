@@ -89,6 +89,7 @@
 
       const grid = node("div", "alpr-grid");
       grid.append(metric("إطارات حلّلها محرك AI", d.frames_processed || 0));
+      grid.append(metric("إطارات استبعدها فلتر الشاحنات", d.frames_filtered_by_trucks_only || 0));
       grid.append(metric("مربعات المركبات", d.vehicle_boxes_total || 0));
       grid.append(metric("مناطق اللوحات المرشحة", d.plate_candidates_total || 0));
       grid.append(metric("قصاصات أُرسلت إلى OCR", d.ocr_attempts || 0));
