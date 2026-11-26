@@ -247,6 +247,8 @@ AR = {
 AID, ENR, FH, FA, KNOWN, EVID, WHY, TRACKS, FACE_ALERT = [0], {}, {}, {}, [], {}, {}, {}, [0.45]
 FACE_DETECT_INTERVAL = 2
 CONFIRM_READS = 3
+FAST_CONFIRM_MIN_CONF = 0.90
+MIN_CONFIRM_READ_GAP_SEC = 0.05
 VOTE_WINDOW_SEC = 10.0
 ALERT_COOLDOWN_SEC = 30.0
 MIN_OCR_CONF = 0.35
@@ -2675,15 +2677,19 @@ def find_plates(img, yolo=None, device=None):
                 out.append((x1, y1, x2 - x1, y2 - y1))
         return out
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    filtered = cv2.bilateralFilter(gray, 9, 60, 60)
+    # A small Gaussian blur is substantially cheaper than bilateral filtering on CPU;
+    # the downstream Canny/shape/brightness gates preserve plate-candidate ranking.
+    filtered = cv2.GaussianBlur(gray, (3, 3), 0)
     contours, _ = cv2.findContours(cv2.Canny(filtered, 60, 180), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     ranked = []
     for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:40]:
         x, y, w, h = cv2.boundingRect(contour)
         # Yemeni plates can occupy a small part of a distant 1080p frame.
         # Keep a conservative frame-relative floor instead of a fixed 80px cutoff.
-        min_plate_width = max(28, int(W * 0.025))
-        if w < min_plate_width or h < 7 or not (1.8 <= w / float(h) <= 7.0):
+        # Vehicle crops vary in size; allow small distant plates while retaining a
+        # minimum pixel floor so noise-sized rectangles are not promoted to OCR.
+        min_plate_width = max(18, int(W * 0.018))
+        if w < min_plate_width or h < 6 or not (1.8 <= w / float(h) <= 7.0):
             continue
         perimeter = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
@@ -2907,12 +2913,24 @@ def read_plate(reader, crop, min_conf=MIN_OCR_CONF, trace=None):
             ("adaptive_bilingual_beamsearch", adaptive, {"detail": 1, "paragraph": False, "allowlist": bilingual_allowlist,
                                                         "decoder": "beamsearch", "beamWidth": 5}),
         )
+        # Fast-path only when OCR has recovered a complete canonical Yemeni plate
+        # with strong confidence. Otherwise retain every recovery pass for accuracy.
+        fast_accept_conf = max(0.82, float(min_conf) + 0.45)
         for attempt_name, image_variant, options in retry_attempts:
             result = _plate_ocr_result(
                 reader, image_variant, min_conf, options, trace=trace, attempt=attempt_name
             )
             if result:
                 candidates.append(result)
+                if _has_yemeni_plate_structure(result) and float(result[1]) >= fast_accept_conf:
+                    if trace is not None:
+                        trace.append({
+                            "attempt": "retry_short_circuit",
+                            "reason": "canonical_yemeni_plate_high_confidence",
+                            "confidence_threshold": round(fast_accept_conf, 4),
+                            "accepted_confidence": round(float(result[1]), 4),
+                        })
+                    break
 
     if not candidates:
         return None, 0.0
@@ -3009,6 +3027,17 @@ def confirm_plate_read(plate, conf, bbox, now, votes, tracks, last_seen,
     if not digits_key:
         return None
     norm_form = R.norm_plate(plate)
+    known_governorates = {
+        R._norm_letters_only(value)
+        for value in getattr(R, "_LATIN_GOV_TO_AR", {}).values()
+    }
+    governorate, separator, serial = norm_form.rpartition("-")
+    is_canonical_yemeni = bool(
+        separator
+        and governorate in known_governorates
+        and serial.isdigit()
+        and len(serial) == 5
+    )
 
     # Prune expired reads across all track buckets
     for k in list(votes.keys()):
@@ -3047,13 +3076,30 @@ def confirm_plate_read(plate, conf, bbox, now, votes, tracks, last_seen,
             matched_bucket = f"{base_bucket}#{idx}"
             idx += 1
 
+    # Multiple candidate crops from the same queued frame share one timestamp.
+    # They must never count as independent temporal votes toward confirmation.
+    if matched_bucket is not None:
+        previous_votes = votes.get(matched_bucket) or []
+        if previous_votes and (now - float(previous_votes[-1][0])) < MIN_CONFIRM_READ_GAP_SEC:
+            return None
+
     votes.setdefault(matched_bucket, []).append((now, float(conf), norm_form, bbox))
     if bbox is not None:
         x, y, bw, bh = bbox
         tracks.setdefault(matched_bucket, []).append((x + bw / 2.0, y + bh / 2.0, float(bw * bh)))
 
-    if len(votes[matched_bucket]) >= confirm_reads:
-        grp = votes[matched_bucket]
+    grp = votes[matched_bucket]
+    # Keep the normal three-read rule for noisy/partial readings. Only a canonical
+    # Yemeni governorate + five-digit plate, read identically at high confidence
+    # on two distinct frames of the same spatial track, may use the fast path.
+    fast_confirm = bool(
+        confirm_reads == CONFIRM_READS
+        and is_canonical_yemeni
+        and len(grp) >= 2
+        and all(str(item[2]) == norm_form for item in grp)
+        and all(float(item[1]) >= FAST_CONFIRM_MIN_CONF for item in grp)
+    )
+    if len(grp) >= confirm_reads or fast_confirm:
         counts = collections.Counter(f_str for _, _, f_str, _ in grp)
         best_form = max(counts.keys(), key=lambda s: (counts[s], len(s)))
         if now - last_seen.get(best_form, 0.0) <= cooldown_sec:

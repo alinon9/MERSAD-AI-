@@ -329,7 +329,26 @@ def run_unit_tests():
     check("UNIT", "stale OCR reads expire after window_sec without false confirmation", res_expired is None, res_expired)
     m.confirm_plate_read("77777", 0.9, (10, 30, 110, 48), t0 + 16.0, votes, tracks, last_seen, confirm_reads=3, window_sec=10.0)
     res_ok = m.confirm_plate_read("77777", 0.9, (10, 45, 125, 55), t0 + 17.0, votes, tracks, last_seen, confirm_reads=3, window_sec=10.0)
-    check("UNIT", "3 consistent reads within window confirm plate & infer direction", res_ok is not None and "اقتراب" in res_ok[1], res_ok)
+    fast_votes, fast_tracks, fast_seen = {}, {}, {}
+    fast_bbox = (40, 50, 120, 42)
+    fast_first = m.confirm_plate_read("عدن-12345", 0.94, fast_bbox, 2000.0, fast_votes, fast_tracks, fast_seen)
+    fast_same_frame = m.confirm_plate_read("عدن-12345", 0.96, (41, 50, 120, 42), 2000.0, fast_votes, fast_tracks, fast_seen)
+    votes_after_same_frame = sum(len(items) for items in fast_votes.values())
+    fast_second = m.confirm_plate_read("عدن-12345", 0.93, (42, 51, 120, 42), 2000.2, fast_votes, fast_tracks, fast_seen)
+    fast_confirm_ok = (
+        fast_first is None
+        and fast_same_frame is None
+        and votes_after_same_frame == 1
+        and fast_second is not None
+        and getattr(fast_second, "plate", "") == "عدن-12345"
+    )
+    check(
+        "UNIT",
+        "uncertain plates still need 3 reads; exact high-confidence Yemeni plates confirm on 2 distinct frames and same-frame duplicates do not count",
+        res_ok is not None and "اقتراب" in res_ok[1] and fast_confirm_ok,
+        {"three_read_result": res_ok, "fast_first": fast_first, "same_frame_duplicate": fast_same_frame,
+         "votes_after_same_frame": votes_after_same_frame, "fast_second": fast_second},
+    )
     for dt in (18.0, 18.5, 19.0):
         res_dup = m.confirm_plate_read("77777", 0.9, (10, 45, 125, 55), t0 + dt, votes, tracks, last_seen, confirm_reads=3, window_sec=10.0, cooldown_sec=30.0)
     check("UNIT", "cooldown prevents duplicate alert on consecutive frames", res_dup is None)
@@ -370,8 +389,22 @@ def run_unit_tests():
     cv2.rectangle(plate_scene, (189, 330), (449, 394), (10, 10, 10), 3)
     ranked_plates = m.find_plates(plate_scene)
     top_plate_iou = max((m._bbox_iou(box, (189, 330, 260, 64)) for box in ranked_plates[:1]), default=0.0)
-    check("OCR-PLATE-RANK", "bright plate candidate outranks larger dark windshield candidate (IoU >= 0.75)",
-          bool(ranked_plates) and top_plate_iou >= 0.75, (ranked_plates, top_plate_iou))
+    # A small, distant plate candidate must survive the scale-aware geometric floor.
+    small_plate_scene = np.full((360, 640, 3), 48, dtype=np.uint8)
+    cv2.rectangle(small_plate_scene, (300, 280), (324, 287), (252, 252, 252), -1)
+    cv2.rectangle(small_plate_scene, (300, 280), (324, 287), (10, 10, 10), 1)
+    small_ranked_plates = m.find_plates(small_plate_scene)
+    small_plate_iou = max(
+        (m._bbox_iou(box, (300, 280, 25, 8)) for box in small_ranked_plates),
+        default=0.0,
+    )
+    check(
+        "OCR-PLATE-RANK",
+        "bright plate outranks windshield and a small distant plate remains a candidate (IoU >= 0.55)",
+        bool(ranked_plates) and top_plate_iou >= 0.75 and bool(small_ranked_plates) and small_plate_iou >= 0.55,
+        {"ranked": ranked_plates, "top_plate_iou": top_plate_iou,
+         "small_ranked": small_ranked_plates, "small_plate_iou": small_plate_iou},
+    )
     YOLO_CALL_KWARGS.clear()
     m.detect_vehicles(np.zeros((480, 640, 3), np.uint8), YOLO("x"))
     check("P2-8", "detect_vehicles passes classes=[2, 3, 5, 7] filter to YOLO model",
@@ -6061,12 +6094,13 @@ def run_patched_v7_1_and_preview_0_1_tests():
         )
         _structured_retry_ok = (
             _structured_result[0] == "اب-91406"
-            and _structured_reader.calls >= 2
+            and _structured_reader.calls == 2
             and any(item.get("attempt") == "upscale" for item in _structured_trace)
+            and any(item.get("attempt") == "retry_short_circuit" for item in _structured_trace)
         )
         check(
             "ALPR-STRUCTURED-OCR-RETRY",
-            "high-confidence digit-only OCR is retried; structured Yemeni governorate + five-digit plate wins",
+            "digit-only hallucinations still retry; a high-confidence structured Yemeni plate short-circuits after one recovery pass",
             _structured_retry_ok,
             {"result": _structured_result, "ocr_calls": _structured_reader.calls},
         )
