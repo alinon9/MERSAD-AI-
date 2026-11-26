@@ -4350,6 +4350,30 @@ def run_stage11_field_calibration_and_eval_tests():
           (m_save, m_upd, m_list, imp_fc))
 
     # 7. STAGE11-UI-API-E2E: Live HTTP API & UI verification for all new calibration and plate evaluation endpoints
+    # Seed one synthetic diagnostic-only camera to verify safe API projection without exposing source URLs or plate text.
+    alpr_test_cam = "ALPR_DIAGNOSTICS_SELFTEST"
+    alpr_test_state = {
+        "cam": alpr_test_cam,
+        "alpr_diag_lock": threading.Lock(),
+        "alpr_diag": m._new_alpr_diagnostics(vyolo=object(), reader=object()),
+    }
+    with m._RUNTIME_STATE_LOCK:
+        m.STATUS.setdefault("cameras", {})[alpr_test_cam] = {
+            "status": "online",
+            "fps": 7.3,
+            "frames": 42,
+            "detections": 4,
+            "errors": 0,
+            "source": "rtsp://operator:secret@127.0.0.1/live",
+            "last_plate": "SECRET-PLATE-12345",
+        }
+    m._record_alpr_diagnostics(
+        alpr_test_state,
+        stage="ocr",
+        reason_code="ocr_no_result",
+        increments={"frames_processed": 4, "plate_candidates_total": 2, "ocr_attempts": 2, "ocr_no_result": 2},
+        values={"last_vehicle_boxes": 1, "last_plate_candidates": 2, "pending_vote_count": 0},
+    )
     srv_11 = srv_mod.ThreadingHTTPServer(("127.0.0.1", 0), srv_mod.H)
     port_11 = srv_11.server_address[1]
     threading.Thread(target=srv_11.serve_forever, daemon=True).start()
@@ -4381,20 +4405,39 @@ def run_stage11_field_calibration_and_eval_tests():
         conn_fc.request("GET", f"/api/field_calibrations?k={m.bus.token}")
         resp_fc = json.loads(conn_fc.getresponse().read().decode("utf-8"))
         conn_fc.close()
+
+        conn_ad = http.client.HTTPConnection("127.0.0.1", port_11, timeout=5)
+        conn_ad.request("GET", f"/api/alpr-diagnostics?k={m.bus.token}")
+        resp_ad = json.loads(conn_ad.getresponse().read().decode("utf-8"))
+        conn_ad.close()
     finally:
         srv_11.shutdown()
+        with m._RUNTIME_STATE_LOCK:
+            m.STATUS.get("cameras", {}).pop(alpr_test_cam, None)
 
     dash_s11 = open(os.path.join(WORK, "dashboard.html"), encoding="utf-8").read()
+    diag_cam_payload = (resp_ad.get("cameras") or {}).get(alpr_test_cam, {})
+    diag_camera_safe = (
+        diag_cam_payload.get("alpr", {}).get("last_reason_code") == "ocr_no_result"
+        and diag_cam_payload.get("alpr", {}).get("frames_processed") == 4
+        and "source" not in diag_cam_payload
+        and "last_plate" not in diag_cam_payload
+        and "SECRET-PLATE-12345" not in json.dumps(resp_ad, ensure_ascii=False)
+    )
     has_s11_sections = (
         "معايرة روابط الكاميرات — Camera Link Calibration" in dash_s11
         and "تقييم ومعايرة اللوحات اليمنية — Yemeni Plate Evaluation" in dash_s11
         and "تسجيل نتائج المعايرة اليدوية — Manual Field Calibration Registry" in dash_s11
         and "مدخلة يدوياً — غير متحقق منها" in dash_s11
+        and 'id="alpr-diag"' in dash_s11
+        and 'src="/alpr-diagnostics.js"' in dash_s11
+        and os.path.isfile(os.path.join(WORK, "alpr-diagnostics.js"))
     )
-    check("STAGE11-UI-API-E2E", "HTTP endpoints for dataset upload, evaluation status, manual calibrations & dashboard UI sections work end-to-end",
+    check("STAGE11-UI-API-E2E", "HTTP endpoints for dataset upload, evaluation status, ALPR diagnostics privacy projection, and dashboard UI work end-to-end",
           resp_u.get("ok") is True and resp_u.get("saved_files_count") == 2 and resp_u["inspection"]["valid_files_count"] == 1
-          and resp_st.get("ok") is True and resp_fc.get("ok") is True and has_s11_sections,
-          (resp_u, resp_st, resp_fc, has_s11_sections))
+          and resp_st.get("ok") is True and resp_fc.get("ok") is True
+          and resp_ad.get("ok") is True and diag_camera_safe and has_s11_sections,
+          (resp_u, resp_st, resp_fc, {"alpr_api_ok": resp_ad.get("ok"), "safe_projection": diag_camera_safe}, has_s11_sections))
 
 
 run_stage11_field_calibration_and_eval_tests()
