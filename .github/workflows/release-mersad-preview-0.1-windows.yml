@@ -17,6 +17,7 @@ on:
       - "feat/unified-camera-connectivity-*"
       - "feat/native-windows-desktop-*"
       - "fix/align-windows-acl-sources-*"
+      - "fix/plate-eval-*"
 
 permissions:
   contents: read

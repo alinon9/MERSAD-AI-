@@ -5483,6 +5483,17 @@ def _parse_ground_truth_entries(gt_file):
             hv_raw = str(x.get("human_verified", "1")).strip()
             is_unv = (hv_raw == "0") or (exp_p in ("UNVERIFIED_PLATE", "عدن-00000"))
             entry = {"filename": fn, "expected_plate": exp_p, "human_verified": "0" if is_unv else "1"}
+            # Accept both explicit x/y/w/h fields and the documented
+            # plate_bbox_xywh JSON array [x, y, width, height].
+            # Without this conversion the evaluator silently skipped the
+            # supplied box and reported mean_iou=null for JSON benchmarks.
+            bbox_xywh = x.get("plate_bbox_xywh")
+            if isinstance(bbox_xywh, (list, tuple)) and len(bbox_xywh) == 4:
+                for bk, value in zip(("x", "y", "w", "h"), bbox_xywh):
+                    try:
+                        entry[bk] = float(value)
+                    except (TypeError, ValueError):
+                        entry.pop(bk, None)
             for bk in ("x", "y", "w", "h"):
                 if x.get(bk) not in (None, ""):
                     try:
