@@ -3530,6 +3530,8 @@ class MersadEngineController:
             "infer_busy": False,
             "infer_idle_event": idle_ev,
             "dropped_infer_frames": 0,
+            "alpr_diag_lock": threading.Lock(),
+            "alpr_diag": _new_alpr_diagnostics(self.vyolo, self.yolo, self.reader),
             "cap": cap_obj,
             "status": init_status,
             "n": 0,
@@ -3579,6 +3581,7 @@ class MersadEngineController:
                 "reconnect_count": 0,
                 "source": redact_url(src_spec),
                 "health_warning": "",
+                "alpr": dict(st.get("alpr_diag") or {}),
             }
         if CAMERA_HISTORY:
             CAMERA_HISTORY.record_status(cam_name, st["status"], reason="startup", force=True)
