@@ -4282,6 +4282,8 @@ def _new_alpr_diagnostics(vyolo=None, yolo=None, reader=None):
         "plate_detector_mode": "yolo_plate_model" if yolo is not None else "opencv_canny_contour",
         "vehicle_model_loaded": bool(vyolo is not None),
         "ocr_model_loaded": bool(reader is not None),
+        "trucks_only_mode": False,
+        "frames_filtered_by_trucks_only": 0,
         "frames_processed": 0,
         "frames_with_vehicle_boxes": 0,
         "frames_without_vehicle_boxes": 0,
@@ -4358,6 +4360,7 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
             "vehicle_model_loaded": bool(vyolo is not None),
             "plate_detector_mode": "yolo_plate_model" if yolo is not None else "opencv_canny_contour",
             "ocr_model_loaded": bool(reader is not None),
+            "trucks_only_mode": bool(trucks_only),
             "last_error_type": "",
         },
     )
@@ -4397,11 +4400,13 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
     frame_ocr_attempts = 0
     frame_ocr_text_candidates = 0
     frame_confirmed_reads = 0
+    non_truck_boxes_skipped = 0
     last_ocr_confidence = None
     for (vx, vy, vw, vh, vc) in iter_vboxes:
         if (st_stop_ev is not None and st_stop_ev.is_set()) or STOP_MAIN_EVENT.is_set():
             break
         if trucks_only and vc != "truck":
+            non_truck_boxes_skipped += 1
             continue
         oy = vy + int(vh * .35) if vc != "unknown" else 0
         sub = inf_frame[oy:vy + vh, vx:vx + vw]
@@ -4488,8 +4493,11 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
     if skip_empty_vyolo:
         diag_stage, diag_reason = "vehicle_detection", "skip_ocr_no_vehicle"
     elif frame_plate_candidates <= 0:
-        diag_stage = "plate_detection"
-        diag_reason = "no_plate_candidates" if new_vboxes else "no_vehicle_boxes_full_frame_no_plate_candidates"
+        diag_stage = "vehicle_detection" if non_truck_boxes_skipped else "plate_detection"
+        if non_truck_boxes_skipped and trucks_only:
+            diag_reason = "trucks_only_filter_skipped_all"
+        else:
+            diag_reason = "no_plate_candidates" if new_vboxes else "no_vehicle_boxes_full_frame_no_plate_candidates"
     elif frame_ocr_text_candidates <= 0:
         diag_stage, diag_reason = "ocr", "ocr_unavailable" if reader is None else "ocr_no_result"
     elif frame_confirmed_reads <= 0:
@@ -4504,6 +4512,7 @@ def _run_single_inference_item(st, item, vyolo, yolo, reader, trucks_only, curfe
         reason_code=diag_reason,
         increments={
             "frames_with_plate_candidates": 1 if frame_plate_candidates > 0 else 0,
+            "frames_filtered_by_trucks_only": 1 if non_truck_boxes_skipped and trucks_only else 0,
             "plate_candidates_total": frame_plate_candidates,
             "ocr_attempts": frame_ocr_attempts,
             "ocr_text_candidates": frame_ocr_text_candidates,
