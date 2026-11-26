@@ -5095,6 +5095,8 @@ def main():
                         det_r_off = st["det_runs"]
                         err_c_off = st["consec_errors"]
                         last_p_off = st.get("last_plate")
+                    with st["alpr_diag_lock"]:
+                        alpr_diag_off = dict(st.get("alpr_diag") or {})
                     with _RUNTIME_STATE_LOCK:
                         if cam_name in cam_states and not (st.get("stop_ev") and st["stop_ev"].is_set()):
                             prev_c_off = STATUS.get("cameras", {}).get(cam_name, {})
@@ -5109,6 +5111,7 @@ def main():
                                 "health_warning": st.get("health_warning", prev_c_off.get("health_warning", "")),
                                 "resolution": prev_c_off.get("resolution", ""),
                                 "source": redact_url(st["src"]),
+                                "alpr": alpr_diag_off,
                             }
                     _update_aggregate_fps(cam_states)
                     if not is_eof:
@@ -5258,6 +5261,8 @@ def main():
                     det_runs_cur = st["det_runs"]
                     err_cnt_cur = st["consec_errors"]
                     last_p_cur = st.get("last_plate")
+                with st["alpr_diag_lock"]:
+                    alpr_diag_cur = dict(st.get("alpr_diag") or {})
                 with _RUNTIME_STATE_LOCK:
                     if cam_name in cam_states and not (st.get("stop_ev") and st["stop_ev"].is_set()):
                         prev_c_cur = STATUS.get("cameras", {}).get(cam_name, {})
@@ -5272,6 +5277,7 @@ def main():
                             "health_warning": st.get("health_warning", prev_c_cur.get("health_warning", "")),
                             "resolution": prev_c_cur.get("resolution", f"{W}x{H}"),
                             "source": redact_url(st["src"]),
+                            "alpr": alpr_diag_cur,
                         }
 
                 k = 255
