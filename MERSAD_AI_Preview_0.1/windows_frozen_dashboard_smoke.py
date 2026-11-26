@@ -21,6 +21,9 @@ def main() -> int:
     asset = exe.parent / "dashboard.js"
     if not asset.is_file():
         raise FileNotFoundError(f"Frozen distribution is missing {asset}")
+    alpr_asset = exe.parent / "alpr-diagnostics.js"
+    if not alpr_asset.is_file():
+        raise FileNotFoundError(f"Frozen distribution is missing {alpr_asset}")
 
     token = "PR5_FROZEN_SMOKE_TOKEN_2026"
     port = 18765
@@ -55,6 +58,7 @@ def main() -> int:
                             ("/", b"/purify.min.js"),
                             ("/dashboard.js", b"MERSAD-PR5-FIND001-DELEGATION-V3"),
                             ("/camera-connect.js", b'open.addEventListener("click"'),
+                            ("/alpr-diagnostics.js", b"/api/alpr-diagnostics"),
                             ("/purify.min.js", b"DOMPurify 3.4.18"),
                             ("/dompurify-guard.js", b"MERSAD_DOM_XSS_GUARD"),
                         ):
@@ -76,9 +80,21 @@ def main() -> int:
                                     raise RuntimeError("frozen dashboard does not render the visible phone-camera launcher")
                                 if route == "/" and b'src="/camera-connect.js"' not in body:
                                     raise RuntimeError("frozen dashboard does not load the phone-camera connection script")
+                                if route == "/" and b'id="alpr-diag"' not in body:
+                                    raise RuntimeError("frozen dashboard does not render the live ALPR diagnostics panel")
+                                if route == "/" and b'src="/alpr-diagnostics.js"' not in body:
+                                    raise RuntimeError("frozen dashboard does not load the ALPR diagnostics script")
                                 if route == "/" and ("script-src 'self'" not in csp or "trusted-types mersad-ui-html dompurify" not in csp):
                                     raise RuntimeError(f"dashboard CSP is missing strict script/Trusted Types directives: {csp}")
                                 print(f"PASS: frozen EXE served {route} ({len(body)} bytes; {ctype}; nosniff={nosniff})")
+                        api_req = urllib.request.Request(
+                            f"http://127.0.0.1:{port}/api/alpr-diagnostics", headers=headers
+                        )
+                        with urllib.request.urlopen(api_req, timeout=3) as api_response:
+                            api_payload = __import__("json").loads(api_response.read().decode("utf-8"))
+                            if api_response.status != 200 or api_payload.get("ok") is not True or not isinstance(api_payload.get("cameras"), dict):
+                                raise RuntimeError("frozen ALPR diagnostics API returned an invalid payload")
+                            print("PASS: frozen EXE served authenticated /api/alpr-diagnostics")
                         return 0
                     except (OSError, urllib.error.URLError, TimeoutError) as exc:
                         last_error = exc
