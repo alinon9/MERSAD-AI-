@@ -14,6 +14,7 @@
     no_vehicle_boxes_full_frame_no_plate_candidates: "لم تُكتشف مركبة ولم يعثر فحص الإطار الكامل على منطقة لوحة مرشحة",
     skip_ocr_no_vehicle: "تجاوز النظام فحص اللوحات لأن كاشف المركبات لم يجد مركبة وإعداد تجاوز الإطار الكامل مفعّل",
     no_plate_candidates: "لم يعثر كاشف اللوحات على أي منطقة مرشحة",
+    trucks_only_filter_skipped_all: "مرشح الشاحنات فقط تجاهل المركبات المكتشفة؛ لم يُنفذ OCR عليها",
     ocr_unavailable: "محرك OCR غير متاح في هذه الجلسة",
     ocr_no_result: "وجد النظام منطقة لوحة مرشحة، لكن OCR لم يستخرج نصًا مقبولًا",
     awaiting_multi_frame_confirmation: "تم استخراج قراءة أولية؛ ينتظر النظام قراءات متوافقة لتأكيدها",
@@ -101,6 +102,7 @@
       const models = node("div", "alpr-models");
       models.append(modelBadge("كاشف المركبات", !!d.vehicle_model_loaded));
       models.append(modelBadge("OCR", !!d.ocr_model_loaded));
+      if (d.trucks_only_mode) models.append(node("span", "chip wn", "وضع الشاحنات فقط"));
       const detectorName = d.plate_detector_mode === "yolo_plate_model"
         ? "YOLO مخصص للوحات" : "Canny التقليدي";
       models.append(node("span", "chip mu", "كاشف اللوحة: " + detectorName));
@@ -108,7 +110,8 @@
 
       const details = node("div", "mu");
       const stage = stageLabels[d.last_stage] || String(d.last_stage || "غير معروف");
-      const confidence = Number.isFinite(Number(d.last_ocr_confidence))
+      const confidence = d.last_ocr_confidence !== null && d.last_ocr_confidence !== undefined
+        && Number.isFinite(Number(d.last_ocr_confidence))
         ? Math.round(Number(d.last_ocr_confidence) * 100) + "%" : "—";
       const time = d.updated_at
         ? new Date(Number(d.updated_at) * 1000).toLocaleTimeString()
