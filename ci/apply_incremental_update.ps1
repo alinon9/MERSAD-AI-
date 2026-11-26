@@ -2,7 +2,7 @@ param([Parameter(Mandatory=$true)][string]$InstallDir)
 $ErrorActionPreference = "Stop"
 $InstallDir = (Resolve-Path -LiteralPath $InstallDir).Path
 if (-not (Test-Path -LiteralPath (Join-Path $InstallDir "MERSAD_AI.exe") -PathType Leaf)) { throw "MERSAD_AI.exe not found in InstallDir." }
-$files = @("MERSAD_AI.exe","MERSAD_Desktop.exe","dashboard.html","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","RUN.bat","RUN_BACKEND.bat")
+$files = @("MERSAD_AI.exe","MERSAD_Desktop.exe","dashboard.html","camera-connect.js","alpr-diagnostics.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","RUN.bat","RUN_BACKEND.bat")
 $manifest = Join-Path $PSScriptRoot "SHA256SUMS_UPDATE.txt"
 foreach ($line in Get-Content -LiteralPath $manifest) {
   if ($line -notmatch '^([0-9a-fA-F]{64})\s+(.+)$') { throw "Invalid manifest row: $line" }

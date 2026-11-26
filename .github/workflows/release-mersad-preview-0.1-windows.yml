@@ -18,6 +18,7 @@ on:
       - "feat/native-windows-desktop-*"
       - "fix/align-windows-acl-sources-*"
       - "fix/plate-eval-*"
+      - "feat/alpr-live-diagnostics-*"
 
 permissions:
   contents: read
@@ -243,11 +244,15 @@ jobs:
           # and that the camera onboarding script binds its click handler.
           $dashboardHtml = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\dashboard.html" -Raw
           $cameraJs = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\camera-connect.js" -Raw
+          $alprJs = Get-Content -LiteralPath "MERSAD_AI_Preview_0.1\\alpr-diagnostics.js" -Raw
           if ($dashboardHtml -notmatch 'id="mc-open"' -or $dashboardHtml -notmatch 'src="/camera-connect.js"') {
             throw "Operations dashboard is missing the visible phone-camera launcher or its script."
           }
           if (-not $cameraJs.Contains('open.addEventListener("click"') -or -not $cameraJs.Contains('/api/cameras/add')) {
             throw "Phone-camera onboarding click handler or camera-add API call is missing."
+          }
+          if ($dashboardHtml -notmatch 'id="alpr-diag"' -or $dashboardHtml -notmatch 'src="/alpr-diagnostics.js"' -or -not $alprJs.Contains('/api/alpr-diagnostics')) {
+            throw "Operations dashboard is missing the live ALPR diagnostics panel or its authenticated API client."
           }
 
           Push-Location MERSAD_AI_Preview_0.1
@@ -260,8 +265,8 @@ jobs:
           if (-not (Test-Path "dist\MERSAD_Desktop.exe")) { throw "MERSAD_Desktop.exe was not created" }
           Copy-Item -LiteralPath "dist\MERSAD_Desktop.exe" -Destination "dist\MERSAD_AI\MERSAD_Desktop.exe" -Force
           Copy-Item -Path "models" -Destination "dist\MERSAD_AI\models" -Recurse -Force
-          Copy-Item -Path "dashboard.html","dashboard.js","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
-          foreach ($asset in @("camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
+          Copy-Item -Path "dashboard.html","dashboard.js","camera-connect.js","alpr-diagnostics.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","README_AR.md","SYSTEM_REQUIREMENTS.txt","verify_integrity.py" -Destination "dist\MERSAD_AI\" -Force
+          foreach ($asset in @("camera-connect.js","alpr-diagnostics.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt")) {
             if (-not (Test-Path -LiteralPath "dist\MERSAD_AI\$asset" -PathType Leaf)) { throw "AI distribution is missing $asset" }
           }
           # PR5 frozen dashboard.js smoke test
@@ -422,7 +427,7 @@ jobs:
           $src = "MERSAD_AI_Preview_0.1\dist\MERSAD_AI"
           $out = "MERSAD_INCREMENTAL_UPDATE_DIST"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $files = @("MERSAD_AI.exe","MERSAD_Desktop.exe","dashboard.html","camera-connect.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","RUN.bat","RUN_BACKEND.bat")
+          $files = @("MERSAD_AI.exe","MERSAD_Desktop.exe","dashboard.html","camera-connect.js","alpr-diagnostics.js","purify.min.js","dompurify-guard.js","LICENSE_DOMPURIFY.txt","RUN.bat","RUN_BACKEND.bat")
           foreach ($name in $files) {
             $source = Join-Path $src $name
             if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing incremental update file: $source" }

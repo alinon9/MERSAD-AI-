@@ -59,6 +59,14 @@ ul{margin:4px 0;padding-inline-start:18px}
 @media(max-width:820px){.app{grid-template-columns:1fr}aside{position:fixed;inset:auto 0 0 0;height:auto;flex-direction:row;z-index:20;padding:6px;border-top:1px solid var(--ln);border-inline-end:0}
 .logo,.sfoot{display:none}nav{flex-direction:row;width:100%;justify-content:space-around}nav button{flex-direction:column;gap:2px;font-size:.68rem;padding:6px 8px;border-inline-start:0}
 .g{grid-template-columns:1fr}main{padding:14px 12px 90px}.top{padding:10px 12px}.ribbon div{padding:8px 14px}}
+.alpr-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.alpr-metric{background:var(--pan2);border:1px solid var(--ln);border-radius:8px;padding:8px 10px;min-width:0}
+.alpr-metric b{display:block;font:700 1.05rem "IBM Plex Mono",Consolas,monospace;direction:ltr;text-align:right}
+.alpr-metric span{display:block;color:var(--mu);font-size:.72rem}
+.alpr-state{border-inline-start:3px solid var(--sig);background:var(--pan2);border-radius:7px;padding:8px 11px;margin:8px 0;font-size:.84rem}
+.alpr-state.warn{border-inline-start-color:var(--amb)}.alpr-state.bad{border-inline-start-color:var(--red)}.alpr-state.good{border-inline-start-color:var(--grn)}
+.alpr-models{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+@media(max-width:520px){.alpr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}} 
 @media(prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
@@ -70,6 +78,11 @@ ul{margin:4px 0;padding-inline-start:18px}
 <div class="g">
 <div>
 <div class="c"><div class="bar"><h2>البث المباشر</h2><div id="cam-sw" class="bt" style="margin:0"></div><button id="mc-open" class="ok" type="button">＋ ربط كاميرا</button></div><div class="vid"><img id="v" alt="live"><div class="hud"><span class="rec" id="rec-dot"></span><span id="live-lbl">LIVE</span><span id="hcam"></span></div></div></div>
+<div class="c" id="alpr-diagnostics-card">
+<div class="bar"><h2>تشخيص مباشر لمحرك التعرف على اللوحات (ALPR)</h2><span id="alpr-diag-updated" class="mu">بانتظار البيانات</span></div>
+<div id="alpr-diag" aria-live="polite"><p class="mu">بانتظار أول عملية تحليل من الكاميرا...</p></div>
+<p class="mu" style="margin:8px 0 0">ملاحظة: التشخيص يعرض مراحل المعالجة والأعداد والثقة فقط؛ ولا يسجل نصوص اللوحات.</p>
+</div>
 <div class="c"><h2>آخر عمليات الرصد</h2><div id="fd"><p class="mu">بانتظار الرصد...</p></div></div>
 </div>
 <div>
@@ -213,5 +226,6 @@ ul{margin:4px 0;padding-inline-start:18px}
 <script src="/dompurify-guard.js" defer></script>
 <script src="/dashboard.js" defer></script>
 <script src="/camera-connect.js" defer></script>
+<script src="/alpr-diagnostics.js" defer></script>
 </body>
 </html>

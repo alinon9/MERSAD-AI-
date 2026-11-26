@@ -6,6 +6,7 @@ datas = [
     ("dashboard.html", "."),
     ("dashboard.js", "."),
     ("camera-connect.js", "."),
+    ("alpr-diagnostics.js", "."),
     ("purify.min.js", "."),
     ("dompurify-guard.js", "."),
     ("LICENSE_DOMPURIFY.txt", "."),
