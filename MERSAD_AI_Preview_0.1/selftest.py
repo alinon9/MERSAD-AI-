@@ -4258,6 +4258,48 @@ def run_stage11_field_calibration_and_eval_tests():
               and rep_cancel.get("status") == "cancelled"
               and len(hist_runs) >= 1 and hist_runs[0]["verification_status"] == "automated_verified",
               (met_s11, rep_cancel, hist_runs[:1]))
+
+        # 5a. STAGE11-PE-JSON-BBOX: plate_eval JSON's plate_bbox_xywh must become
+        # explicit x/y/w/h so detection IoU is actually measured (not silently null).
+        bbox_dir = tempfile.mkdtemp(prefix="mersad_s11_bbox_")
+        try:
+            bbox_img = np.full((240, 400, 3), 30, dtype=np.uint8)
+            cv2.rectangle(bbox_img, (100, 120), (300, 172), (255, 255, 255), -1)
+            cv2.rectangle(bbox_img, (100, 120), (300, 172), (0, 0, 0), 3)
+            cv2.imwrite(os.path.join(bbox_dir, "bbox.jpg"), bbox_img)
+            bbox_gt = {
+                "samples": [{
+                    "filename": "bbox.jpg",
+                    "expected_plate": "عدن-12345",
+                    "plate_bbox_xywh": [100, 120, 200, 52],
+                    "human_verified": "1",
+                }]
+            }
+            bbox_gt_path = os.path.join(bbox_dir, "ground_truth.json")
+            with open(bbox_gt_path, "w", encoding="utf-8") as gf:
+                json.dump(bbox_gt, gf, ensure_ascii=False)
+            bbox_entries, bbox_errors = m._parse_ground_truth_entries(bbox_gt_path)
+            bbox_eval = m.evaluate_plates_dataset(
+                bbox_dir,
+                reader=_SeqReader(),
+                print_report=False,
+                save_to_db=False,
+            )
+            bbox_metrics = bbox_eval.get("metrics") or {}
+            bbox_iou = bbox_metrics.get("mean_iou")
+            check(
+                "STAGE11-PE-JSON-BBOX",
+                "plate_bbox_xywh is parsed and the JSON benchmark reports a numeric detection IoU",
+                len(bbox_entries) == 1
+                and [bbox_entries[0].get(k) for k in ("x", "y", "w", "h")] == [100.0, 120.0, 200.0, 52.0]
+                and not bbox_errors
+                and bbox_eval.get("ok") is True
+                and bbox_iou is not None
+                and bbox_iou >= m.PLATE_EVAL_IOU_THRESHOLD,
+                {"entry": bbox_entries[0] if bbox_entries else None, "mean_iou": bbox_iou, "metrics": bbox_metrics},
+            )
+        finally:
+            shutil.rmtree(bbox_dir, ignore_errors=True)
     finally:
         shutil.rmtree(pe_dir, ignore_errors=True)
 
