@@ -8,6 +8,7 @@
 
   const reasonLabels = {
     waiting_for_first_frame: "بانتظار أول إطار تحليل",
+    diagnostics_not_available_in_engine: "مصدر البيانات متصل، لكن هذا المحرك لا يوفّر عدادات ALPR؛ يلزم تشغيل إصدار محرك يدعم التشخيص المباشر.",
     processing_frame: "جارٍ تحليل الإطار",
     vehicle_boxes_found: "تم اكتشاف مركبة أو أكثر داخل الإطار",
     no_vehicle_boxes_full_frame_fallback: "لم يكتشف كاشف المركبات؛ يجري فحص الإطار كاملًا بحثًا عن لوحة",
