@@ -329,6 +329,9 @@ class H(BaseHTTPRequestHandler):
             elif p == "/camera-connect.js":
                 with open(resolve_dashboard_path("camera-connect.js"), "rb") as f:
                     self._send(f.read(), "application/javascript; charset=utf-8")
+            elif p == "/alpr-diagnostics.js":
+                with open(resolve_dashboard_path("alpr-diagnostics.js"), "rb") as f:
+                    self._send(f.read(), "application/javascript; charset=utf-8")
             elif p in ("/purify.min.js", "/dompurify-guard.js"):
                 asset_name = p.lstrip("/")
                 with open(resolve_dashboard_path(asset_name), "rb") as f:
@@ -370,6 +373,27 @@ class H(BaseHTTPRequestHandler):
                 self._json(bus.on_readiness() if bus.on_readiness else {"ok": True})
             elif p == "/api/cameras":
                 self._json(bus.on_cameras_list() if bus.on_cameras_list else {"ok": True, "cameras": {}})
+            elif p == "/api/alpr-diagnostics":
+                stats_snapshot = bus.on_stats() if bus.on_stats else {"cameras": {}}
+                raw_cameras = stats_snapshot.get("cameras", {}) if isinstance(stats_snapshot, dict) else {}
+                safe_cameras = {}
+                for cam_name, item in (raw_cameras or {}).items():
+                    if not isinstance(item, dict):
+                        continue
+                    alpr = item.get("alpr")
+                    if not isinstance(alpr, dict) or not alpr:
+                        alpr = {
+                            "version": 0,
+                            "last_stage": "unavailable",
+                            "last_reason_code": "diagnostics_not_available_in_engine",
+                        }
+                    safe_cameras[str(cam_name)] = {
+                        "status": str(item.get("status") or "unknown"),
+                        "fps": float(item.get("fps") or 0.0),
+                        "frames": int(item.get("frames") or 0),
+                        "alpr": dict(alpr),
+                    }
+                self._json({"ok": True, "generated_at": time.time(), "cameras": safe_cameras})
             elif p == "/api/camera_links/suggestions":
                 inc_demo = self.arg("demo").strip().lower() in ("1", "true", "yes")
                 min_obs = int(self.arg("min_obs")) if self.arg("min_obs").strip().isdigit() else 3
